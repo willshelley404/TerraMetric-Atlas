@@ -129,6 +129,7 @@ ui <- dashboardPage(
       # LABOR TAB
       # ══════════════════════════════════════════════════════
       tabItem("labor",
+        uiOutput("labor_synopsis"),
         fluidRow(
           box(title = "Unemployment Rate", status = "primary", solidHeader = TRUE, width = 6,
               withSpinner(plotlyOutput("lab_unemp",    height = "280px"), type=4, color="#00b4d8", color.background="#161b27", size=0.7)),
@@ -151,6 +152,7 @@ ui <- dashboardPage(
       # INFLATION TAB
       # ══════════════════════════════════════════════════════
       tabItem("inflation",
+        uiOutput("inflation_synopsis"),
         fluidRow(
           box(title = "CPI & Core CPI (YoY %)", status = "danger", solidHeader = TRUE, width = 6,
               withSpinner(plotlyOutput("inf_cpi",     height = "280px"), type=4, color="#e94560", color.background="#161b27", size=0.7)),
@@ -173,6 +175,7 @@ ui <- dashboardPage(
       # HOUSING TAB
       # ══════════════════════════════════════════════════════
       tabItem("housing",
+        uiOutput("housing_synopsis"),
         fluidRow(
           box(title = "Housing Starts & Building Permits", status = "success", solidHeader = TRUE, width = 6,
               withSpinner(plotlyOutput("hous_starts",  height = "300px"), type=4, color="#2dce89", color.background="#161b27", size=0.7)),
@@ -189,6 +192,7 @@ ui <- dashboardPage(
       # CONSUMER TAB
       # ══════════════════════════════════════════════════════
       tabItem("consumer",
+        uiOutput("consumer_synopsis"),
         fluidRow(
           box(title = "Retail & Food Services Sales (YoY %)", status = "primary", solidHeader = TRUE, width = 6,
               withSpinner(plotlyOutput("con_retail",  height = "280px"), type=4, color="#00b4d8", color.background="#161b27", size=0.7)),
@@ -205,6 +209,7 @@ ui <- dashboardPage(
       # MARKETS TAB
       # ══════════════════════════════════════════════════════
       tabItem("markets",
+        uiOutput("markets_synopsis"),
         box(title = "Financial Market Data", status = "primary", solidHeader = TRUE, width = 12,
           tabsetPanel(
             tabPanel("Performance Table",

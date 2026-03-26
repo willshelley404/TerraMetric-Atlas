@@ -437,3 +437,368 @@ render_synopsis_html <- function(blocks) {
     "</div></div>"
   ))
 }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB-LEVEL SYNOPSIS BUILDERS
+# Each returns an HTML string for inline display above the charts/tables
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Shared HTML wrapper for a tab synopsis
+.tab_synopsis_html <- function(title, color, icon_name, bullets, note = NULL) {
+  bullet_html <- paste(vapply(bullets, function(b) {
+    sprintf(
+      "<li style='margin-bottom:5px;'>
+         <span style='color:%s;font-weight:600;'>%s</span>
+         <span style='color:#d0d0d0;'>%s</span>
+       </li>",
+      b$col %||% "#9aa3b2",
+      htmltools::htmlEscape(b$label),
+      htmltools::htmlEscape(b$text)
+    )
+  }, character(1)), collapse = "")
+
+  note_html <- if (!is.null(note) && nchar(note) > 0) sprintf(
+    "<div style='margin-top:10px;padding:10px 14px;background:#0f1117;border-radius:6px;
+                 border-left:3px solid %s;color:#9aa3b2;font-size:12px;line-height:1.75;'>
+       <i class=\"fa fa-lightbulb\" style=\"color:%s;margin-right:6px;\"></i>%s
+     </div>", color, color, htmltools::htmlEscape(note)
+  ) else ""
+
+  sprintf(
+    "<div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;
+                 border-left:4px solid %s;padding:14px 18px;margin-bottom:14px;'>
+       <div style='color:%s;font-size:11px;font-weight:700;text-transform:uppercase;
+                   letter-spacing:1px;margin-bottom:10px;'>
+         <i class=\"fa fa-%s\" style=\"margin-right:6px;\"></i>%s — Current Landscape
+       </div>
+       <ul style='list-style:none;padding:0;margin:0;'>%s</ul>
+       %s
+     </div>",
+    color, color, icon_name, title, bullet_html, note_html
+  )
+}
+
+# ── Labor Market tab synopsis ──────────────────────────────────────────────────
+build_labor_synopsis <- function(fred_data, kpis) {
+  if (is.null(fred_data) || is.null(kpis)) return(NULL)
+
+  unemp    <- fred_data$UNRATE    %>% { if (!is.null(.)) arrange(., date) %>% pull(value) else NULL }
+  payrolls <- fred_data$PAYEMS    %>% { if (!is.null(.)) arrange(., date) %>% pull(value) else NULL }
+  jolts    <- fred_data$JTSJOL    %>% { if (!is.null(.)) arrange(., date) %>% pull(value) else NULL }
+  wages    <- fred_data$CES0500000003 %>% { if (!is.null(.)) arrange(., date) %>% pull(value) else NULL }
+
+  u_now <- kpis$unemp_rate %||% NA
+  u_prev <- if (!is.null(unemp) && length(unemp) >= 2) unemp[length(unemp)-1] else NA
+  u_6m   <- if (!is.null(unemp) && length(unemp) >= 6)  unemp[length(unemp)-6]  else NA
+  u_yr   <- if (!is.null(unemp) && length(unemp) >= 12) unemp[length(unemp)-12] else NA
+
+  pay_3m_avg <- if (!is.null(payrolls) && length(payrolls) >= 4)
+    round(mean(diff(tail(payrolls, 4)), na.rm=TRUE)) else NA
+  jolts_now  <- kpis$job_openings %||% NA
+  jolts_prev <- if (!is.null(jolts) && length(jolts) >= 2) jolts[length(jolts)-1] else NA
+  wage_yoy   <- kpis$wage_yoy %||% NA
+
+  beveridge_ratio <- if (!is.null(jolts) && !is.null(unemp)) {
+    n <- min(length(jolts), length(unemp))
+    round(tail(jolts, 1) / tail(unemp, 1), 2)
+  } else NA
+
+  bullets <- list(
+    list(col="#00b4d8", label="Unemployment rate: ",
+         text=sprintf("%.1f%% (prev %.1f%%; %s pp vs 6mo; %s pp vs 1yr)",
+                      u_now, u_prev %||% NA,
+                      if(!is.na(u_6m)) sprintf("%+.1f", u_now - u_6m) else "N/A",
+                      if(!is.na(u_yr)) sprintf("%+.1f", u_now - u_yr) else "N/A")),
+    list(col="#2dce89", label="3-month avg payrolls: ",
+         text=if(!is.na(pay_3m_avg)) sprintf("%+.0fK/mo — %s",
+              pay_3m_avg, if(pay_3m_avg>200)"above-trend growth" else if(pay_3m_avg>100)"moderate" else "slowing") else "N/A"),
+    list(col="#7c5cbf", label="Job openings (JOLTS): ",
+         text=sprintf("%s vs prev %s",
+                      if(!is.na(jolts_now)) sprintf("%.0fK", jolts_now) else "N/A",
+                      if(!is.na(jolts_prev)) sprintf("%.0fK", jolts_prev) else "N/A")),
+    list(col="#f4a261", label="Wage growth (YoY): ",
+         text=if(!is.na(wage_yoy)) sprintf("%.1f%% — %s vs PCE/CPI, affecting real purchasing power",
+              wage_yoy, if(wage_yoy > (kpis$cpi_yoy%||%0)+0.5) "above inflation" else "below or inline with inflation") else "N/A"),
+    list(col="#9aa3b2", label="Beveridge ratio (openings/unemployed): ",
+         text=if(!is.na(beveridge_ratio)) sprintf("%.2f — %s",
+              beveridge_ratio, if(beveridge_ratio>1.5)"tight labour market, wage pressure likely" else "loosening, employer leverage increasing") else "N/A")
+  )
+
+  udir <- trend_dir(unemp, 12)
+  note <- sprintf(
+    "Unemployment is %s%s. %s%s",
+    udir,
+    if(!is.na(u_6m)) sprintf(" — %.1f pp %s over 6 months", abs(u_now - u_6m), if(u_now>u_6m)"higher" else "lower") else "",
+    if(!is.na(pay_3m_avg)) sprintf("Payroll momentum (%+.0fK/mo 3M avg) %s. ", pay_3m_avg,
+      if(pay_3m_avg>150)"suggests continued tightness — watch wage acceleration"
+      else if(pay_3m_avg>0)"remains positive but cooling"
+      else "has turned negative — recession risk elevated") else "",
+    if(!is.na(jolts_now) && !is.na(jolts_prev)) sprintf(
+      "JOLTS openings moved %+.0fK month-on-month; labour demand %s.", jolts_now-jolts_prev,
+      if(jolts_now>jolts_prev)"firming" else "softening") else ""
+  )
+
+  htmltools::HTML(.tab_synopsis_html("Labor Market", "#00b4d8", "users", bullets, note))
+}
+
+# ── Inflation tab synopsis ─────────────────────────────────────────────────────
+build_inflation_synopsis <- function(fred_data, kpis) {
+  if (is.null(fred_data) || is.null(kpis)) return(NULL)
+
+  cpi_now   <- kpis$cpi_yoy     %||% NA
+  core_now  <- kpis$core_cpi_yoy %||% NA
+  pce_now   <- kpis$core_pce    %||% NA
+  ppi_yoy   <- kpis$ppi_yoy     %||% NA
+  fed_funds <- kpis$fed_funds   %||% NA
+
+  real_rate <- if (!is.na(fed_funds) && !is.na(cpi_now)) round(fed_funds - cpi_now, 1) else NA
+  cpi_vs_target <- if (!is.na(cpi_now)) round(cpi_now - 2.0, 1) else NA
+  cpi_vs_core   <- if (!is.na(cpi_now) && !is.na(core_now)) round(cpi_now - core_now, 1) else NA
+
+  cpi_df <- fred_data$CPIAUCSL
+  cpi_trend <- if (!is.null(cpi_df) && nrow(cpi_df) > 12) {
+    yoy_v <- (cpi_df$value / dplyr::lag(cpi_df$value, 12) - 1) * 100
+    trend_dir(yoy_v[!is.na(yoy_v)], 6)
+  } else "unclear"
+
+  bullets <- list(
+    list(col=if(!is.na(cpi_now)&&cpi_now>3)"#e94560" else "#2dce89",
+         label="CPI YoY: ",
+         text=sprintf("%.1f%% (%s vs 2%% target; trend: %s)",
+                      cpi_now, if(!is.na(cpi_vs_target)) sprintf("%+.1f pp", cpi_vs_target) else "N/A",
+                      cpi_trend)),
+    list(col=if(!is.na(core_now)&&core_now>3)"#f4a261" else "#2dce89",
+         label="Core CPI YoY: ",
+         text=if(!is.na(core_now)) sprintf("%.1f%% — %s", core_now,
+              if(core_now>cpi_now)"above headline (energy/food providing relief)"
+              else "below headline (energy adding to print)") else "N/A"),
+    list(col="#7c5cbf", label="Core PCE YoY (Fed target): ",
+         text=if(!is.na(pce_now)) sprintf("%.1f%% — Fed's preferred gauge; %s",
+              pce_now, if(pce_now>2.5)"above target, policy likely to remain restrictive"
+              else "nearing target range") else "N/A"),
+    list(col="#f4a261", label="PPI YoY (input prices): ",
+         text=if(!is.na(ppi_yoy)) sprintf("%.1f%% — %s CPI by ~2-3 months",
+              ppi_yoy, if(ppi_yoy>cpi_now%||%0)"leading indicator suggests continued price pressure on" else "declining, leading") else "N/A"),
+    list(col="#00b4d8", label="Real Fed Funds rate: ",
+         text=if(!is.na(real_rate)) sprintf("%.1f%% — %s",
+              real_rate, if(real_rate>1.5)"firmly restrictive"
+              else if(real_rate>0)"mildly positive" else "still negative, policy not fully restrictive") else "N/A")
+  )
+
+  note <- paste(
+    if(!is.na(cpi_vs_core) && abs(cpi_vs_core)>0.5)
+      sprintf("Headline-core gap of %+.1f pp driven by %s. ", cpi_vs_core,
+              if(cpi_vs_core>0)"energy & food price pressure" else "energy relief in headline") else "",
+    if(!is.na(real_rate))
+      sprintf("Real rate of %.1f%% %s. ", real_rate,
+              if(real_rate>2)"is clearly restrictive — historically associated with falling inflation within 6-12 months"
+              else if(real_rate>0)"is positive but may need more time to fully transmit"
+              else "means Fed is still not tight in real terms despite nominal hikes") else "",
+    "PPI leads CPI by ~2 months; watch PPI trend for forward read on goods inflation."
+  )
+
+  htmltools::HTML(.tab_synopsis_html("Inflation", "#e94560", "fire", bullets, note))
+}
+
+# ── Housing tab synopsis ───────────────────────────────────────────────────────
+build_housing_synopsis <- function(fred_data, kpis) {
+  if (is.null(fred_data) || is.null(kpis)) return(NULL)
+
+  mort <- fred_data$MORTGAGE30US %>% { if(!is.null(.)) arrange(., date) %>% pull(value) else NULL }
+  hst  <- fred_data$HOUST        %>% { if(!is.null(.)) arrange(., date) %>% pull(value) else NULL }
+  pmt  <- fred_data$PERMIT       %>% { if(!is.null(.)) arrange(., date) %>% pull(value) else NULL }
+
+  mort_now   <- kpis$mortgage30     %||% NA
+  mort_prev  <- if(!is.null(mort)  && length(mort) >= 2)  mort[length(mort)-1]  else NA
+  starts_now <- kpis$housing_starts %||% NA
+  starts_prev<- if(!is.null(hst)   && length(hst)  >= 2)  hst[length(hst)-1]   else NA
+  permits_now<- kpis$permits       %||% NA
+  permits_prev<-if(!is.null(pmt)   && length(pmt)  >= 2)  pmt[length(pmt)-1]   else NA
+
+  mort_houst <- if(!is.null(mort) && !is.null(hst)) {
+    n <- min(length(mort), length(hst))
+    best_lag(tail(mort, n), tail(hst, n), max_lag=12)
+  } else NULL
+
+  mort_trend <- if(!is.null(mort)) trend_dir(mort, 12) else "unclear"
+
+  bullets <- list(
+    list(col=if(!is.na(mort_now)&&mort_now>6)"#e94560" else "#f4a261",
+         label="30-yr mortgage: ",
+         text=sprintf("%.2f%% (prev %.2f%%; %s); threshold ~5.5%% historically unlocks demand",
+                      mort_now, mort_prev%||%NA,
+                      if(!is.na(mort_prev)) sprintf("%+.2f pp MoM", mort_now-mort_prev) else "N/A")),
+    list(col="#2dce89", label="Housing starts: ",
+         text=sprintf("%sK ann. (prev %sK; %s MoM)",
+                      if(!is.na(starts_now)) format(round(starts_now), big.mark=",") else "N/A",
+                      if(!is.na(starts_prev)) format(round(starts_prev), big.mark=",") else "N/A",
+                      if(!is.na(starts_now)&&!is.na(starts_prev)) sprintf("%+.0fK", starts_now-starts_prev) else "N/A")),
+    list(col="#00b4d8", label="Building permits: ",
+         text=sprintf("%sK ann. (prev %sK) — leading indicator for starts",
+                      if(!is.na(permits_now)) format(round(permits_now), big.mark=",") else "N/A",
+                      if(!is.na(permits_prev)) format(round(permits_prev), big.mark=",") else "N/A")),
+    list(col="#9aa3b2", label="Mortgage trend (12M): ",
+         text=sprintf("%s %s", arrow(mort_trend),
+                      if(mort_trend=="falling")"— affordability improving, watch starts lag"
+                      else if(mort_trend=="rising")"— affordability worsening, starts likely to follow lower"
+                      else "— stable; starts driven by supply-side factors")),
+    list(col="#7c5cbf", label="Rate→Starts lag: ",
+         text=if(!is.null(mort_houst)) sprintf("~%d months (r=%.2f, R²≈%.0f%%)",
+              mort_houst$lag, mort_houst$r, mort_houst$r^2*100) else "N/A")
+  )
+
+  note <- paste(
+    if(!is.na(mort_now)) sprintf("At %.2f%%, mortgage rates are %s. ", mort_now,
+      if(mort_now>7)"historically elevated — first-time buyer affordability severely constrained"
+      else if(mort_now>6)"elevated but declining from 2023 peak"
+      else "approaching the ~5.5–6%% range where historically demand re-ignites") else "",
+    if(!is.null(mort_houst)) sprintf(
+      "Mortgage rate leads housing starts by ~%d months — current rate level suggests %s for starts over the next %d months.",
+      mort_houst$lag,
+      if(mort_trend=="falling")"improving" else if(mort_trend=="rising")"further pressure" else "neutral outlook",
+      mort_houst$lag) else ""
+  )
+
+  htmltools::HTML(.tab_synopsis_html("Housing", "#2dce89", "home", bullets, note))
+}
+
+# ── Consumer tab synopsis ──────────────────────────────────────────────────────
+build_consumer_synopsis <- function(fred_data, kpis) {
+  if (is.null(fred_data) || is.null(kpis)) return(NULL)
+
+  ret  <- fred_data$RSAFS   %>% { if(!is.null(.)) arrange(., date) else NULL }
+  sent <- fred_data$UMCSENT %>% { if(!is.null(.)) arrange(., date) %>% pull(value) else NULL }
+  ip   <- fred_data$INDPRO  %>% { if(!is.null(.)) arrange(., date) %>% pull(value) else NULL }
+
+  retail_yoy <- kpis$retail_yoy %||% NA
+  retail_prev_yoy <- if(!is.null(ret) && nrow(ret) > 13) {
+    n <- nrow(ret)
+    round((ret$value[n-1] / ret$value[n-13] - 1) * 100, 1)
+  } else NA
+
+  sent_now  <- kpis$cons_sent %||% NA
+  sent_prev <- if(!is.null(sent) && length(sent) >= 2) sent[length(sent)-1] else NA
+  sent_yr   <- if(!is.null(sent) && length(sent) >= 12) sent[length(sent)-12] else NA
+
+  ip_yoy    <- kpis$indpro_yoy %||% NA
+  ip_trend  <- if(!is.null(ip)) trend_dir(ip, 12) else "unclear"
+
+  sent_trend <- if(!is.null(sent)) trend_dir(sent, 6) else "unclear"
+
+  bullets <- list(
+    list(col=if(!is.na(retail_yoy)&&retail_yoy>0)"#2dce89" else "#e94560",
+         label="Retail sales YoY: ",
+         text=sprintf("%.1f%% (prev print: %.1f%%; %s)",
+                      retail_yoy, retail_prev_yoy%||%NA,
+                      if(!is.na(retail_prev_yoy)) sprintf("%+.1f pp change", retail_yoy-retail_prev_yoy) else "N/A")),
+    list(col=if(!is.na(sent_now)&&sent_now>80)"#2dce89" else if(!is.na(sent_now)&&sent_now>65)"#f4a261" else "#e94560",
+         label="Consumer sentiment: ",
+         text=sprintf("%.1f (prev %.1f; %s vs 1yr ago %.1f)",
+                      sent_now, sent_prev%||%NA,
+                      if(!is.na(sent_prev)) sprintf("%+.1f", sent_now-sent_prev) else "N/A",
+                      sent_yr%||%NA)),
+    list(col=if(!is.na(ip_yoy)&&ip_yoy>0)"#2dce89" else "#e94560",
+         label="Industrial production YoY: ",
+         text=sprintf("%.1f%% — %s", ip_yoy,
+                      if(!is.na(ip_yoy)&&ip_yoy>1)"expansion in manufacturing activity"
+                      else if(!is.na(ip_yoy)&&ip_yoy>0)"stagnant growth"
+                      else "contraction, watch for inventory build reversal")),
+    list(col="#9aa3b2", label="Sentiment trend (6M): ",
+         text=sprintf("%s %s — leading indicator for spending 1-2 quarters ahead",
+                      arrow(sent_trend),
+                      if(sent_trend=="rising")"consumers growing more confident"
+                      else if(sent_trend=="falling")"confidence deteriorating; spending may follow"
+                      else "sentiment stable"))
+  )
+
+  note <- paste(
+    if(!is.na(retail_yoy)) sprintf("Real retail growth (nominal YoY %.1f%% less CPI %.1f%% ≈ %.1f%% real) suggests consumer spending is %s. ",
+      retail_yoy, kpis$cpi_yoy%||%0, retail_yoy-(kpis$cpi_yoy%||%0),
+      if((retail_yoy-(kpis$cpi_yoy%||%0))>1)"growing in real terms" else "barely keeping pace with inflation") else "",
+    if(!is.na(sent_now)&&!is.na(sent_yr)) sprintf(
+      "Sentiment is %s year-over-year (%+.1f pts), %s.",
+      if(sent_now>sent_yr)"higher" else "lower", sent_now-sent_yr,
+      if(sent_now>sent_yr)"supporting continued discretionary spending" else "a headwind for non-essential categories") else ""
+  )
+
+  htmltools::HTML(.tab_synopsis_html("Consumer Economy", "#7c5cbf", "shopping-cart", bullets, note))
+}
+
+# ── Markets tab synopsis ───────────────────────────────────────────────────────
+build_markets_synopsis <- function(fred_data, kpis) {
+  if (is.null(fred_data) || is.null(kpis)) return(NULL)
+
+  t10   <- fred_data$DGS10  %>% { if(!is.null(.)) arrange(., date) %>% pull(value) else NULL }
+  t2    <- fred_data$DGS2   %>% { if(!is.null(.)) arrange(., date) %>% pull(value) else NULL }
+  vix   <- fred_data$VIXCLS %>% { if(!is.null(.)) arrange(., date) %>% pull(value) else NULL }
+  oil   <- fred_data$DCOILWTICO %>% { if(!is.null(.)) arrange(., date) %>% pull(value) else NULL }
+  gold  <- fred_data$GOLDPMGBD228NLBM %>% { if(!is.null(.)) arrange(., date) %>% pull(value) else NULL }
+  hy    <- fred_data$BAMLH0A0HYM2 %>% { if(!is.null(.)) arrange(., date) %>% pull(value) else NULL }
+
+  spread_now  <- kpis$t10y2y %||% NA
+  t10_now     <- kpis$t10yr  %||% NA
+  t10_prev    <- if(!is.null(t10) && length(t10)>=2) t10[length(t10)-1] else NA
+  vix_now     <- kpis$vix    %||% NA
+  vix_prev    <- if(!is.null(vix) && length(vix)>=2) vix[length(vix)-1] else NA
+  oil_now     <- kpis$oil_price %||% NA
+  oil_prev    <- if(!is.null(oil) && length(oil)>=2) oil[length(oil)-1] else NA
+  gold_now    <- kpis$gold_price %||% NA
+  gold_prev   <- if(!is.null(gold)&& length(gold)>=2) gold[length(gold)-1] else NA
+  hy_now      <- kpis$hy_spread %||% NA
+  hy_prev     <- if(!is.null(hy)   && length(hy)>=2) hy[length(hy)-1] else NA
+
+  months_inv  <- if(!is.null(t10) && !is.null(t2)) {
+    n <- min(length(t10), length(t2), 24)
+    sum((tail(t10,n) - tail(t2,n)) < 0, na.rm=TRUE)
+  } else NA
+
+  bullets <- list(
+    list(col=if(!is.na(spread_now)&&spread_now<0)"#e94560" else "#2dce89",
+         label="10Y-2Y spread: ",
+         text=sprintf("%.2f pp (%s); %s months inverted in past 24",
+                      spread_now, if(!is.na(spread_now)&&spread_now<0)"INVERTED — recession signal" else "normal",
+                      months_inv%||%"N/A")),
+    list(col="#f4a261",
+         label="10Y Treasury: ",
+         text=sprintf("%.2f%% (prev %.2f%%; %s bp)",
+                      t10_now, t10_prev%||%NA,
+                      if(!is.na(t10_prev)) sprintf("%+.0f", (t10_now-t10_prev)*100) else "N/A")),
+    list(col=if(!is.na(vix_now)&&vix_now>25)"#e94560" else if(!is.na(vix_now)&&vix_now>18)"#f4a261" else "#2dce89",
+         label="VIX: ",
+         text=sprintf("%.1f (prev %.1f; %s) — %s",
+                      vix_now, vix_prev%||%NA,
+                      if(!is.na(vix_prev)) sprintf("%+.1f", vix_now-vix_prev) else "N/A",
+                      if(!is.na(vix_now)&&vix_now>30)"risk-off: flight to safety, tighter financial conditions"
+                      else if(!is.na(vix_now)&&vix_now>20)"cautious"
+                      else "complacent; watch for vol mean-reversion")),
+    list(col="#f4a261",
+         label="WTI crude / Gold: ",
+         text=sprintf("$%.0f/bbl (%s MoM) / $%.0f/oz (%s MoM) — gold/oil ratio: %.2f",
+                      oil_now, if(!is.na(oil_prev)) sprintf("%+.1f%%", (oil_now/oil_prev-1)*100) else "N/A",
+                      gold_now%||%0,
+                      if(!is.na(gold_prev)&&!is.na(gold_now)) sprintf("%+.1f%%", (gold_now/gold_prev-1)*100) else "N/A",
+                      if(!is.na(oil_now)&&!is.na(gold_now)&&oil_now>0) gold_now/oil_now else NA_real_)),
+    list(col=if(!is.na(hy_now)&&hy_now>5)"#e94560" else "#2dce89",
+         label="HY credit spread: ",
+         text=sprintf("%.2f%% (prev %.2f%%; %s bp) — %s",
+                      hy_now, hy_prev%||%NA,
+                      if(!is.na(hy_prev)) sprintf("%+.0f", (hy_now-hy_prev)*100) else "N/A",
+                      if(!is.na(hy_now)&&hy_now>6)"stress: credit markets pricing elevated default risk"
+                      else if(!is.na(hy_now)&&hy_now>4.5)"elevated but contained"
+                      else "benign credit conditions, risk appetite intact"))
+  )
+
+  note <- paste(
+    if(!is.na(months_inv)&&months_inv>0) sprintf(
+      "Curve inverted for %d of 24 months. Historically a recession follows within 6-18 months of inversion onset, though timing varies. ", months_inv) else "",
+    if(!is.na(hy_now)&&!is.na(vix_now))
+      sprintf("HY spreads (%.2f%%) and VIX (%.1f) are %s — %s.",
+              hy_now, vix_now,
+              if(hy_now<4.5&&vix_now<20)"aligned in a risk-on regime"
+              else if(hy_now>5.5||vix_now>25)"diverging toward risk-off"
+              else "in a cautious middle zone",
+              "these two together are a reliable coincident indicator of financial stress") else ""
+  )
+
+  htmltools::HTML(.tab_synopsis_html("Financial Markets", "#f4a261", "chart-line", bullets, note))
+}

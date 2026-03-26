@@ -353,16 +353,28 @@ server <- function(input, output, session) {
     req(rv$fred_data)
     rows <- map_dfr(c("UNRATE","PAYEMS","JTSJOL","JTSQUL","CES0500000003"), function(sid) {
       df <- rv$fred_data[[sid]]
-      if (is.null(df) || nrow(df) == 0) return(NULL)
-      latest <- tail(df, 1)
-      tibble(Series=FRED_CFG[[sid]]$label %||% sid,
-             Date=format(latest$date,"%b %Y"),
-             Value=round(latest$value,2),
-             Unit=FRED_CFG[[sid]]$unit %||% "")
+      if (is.null(df) || nrow(df) < 2) return(NULL)
+      df    <- df %>% arrange(date)
+      n     <- nrow(df)
+      lat   <- df$value[n]
+      prev  <- df$value[n-1]
+      delta <- round(lat - prev, 3)
+      tibble(
+        Series   = FRED_CFG[[sid]]$label %||% sid,
+        Date     = format(df$date[n], "%b %Y"),
+        Value    = round(lat, 2),
+        `Δ Prev` = sprintf("%+.3g", delta),
+        Unit     = FRED_CFG[[sid]]$unit %||% ""
+      )
     })
     datatable(rows, options=list(pageLength=10, dom="t"), rownames=FALSE,
               class="table-dark compact stripe") %>%
-      formatStyle(columns=1:4, backgroundColor="#1e2640", color="#d0d0d0")
+      formatStyle("Δ Prev",
+                  color = styleEqual(
+                    rows$`Δ Prev`,
+                    ifelse(as.numeric(rows$`Δ Prev`) >= 0, "#2dce89", "#e94560")
+                  )) %>%
+      formatStyle(columns=seq_len(5), backgroundColor="#1e2640", color="#d0d0d0")
   })
 
   # ═══════════════════════════════════════════════════════════════════════════
@@ -443,21 +455,31 @@ server <- function(input, output, session) {
     req(rv$fred_data)
     rows <- map_dfr(c("CPIAUCSL","CPILFESL","PCEPI","PCEPILFE","PPIACO"), function(sid) {
       df <- rv$fred_data[[sid]]
-      if (is.null(df) || nrow(df) < 13) return(NULL)
-      # Show YoY % (not raw index level) for all inflation series
-      d_yoy <- df %>% yoy_change() %>% filter(!is.na(yoy))
-      if (nrow(d_yoy) == 0) return(NULL)
-      latest_yoy <- tail(d_yoy, 1)
+      if (is.null(df) || nrow(df) < 14) return(NULL)
+      d_yoy <- df %>% yoy_change() %>% filter(!is.na(yoy)) %>% arrange(date)
+      if (nrow(d_yoy) < 2) return(NULL)
+      n     <- nrow(d_yoy)
+      delta <- round(d_yoy$yoy[n] - d_yoy$yoy[n-1], 2)
       tibble(
         Series   = FRED_CFG[[sid]]$label %||% sid,
-        Date     = format(latest_yoy$date, "%b %Y"),
-        `YoY %`  = round(latest_yoy$yoy, 2),
-        Note     = "Year-over-Year Change"
+        Date     = format(d_yoy$date[n], "%b %Y"),
+        `YoY %`  = round(d_yoy$yoy[n], 2),
+        `Δ Prev` = sprintf("%+.2f pp", delta),
+        Context  = if(sid=="CPIAUCSL") "Headline; Fed target 2%" else
+                   if(sid=="CPILFESL") "Ex food & energy" else
+                   if(sid=="PCEPI")    "PCE headline" else
+                   if(sid=="PCEPILFE") "Fed preferred gauge" else
+                   if(sid=="PPIACO")   "Leads CPI by ~2 months" else ""
       )
     })
     datatable(rows, options=list(dom="t"), rownames=FALSE, class="table-dark compact stripe") %>%
-      formatStyle("YoY %", color = styleInterval(c(2, 4), c("#2dce89", "#f4a261", "#e94560"))) %>%
-      formatStyle(columns = seq_len(ncol(rows)), backgroundColor = "#1e2640", color = "#d0d0d0")
+      formatStyle("YoY %",  color = styleInterval(c(2, 4), c("#2dce89","#f4a261","#e94560"))) %>%
+      formatStyle("Δ Prev",
+                  color = styleEqual(
+                    rows$`Δ Prev`,
+                    ifelse(as.numeric(gsub(" pp","",rows$`Δ Prev`)) >= 0, "#e94560", "#2dce89")
+                  )) %>%
+      formatStyle(columns = seq_len(5), backgroundColor = "#1e2640", color = "#d0d0d0")
   })
 
   # ═══════════════════════════════════════════════════════════════════════════
@@ -972,17 +994,24 @@ server <- function(input, output, session) {
   # ═══════════════════════════════════════════════════════════════════════════
 
   output$synopsis_panel <- renderUI({
-    # Recompute whenever fred_data or kpis update
     req(rv$fred_data, rv$kpis)
-    blocks <- tryCatch(
-      build_synopsis(rv$fred_data, rv$kpis),
-      error = function(e) {
-        message("[Synopsis error] ", e$message)
-        NULL
-      }
-    )
+    blocks <- tryCatch(build_synopsis(rv$fred_data, rv$kpis),
+                       error=function(e){ message("[Synopsis] ",e$message); NULL })
     render_synopsis_html(blocks)
   })
+
+  # Tab-level synopsis panels (render on demand when data is available)
+  .tab_synopsis <- function(fn) renderUI({
+    if (is.null(rv$fred_data) || is.null(rv$kpis)) return(NULL)
+    tryCatch(fn(rv$fred_data, rv$kpis),
+             error=function(e){ message("[Tab synopsis] ",e$message); NULL })
+  })
+
+  output$labor_synopsis    <- .tab_synopsis(build_labor_synopsis)
+  output$inflation_synopsis<- .tab_synopsis(build_inflation_synopsis)
+  output$housing_synopsis  <- .tab_synopsis(build_housing_synopsis)
+  output$consumer_synopsis <- .tab_synopsis(build_consumer_synopsis)
+  output$markets_synopsis  <- .tab_synopsis(build_markets_synopsis)
 
   # ═══════════════════════════════════════════════════════════════════════════
   # NEWS

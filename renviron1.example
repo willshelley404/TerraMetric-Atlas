@@ -25,12 +25,7 @@ TOGETHER_API_KEY=your_together_api_key_here
 # NewsAPI (Free tier: 100 req/day) — https://newsapi.org
 NEWS_API_KEY=your_newsapi_key_here
 
-# ── News Cache (persistent across sessions) ───────────────────────────────────
-# Leave blank to use ./cache/ relative to the app directory (default, works locally).
-# On Shiny Server / Posit Connect / shinyapps.io, set this to an absolute writable path.
-# Example for Shiny Server: ECONPULSE_CACHE_DIR=/var/shiny-server/econpulse/cache
-# Example for Posit Connect: ECONPULSE_CACHE_DIR=/home/rstudio/econpulse_cache
-ECONPULSE_CACHE_DIR=
+# ── Active LLM Provider Override (optional) ───────────────────────────────────
 # Set to: "groq", "openrouter", or "together"
 # If not set, auto-detected from whichever key is present
 LLM_PROVIDER=groq
