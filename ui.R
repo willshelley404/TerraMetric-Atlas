@@ -31,7 +31,7 @@ ui <- dashboardPage(
 
   # ── HEADER ────────────────────────────────────────────────────────────────────
   dashboardHeader(
-    title = span(span(class = "live-indicator"), "EconPulse AI"),
+    title = span(span(class = "live-indicator"), "TerraMetric Atlas"),
     tags$li(
       class = "dropdown",
       style = "padding:10px 14px;",
@@ -657,64 +657,129 @@ ui <- dashboardPage(
           status = "primary",
           solidHeader = TRUE,
           width = 12,
-          fluidRow(
-            column(
-              3,
-              selectInput(
-                "map_var",
-                "Map Variable:",
-                choices = c(
-                  "Unemployment Rate" = "unemp_rate",
-                  "Poverty Rate" = "poverty_rate",
-                  "Labor Force Part. Rate" = "lfp_rate",
-                  "Median HH Income" = "med_income",
-                  "Median Home Value" = "med_home_val",
-                  "Housing Vacancy Rate" = "vacancy_rate"
+          tabsetPanel(
+            id = "metro_subtab",
+            # ── Sub-tab 1: State choropleth ──────────────────────────────────
+            tabPanel(
+              "State Choropleth",
+              br(),
+              fluidRow(
+                column(
+                  3,
+                  selectInput(
+                    "map_var",
+                    "Map Variable:",
+                    choices = c(
+                      "Unemployment Rate" = "unemp_rate",
+                      "Poverty Rate" = "poverty_rate",
+                      "Labor Force Part. Rate" = "lfp_rate",
+                      "Median HH Income" = "med_income",
+                      "Median Home Value" = "med_home_val",
+                      "Housing Vacancy Rate" = "vacancy_rate"
+                    ),
+                    selected = "unemp_rate"
+                  ),
+                  div(
+                    style = "background:#1e2640;border-radius:6px;padding:12px;margin-top:10px;",
+                    div(
+                      style = "color:#9aa3b2;font-size:11px;line-height:1.9;",
+                      icon("info-circle", style = "color:#00b4d8;"),
+                      " ACS 5-Year Estimates.",
+                      tags$br(),
+                      "Click any state for details.",
+                      tags$br(),
+                      "Hover for quick tooltip.",
+                      tags$br(),
+                      "Scroll to zoom."
+                    )
+                  )
                 ),
-                selected = "unemp_rate"
-              ),
-              div(
-                style = "background:#1e2640;border-radius:6px;padding:12px;margin-top:10px;",
-                div(
-                  style = "color:#9aa3b2;font-size:11px;line-height:1.8;",
-                  icon("info-circle", style = "color:#00b4d8;"),
-                  " ACS 5-Year Estimates.",
-                  tags$br(),
-                  "Click any state to view details.",
-                  tags$br(),
-                  "Scroll to zoom the map."
+                column(
+                  9,
+                  withSpinner(
+                    leafletOutput("metro_map", height = "480px"),
+                    type = 4,
+                    color = "#00b4d8",
+                    color.background = "#161b27",
+                    size = 0.7
+                  )
                 )
-              )
+              ),
+              hr(style = "border-color:#2a3042; margin-top:16px;"),
+              div(
+                style = "color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;",
+                "State Rankings"
+              ),
+              DTOutput("tbl_metro")
             ),
-            column(
-              9,
+
+            # ── Sub-tab 2: Metro bubble map ──────────────────────────────────
+            tabPanel(
+              "Metro Bubble Map",
+              br(),
+              fluidRow(
+                column(
+                  3,
+                  selectInput(
+                    "metro_map_var",
+                    "Map Variable:",
+                    choices = c(
+                      "Unemployment Rate" = "unemp_rate",
+                      "Poverty Rate" = "poverty_rate",
+                      "Labor Force Part. Rate" = "lfp_rate",
+                      "Median HH Income" = "med_income",
+                      "Median Home Value" = "med_home_val"
+                    ),
+                    selected = "unemp_rate"
+                  ),
+                  sliderInput(
+                    "metro_min_pop",
+                    "Min. Population (M):",
+                    min = 0.1,
+                    max = 3,
+                    value = 0.5,
+                    step = 0.1
+                  ),
+                  div(
+                    style = "background:#1e2640;border-radius:6px;padding:12px;margin-top:10px;",
+                    div(
+                      style = "color:#9aa3b2;font-size:11px;line-height:1.9;",
+                      icon("circle", style = "color:#00b4d8;"),
+                      " Bubble size = population.",
+                      tags$br(),
+                      " Bubble colour = selected variable.",
+                      tags$br(),
+                      " Click bubble for full detail.",
+                      tags$br(),
+                      " ACS 5-Year Estimates."
+                    )
+                  )
+                ),
+                column(
+                  9,
+                  withSpinner(
+                    leafletOutput("metro_bubble_map", height = "480px"),
+                    type = 4,
+                    color = "#7c5cbf",
+                    color.background = "#161b27",
+                    size = 0.7
+                  )
+                )
+              ),
+              hr(style = "border-color:#2a3042; margin-top:16px;"),
+              div(
+                style = "color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;",
+                "Major Metro Areas (CBSAs, 250k+ population)"
+              ),
               withSpinner(
-                leafletOutput("metro_map", height = "480px"),
+                DTOutput("tbl_metro_cbsa"),
                 type = 4,
-                color = "#00b4d8",
+                color = "#7c5cbf",
                 color.background = "#161b27",
                 size = 0.7
               )
             )
-          ),
-          hr(style = "border-color:#2a3042;"),
-          div(
-            style = "color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;",
-            "State Rankings"
-          ),
-          DTOutput("tbl_metro"),
-          hr(style = "border-color:#2a3042; margin-top:20px;"),
-          div(
-            style = "color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;",
-            "Major Metro Areas (CBSAs)"
-          ),
-          withSpinner(
-            DTOutput("tbl_metro_cbsa"),
-            type = 4,
-            color = "#00b4d8",
-            color.background = "#161b27",
-            size = 0.7
-          )
+          ) # end tabsetPanel
         )
       ),
 

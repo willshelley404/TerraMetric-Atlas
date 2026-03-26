@@ -10,7 +10,7 @@ server <- function(input, output, session) {
       br(),
       div(
         style = "color:#e0e0e0;font-size:14px;margin-top:16px;",
-        "Loading EconPulse AI…"
+        "Loading TerraMetric Atlas…"
       ),
       div(
         style = "color:#9aa3b2;font-size:12px;margin-top:6px;",
@@ -29,6 +29,7 @@ server <- function(input, output, session) {
     news_data = NULL,
     census_data = NULL,
     metro_data = NULL,
+    metro_sf = NULL, # metro ACS joined with CBSA centroids
     kpis = NULL,
     forecasts = NULL,
     infl_panel = NULL,
@@ -1191,7 +1192,6 @@ server <- function(input, output, session) {
 
   observeEvent(input$tabs, {
     if (input$tabs == "metro") {
-      # Load state choropleth data (geometry-bearing sf)
       if (is.null(rv$census_data)) {
         withProgress(
           message = "Loading state ACS data from Census API…",
@@ -1201,9 +1201,20 @@ server <- function(input, output, session) {
             rv$census_data <- fetch_state_acs()
             incProgress(0.5, detail = "State data loaded. Fetching metro data…")
             rv$metro_data <- fetch_metro_acs()
+            incProgress(0.9, detail = "Fetching CBSA centroids…")
+            if (!is.null(rv$metro_data)) {
+              rv$metro_sf <- fetch_metro_sf(rv$metro_data)
+            }
             incProgress(1.0)
           }
         )
+      }
+      # If state data loaded but metro_sf not yet fetched (e.g. after refresh)
+      if (!is.null(rv$metro_data) && is.null(rv$metro_sf)) {
+        withProgress(message = "Fetching CBSA centroids…", value = 0.5, {
+          rv$metro_sf <- fetch_metro_sf(rv$metro_data)
+          incProgress(1.0)
+        })
       }
     }
   })
@@ -1212,13 +1223,13 @@ server <- function(input, output, session) {
     # Show a loading placeholder until census data is ready
     if (is.null(rv$census_data)) {
       return(
-        leaflet() %>%
-          addProviderTiles(
+        leaflet::leaflet() %>%
+          leaflet::addProviderTiles(
             "CartoDB.DarkMatter",
-            options = providerTileOptions(opacity = 0.95)
+            options = leaflet::providerTileOptions(opacity = 0.95)
           ) %>%
-          setView(lng = -96, lat = 38, zoom = 4) %>%
-          addControl(
+          leaflet::setView(lng = -96, lat = 38, zoom = 4) %>%
+          leaflet::addControl(
             html = "<div style='background:#1e2640;color:#9aa3b2;padding:10px 14px;
                     border-radius:6px;font-size:13px;'>
                     &#9203; Loading Census data&hellip; (first load ~20s)</div>",
@@ -1235,10 +1246,10 @@ server <- function(input, output, session) {
       }
     )
     if (is.null(map_out)) {
-      leaflet() %>%
-        addProviderTiles("CartoDB.DarkMatter") %>%
-        setView(lng = -96, lat = 38, zoom = 4) %>%
-        addControl(
+      leaflet::leaflet() %>%
+        leaflet::addProviderTiles("CartoDB.DarkMatter") %>%
+        leaflet::setView(lng = -96, lat = 38, zoom = 4) %>%
+        leaflet::addControl(
           html = "<div style='background:#1e2640;color:#e94560;padding:10px 14px;
                   border-radius:6px;font-size:13px;'>
                   &#9888; Map failed &mdash; check R console</div>",
@@ -1319,6 +1330,50 @@ server <- function(input, output, session) {
         backgroundColor = "#1e2640",
         color = "#d0d0d0"
       )
+  })
+
+  # Metro bubble map
+  output$metro_bubble_map <- renderLeaflet({
+    if (is.null(rv$metro_sf)) {
+      return(
+        leaflet::leaflet() %>%
+          leaflet::addProviderTiles(
+            "CartoDB.DarkMatter",
+            options = leaflet::providerTileOptions(opacity = 0.95)
+          ) %>%
+          leaflet::setView(lng = -96, lat = 38, zoom = 4) %>%
+          leaflet::addControl(
+            html = "<div style='background:#1e2640;color:#9aa3b2;padding:10px 14px;
+                    border-radius:6px;font-size:13px;'>
+                    &#9203; Switch to State Choropleth tab first to load data&hellip;</div>",
+            position = "topright"
+          )
+      )
+    }
+
+    var <- input$metro_map_var %||% "unemp_rate"
+    min_pop <- (input$metro_min_pop %||% 0.5) * 1e6
+
+    map_out <- tryCatch(
+      build_metro_bubble_map(rv$metro_sf, variable = var, min_pop = min_pop),
+      error = function(e) {
+        message("[Metro bubble error] ", e$message)
+        NULL
+      }
+    )
+
+    if (is.null(map_out)) {
+      leaflet::leaflet() %>%
+        leaflet::addProviderTiles("CartoDB.DarkMatter") %>%
+        leaflet::setView(lng = -96, lat = 38, zoom = 4) %>%
+        leaflet::addControl(
+          html = "<div style='background:#1e2640;color:#e94560;padding:10px 14px;
+                  border-radius:6px;'>&#9888; Metro map failed &mdash; check R console</div>",
+          position = "topright"
+        )
+    } else {
+      map_out
+    }
   })
 
   # ═══════════════════════════════════════════════════════════════════════════
