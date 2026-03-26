@@ -251,7 +251,8 @@ fetch_metro_acs <- function(year = NULL, survey = "acs5") {
         survey = survey,
         geometry = FALSE,
         output = "wide"
-      )
+      ) |>
+        filter(!str_detect(NAME, "San Juan"))
 
       raw %>%
         transmute(
@@ -265,7 +266,13 @@ fetch_metro_acs <- function(year = NULL, survey = "acs5") {
           med_income = median_hh_incomeE,
           med_home_val = median_home_valueE
         ) %>%
-        filter(!is.na(unemp_rate), pop > 250000) %>%
+        filter(
+          !is.na(unemp_rate),
+          pop > 250000,
+          # Exclude Puerto Rico (72***) and other territory CBSAs
+          # US territory FIPS state prefixes: PR=72, GU=66, VI=78, AS=60, MP=69
+          !grepl("^(72|66|78|60|69)", GEOID)
+        ) %>%
         # Clean up long CBSA names (drop ", state-state" suffix)
         mutate(metro = stringr::str_remove(metro, ",.*$")) %>%
         arrange(desc(pop))
@@ -542,7 +549,9 @@ fetch_metro_sf <- function(metro_df, year = 2023) {
         sf::st_transform(4326)
 
       # Compute centroid for each CBSA (point geometry for bubble map)
+      # Exclude territory CBSAs (PR=72, GU=66, VI=78, AS=60, MP=69)
       cbsa_centroids <- cbsa_sf %>%
+        filter(!grepl("^(72|66|78|60|69)", GEOID)) %>%
         sf::st_centroid() %>%
         mutate(
           lon = sf::st_coordinates(geometry)[, 1],
@@ -579,7 +588,14 @@ build_metro_bubble_map <- function(
   cfg <- METRO_VAR_CFG[[variable]] %||% METRO_VAR_CFG[["unemp_rate"]]
 
   df <- metro_sf_df %>%
-    filter(pop >= min_pop, !is.na(.data[[variable]]), !is.na(lon), !is.na(lat))
+    filter(
+      pop >= min_pop,
+      !is.na(.data[[variable]]),
+      !is.na(lon),
+      !is.na(lat),
+      # Belt-and-suspenders: exclude any territory CBSAs that slipped through
+      !grepl("^(72|66|78|60|69)", GEOID)
+    )
 
   if (nrow(df) == 0) {
     return(NULL)
