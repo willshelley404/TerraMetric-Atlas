@@ -802,3 +802,375 @@ build_markets_synopsis <- function(fred_data, kpis) {
 
   htmltools::HTML(.tab_synopsis_html("Financial Markets", "#f4a261", "chart-line", bullets, note))
 }
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# "SO WHAT" GROWTH OUTLOOK PANEL
+# Synthesises all macro indicators into a 6-12 month GDP growth signal
+# Uses a simple composite scoring model — no LLM required
+# ═══════════════════════════════════════════════════════════════════════════════
+
+#' Score a single indicator: +1 (positive impulse), 0 (neutral), -1 (negative)
+.score <- function(val, good_threshold, bad_threshold, higher_good = TRUE) {
+  if (is.na(val)) return(0)
+  if (higher_good) {
+    if (val >= good_threshold) return( 1)
+    if (val <= bad_threshold)  return(-1)
+    return(0)
+  } else {
+    if (val <= good_threshold) return( 1)
+    if (val >= bad_threshold)  return(-1)
+    return(0)
+  }
+}
+
+#' Build the full growth outlook object
+build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
+  if (is.null(kpis)) return(NULL)
+
+  # ── Pull series ──────────────────────────────────────────────────────────────
+  gv  <- function(sid) {
+    df <- fred_data[[sid]]
+    if (is.null(df) || nrow(df) < 2) return(NULL)
+    df %>% dplyr::arrange(date) %>% dplyr::pull(value)
+  }
+
+  unemp    <- gv("UNRATE");   payrolls <- gv("PAYEMS")
+  cpi      <- gv("CPIAUCSL"); fedfunds <- gv("FEDFUNDS")
+  t10      <- gv("DGS10");    t2       <- gv("DGS2")
+  mort     <- gv("MORTGAGE30US")
+  houst    <- gv("HOUST");    retail   <- gv("RSAFS")
+  sent     <- gv("UMCSENT"); indpro   <- gv("INDPRO")
+  vix_vals <- gv("VIXCLS");   hy       <- gv("BAMLH0A0HYM2")
+  oil      <- gv("DCOILWTICO")
+
+  # ── Key current values ────────────────────────────────────────────────────────
+  u      <- kpis$unemp_rate  %||% NA
+  cpi_y  <- kpis$cpi_yoy    %||% NA
+  pce_y  <- kpis$core_pce   %||% NA
+  ff     <- kpis$fed_funds  %||% NA
+  t10v   <- kpis$t10yr      %||% NA
+  t2v    <- kpis$t2yr       %||% NA
+  mort_v <- kpis$mortgage30 %||% NA
+  hs     <- kpis$housing_starts %||% NA
+  ret_y  <- kpis$retail_yoy  %||% NA
+  cs     <- kpis$cons_sent   %||% NA
+  ip_y   <- kpis$indpro_yoy  %||% NA
+  vix_v  <- kpis$vix         %||% NA
+  hy_v   <- kpis$hy_spread   %||% NA
+  oil_v  <- kpis$oil_price   %||% NA
+
+  # ── Derived metrics ──────────────────────────────────────────────────────────
+  real_rate   <- if (!is.na(ff)  && !is.na(cpi_y)) ff - cpi_y   else NA
+  yield_spread<- if (!is.na(t10v)&& !is.na(t2v))  t10v - t2v  else NA
+  pay_3m      <- if (!is.null(payrolls) && length(payrolls)>=4)
+                   mean(diff(tail(payrolls,4)), na.rm=TRUE) else NA
+  ret_real    <- if (!is.na(ret_y) && !is.na(cpi_y)) ret_y - cpi_y else NA
+
+  # Months of yield inversion in last 18
+  inv_months  <- if (!is.null(t10) && !is.null(t2)) {
+    n <- min(length(t10), length(t2), 18)
+    sum((tail(t10,n) - tail(t2,n)) < 0, na.rm=TRUE)
+  } else 0
+
+  # VIX 6-month average
+  vix_6m_avg <- if (!is.null(vix_vals) && length(vix_vals)>=126)
+    mean(tail(vix_vals,126), na.rm=TRUE) else vix_v
+
+  # ── Composite score model ────────────────────────────────────────────────────
+  # Each component scores -1 / 0 / +1; weighted sum → composite
+  # Positive composite = growth-positive conditions; negative = recessionary
+  components <- list(
+
+    # Labor (weight 2.5)
+    labor = list(
+      weight = 2.5,
+      score  = mean(c(
+        .score(u,      3.5, 5.0,   higher_good=FALSE),  # unemployment
+        .score(pay_3m, 150, 50,    higher_good=TRUE),    # payroll momentum
+        .score(u,      4.5, 5.5,   higher_good=FALSE)    # secondary unemployment gauge
+      ), na.rm=TRUE),
+      label  = "Labor Market",
+      detail = if (!is.na(u) && !is.na(pay_3m))
+        sprintf("%.1f%% unemployment; avg payrolls %+.0fK/mo (3M)", u, pay_3m) else "N/A"
+    ),
+
+    # Consumer (weight 2.0)
+    consumer = list(
+      weight = 2.0,
+      score  = mean(c(
+        .score(ret_real, 1.0, -1.0, higher_good=TRUE),   # real retail growth
+        .score(cs,       85,  65,   higher_good=TRUE)    # consumer sentiment
+      ), na.rm=TRUE),
+      label  = "Consumer Demand",
+      detail = if (!is.na(ret_real) && !is.na(cs))
+        sprintf("Real retail YoY %.1f%%; sentiment %.0f", ret_real, cs) else "N/A"
+    ),
+
+    # Monetary conditions (weight 2.0)
+    monetary = list(
+      weight = 2.0,
+      score  = mean(c(
+        .score(real_rate,    0.5, 2.5,   higher_good=FALSE), # real rate (higher=tighter)
+        .score(yield_spread, 0.5, -0.25, higher_good=TRUE),  # yield curve
+        .score(inv_months,   3,   9,     higher_good=FALSE)  # inversion duration
+      ), na.rm=TRUE),
+      label  = "Monetary Conditions",
+      detail = if (!is.na(real_rate) && !is.na(yield_spread))
+        sprintf("Real rate %.1f%%; 10Y-2Y spread %.2f pp; %d mo inverted",
+                real_rate, yield_spread, inv_months) else "N/A"
+    ),
+
+    # Housing (weight 1.5)
+    housing = list(
+      weight = 1.5,
+      score  = mean(c(
+        .score(hs,     1400, 1000, higher_good=TRUE),    # housing starts (K)
+        .score(mort_v, 6.0,  7.5,  higher_good=FALSE)   # mortgage rate
+      ), na.rm=TRUE),
+      label  = "Housing",
+      detail = if (!is.na(hs) && !is.na(mort_v))
+        sprintf("%.0fK starts ann.; %.2f%% mortgage rate", hs, mort_v) else "N/A"
+    ),
+
+    # Financial conditions (weight 1.5)
+    financial = list(
+      weight = 1.5,
+      score  = mean(c(
+        .score(vix_v, 18, 28, higher_good=FALSE),  # VIX (lower=calmer)
+        .score(hy_v,  4.5, 6.0, higher_good=FALSE) # HY spread (lower=benign)
+      ), na.rm=TRUE),
+      label  = "Financial Conditions",
+      detail = if (!is.na(vix_v) && !is.na(hy_v))
+        sprintf("VIX %.1f; HY spread %.2f%%", vix_v, hy_v) else "N/A"
+    ),
+
+    # Inflation / pricing pressure (weight 1.5 — elevated = headwind)
+    inflation = list(
+      weight = 1.5,
+      score  = mean(c(
+        .score(cpi_y, 2.5, 4.5, higher_good=FALSE),  # CPI (lower=better for growth)
+        .score(pce_y, 2.3, 3.5, higher_good=FALSE)   # Core PCE
+      ), na.rm=TRUE),
+      label  = "Inflation",
+      detail = if (!is.na(cpi_y) && !is.na(pce_y))
+        sprintf("CPI YoY %.1f%%; Core PCE %.1f%%", cpi_y, pce_y) else "N/A"
+    ),
+
+    # Industrial / production (weight 1.0)
+    industrial = list(
+      weight = 1.0,
+      score  = .score(ip_y, 1.0, -1.0, higher_good=TRUE),
+      label  = "Industrial Output",
+      detail = if (!is.na(ip_y)) sprintf("IP YoY %.1f%%", ip_y) else "N/A"
+    )
+  )
+
+  # ── Weighted composite ────────────────────────────────────────────────────────
+  total_weight <- sum(sapply(components, `[[`, "weight"))
+  raw_score    <- sum(sapply(components, function(c) c$score * c$weight)) / total_weight
+  # Scale: -1 → +1 → normalise to 0-10 for display
+  score_0_10   <- round((raw_score + 1) / 2 * 10, 1)
+  score_0_10   <- max(0, min(10, score_0_10))
+
+  # ── Regime classification ─────────────────────────────────────────────────────
+  regime <- dplyr::case_when(
+    score_0_10 >= 7.5 ~ list(
+      label   = "Expansion",
+      color   = "#2dce89",
+      icon    = "arrow-up",
+      gdp_est = "+2.5% to +3.5%",
+      summary = "Broad-based growth signals. Labour market solid, consumer spending resilient, financial conditions supportive."
+    ),
+    score_0_10 >= 5.5 ~ list(
+      label   = "Moderate Growth",
+      color   = "#00b4d8",
+      icon    = "minus",
+      gdp_est = "+1.0% to +2.5%",
+      summary = "Below-trend but positive growth likely. Mixed signals across sectors — watch rate transmission and consumer confidence."
+    ),
+    score_0_10 >= 3.5 ~ list(
+      label   = "Stall / Slowdown",
+      color   = "#f4a261",
+      icon    = "arrow-down",
+      gdp_est = "-0.5% to +1.0%",
+      summary = "Growth at risk. Restrictive monetary conditions, softening demand, or financial stress beginning to bite."
+    ),
+    TRUE ~ list(
+      label   = "Contraction Risk",
+      color   = "#e94560",
+      icon    = "exclamation-triangle",
+      gdp_est = "Below -0.5%",
+      summary = "Multiple negative signals. Recession probability elevated — yield curve, credit spreads, and demand indicators all deteriorating."
+    )
+  )
+
+  # ── Key swing factors ─────────────────────────────────────────────────────────
+  swing_factors <- list()
+
+  # Most negative drag
+  drag <- names(which.min(sapply(components, `[[`, "score")))
+  swing_factors$biggest_drag <- list(
+    name   = components[[drag]]$label,
+    score  = round(components[[drag]]$score, 2),
+    detail = components[[drag]]$detail
+  )
+
+  # Most positive support
+  supp <- names(which.max(sapply(components, `[[`, "score")))
+  swing_factors$biggest_support <- list(
+    name   = components[[supp]]$label,
+    score  = round(components[[supp]]$score, 2),
+    detail = components[[supp]]$detail
+  )
+
+  # Key watch: inversion status
+  swing_factors$yield_curve_watch <- if (inv_months > 6) {
+    sprintf("Yield curve inverted %d months — recession historically follows within 6-18 months of onset.", inv_months)
+  } else if (!is.na(yield_spread) && yield_spread > 0) {
+    sprintf("Yield curve re-steepened to %.2f pp — often precedes recovery but watch for 'bear steepener' pattern.", yield_spread)
+  } else NULL
+
+  # Fed pivot watch
+  swing_factors$fed_watch <- if (!is.na(real_rate) && real_rate > 2.0) {
+    sprintf("Real Fed Funds rate %.1f%% — firmly restrictive. Rate cuts would provide significant growth tailwind.", real_rate)
+  } else if (!is.na(real_rate) && real_rate < 0.5) {
+    "Real rate near zero — limited conventional monetary stimulus remaining."
+  } else NULL
+
+  list(
+    score        = score_0_10,
+    raw_score    = raw_score,
+    regime       = regime,
+    components   = components,
+    swing        = swing_factors,
+    as_of        = Sys.Date()
+  )
+}
+
+#' Render the growth outlook as HTML
+render_growth_outlook_html <- function(outlook) {
+  if (is.null(outlook)) {
+    return(HTML("<p style='color:#6b7585;padding:16px;'>Growth outlook not yet computed — data loading.</p>"))
+  }
+
+  reg   <- outlook$regime
+  score <- outlook$score
+  comps <- outlook$components
+  swing <- outlook$swing
+
+  # Score gauge bar
+  pct   <- score / 10 * 100
+  gauge_col <- reg$color
+
+  gauge_html <- sprintf(
+    "<div style='margin:12px 0 16px;'>
+       <div style='display:flex;justify-content:space-between;margin-bottom:5px;'>
+         <span style='color:#9aa3b2;font-size:11px;'>Contraction Risk</span>
+         <span style='color:#9aa3b2;font-size:11px;'>Expansion</span>
+       </div>
+       <div style='background:#2a3042;border-radius:6px;height:12px;overflow:hidden;'>
+         <div style='background:linear-gradient(90deg,%s,%s);width:%.0f%%;height:100%%;
+                     border-radius:6px;transition:width 0.5s ease;'></div>
+       </div>
+       <div style='margin-top:5px;display:flex;justify-content:space-between;'>
+         <span style='color:#9aa3b2;font-size:10px;'>0</span>
+         <span style='color:%s;font-size:11px;font-weight:700;'>Score: %.1f / 10</span>
+         <span style='color:#9aa3b2;font-size:10px;'>10</span>
+       </div>
+     </div>",
+    if (score < 5) "#e94560" else "#f4a261",
+    gauge_col, pct, gauge_col, score
+  )
+
+  # Component scores
+  comp_html <- paste(vapply(names(comps), function(nm) {
+    c  <- comps[[nm]]
+    s  <- c$score
+    col<- if (s >= 0.4) "#2dce89" else if (s >= -0.4) "#f4a261" else "#e94560"
+    bar_w <- round((s + 1) / 2 * 100)
+    sprintf(
+      "<div style='margin-bottom:8px;'>
+         <div style='display:flex;justify-content:space-between;margin-bottom:3px;'>
+           <span style='color:#9aa3b2;font-size:11px;'>%s</span>
+           <span style='color:%s;font-size:11px;font-weight:600;'>%s</span>
+         </div>
+         <div style='background:#2a3042;border-radius:3px;height:5px;'>
+           <div style='background:%s;width:%d%%;height:100%%;border-radius:3px;'></div>
+         </div>
+         <div style='color:#6b7585;font-size:10px;margin-top:2px;'>%s</div>
+       </div>",
+      c$label,
+      col,
+      if (s >= 0.4) "Positive" else if (s >= -0.4) "Neutral" else "Negative",
+      col, bar_w,
+      htmltools::htmlEscape(c$detail)
+    )
+  }, character(1)), collapse="")
+
+  # Swing factors
+  swing_html <- paste(c(
+    if (!is.null(swing$biggest_drag))
+      sprintf("<li style='margin-bottom:6px;'><span style='color:#e94560;font-weight:600;'>⬇ Biggest drag: %s</span> — %s</li>",
+              swing$biggest_drag$name, htmltools::htmlEscape(swing$biggest_drag$detail)),
+    if (!is.null(swing$biggest_support))
+      sprintf("<li style='margin-bottom:6px;'><span style='color:#2dce89;font-weight:600;'>⬆ Biggest support: %s</span> — %s</li>",
+              swing$biggest_support$name, htmltools::htmlEscape(swing$biggest_support$detail)),
+    if (!is.null(swing$yield_curve_watch))
+      sprintf("<li style='margin-bottom:6px;'><span style='color:#f4a261;font-weight:600;'>⚠ Yield Curve:</span> %s</li>",
+              htmltools::htmlEscape(swing$yield_curve_watch)),
+    if (!is.null(swing$fed_watch))
+      sprintf("<li style='margin-bottom:6px;'><span style='color:#00b4d8;font-weight:600;'>⚙ Fed Policy:</span> %s</li>",
+              htmltools::htmlEscape(swing$fed_watch))
+  ), collapse="")
+
+  HTML(sprintf(
+    "<div style='display:flex;gap:14px;'>
+       <!-- Left: regime verdict -->
+       <div style='flex:1;background:#1a2035;border:1px solid #2a3042;border-radius:8px;
+                   border-top:3px solid %s;padding:16px 18px;'>
+         <div style='color:%s;font-size:11px;font-weight:700;text-transform:uppercase;
+                     letter-spacing:1px;margin-bottom:6px;'>
+           <i class=\"fa fa-%s\" style=\"margin-right:6px;\"></i>6–12 Month Growth Outlook
+         </div>
+         <div style='color:%s;font-size:22px;font-weight:800;margin-bottom:2px;'>%s</div>
+         <div style='color:#f4a261;font-size:16px;font-weight:700;margin-bottom:10px;'>
+           GDP Est: %s annualised
+         </div>
+         %s
+         <div style='background:#0f1117;border-radius:6px;padding:10px 12px;
+                     color:#9aa3b2;font-size:12px;line-height:1.7;border-left:3px solid %s;'>
+           %s
+         </div>
+         <div style='color:#555;font-size:10px;margin-top:10px;'>
+           Composite score model. %d indicators. As of %s.
+         </div>
+       </div>
+       <!-- Right: component breakdown + swing factors -->
+       <div style='flex:1;display:flex;flex-direction:column;gap:10px;'>
+         <div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;
+                     padding:14px 16px;flex:1;'>
+           <div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;
+                       letter-spacing:1px;margin-bottom:12px;'>Component Scorecard</div>
+           %s
+         </div>
+         <div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;
+                     padding:14px 16px;'>
+           <div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;
+                       letter-spacing:1px;margin-bottom:10px;'>Key Swing Factors</div>
+           <ul style='list-style:none;padding:0;margin:0;font-size:12px;color:#d0d0d0;'>
+             %s
+           </ul>
+         </div>
+       </div>
+     </div>",
+    reg$color, reg$color, reg$icon,  # border, label colour, icon
+    reg$color, reg$label,             # verdict
+    reg$gdp_est,                      # GDP estimate
+    gauge_html,
+    reg$color, htmltools::htmlEscape(reg$summary),
+    length(comps),
+    format(outlook$as_of, "%b %d, %Y"),
+    comp_html,
+    swing_html
+  ))
+}

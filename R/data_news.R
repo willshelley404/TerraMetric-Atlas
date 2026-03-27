@@ -24,42 +24,138 @@ NEWS_CACHE_FILE <- if (!is.null(.news_cache_dir))
 
 # ── Expanded query covers supply chain + geopolitical triggers ────────────────
 NEWS_QUERY <- paste(
-  '"federal reserve" OR inflation OR recession OR "interest rates" OR',
+  # Monetary policy
+  '"federal reserve" OR "FOMC" OR "rate cut" OR "rate hike" OR "interest rates" OR',
+  '"jerome powell" OR "fed funds" OR "quantitative tightening" OR',
+  # Inflation / prices
+  'inflation OR "cost of living" OR "affordability" OR "unaffordable" OR',
+  # Labor / employment
+  'unemployment OR "jobs report" OR "labor market" OR "job ladder" OR',
+  '"payrolls" OR "job openings" OR "wage growth" OR "healthcare jobs" OR',
+  # Housing
+  '"housing market" OR "housing starts" OR "mortgage demand" OR',
+  '"housing supply" OR "home prices" OR "rent" OR "housing bills" OR',
+  # Trade / supply chain / geopolitics
   '"trade war" OR tariff OR "supply chain" OR "strait of hormuz" OR',
-  '"oil price" OR OPEC OR sanctions OR "shipping" OR "freight" OR',
-  '"port strike" OR "suez canal" OR "red sea" OR geopolitical OR',
-  'unemployment OR "jobs report" OR "housing market" OR "earnings"',
+  '"suez canal" OR "red sea" OR sanctions OR "shipping rates" OR',
+  # Energy / commodities
+  '"oil price" OR OPEC OR "natural gas" OR "energy prices" OR',
+  # Consumer / spending
+  '"consumer spending" OR "retail sales" OR "consumer confidence" OR',
+  # Financial markets
+  '"stock market" OR "earnings" OR "credit spreads" OR "yield curve" OR',
+  # Macro
+  'recession OR GDP OR "economic growth" OR "fiscal policy"',
   collapse = " "
 )
 
-# ── Keyword weights — supply chain + geopolitical added ──────────────────────
+# Keyword weights for relevance scoring
+# Higher weight = more likely to surface in feed and LLM context
 KW_WEIGHTS <- c(
-  # Monetary / macro (highest signal)
-  "federal reserve" = 5, "rate hike" = 5,    "rate cut" = 5,
-  "inflation" = 4,        "interest rate" = 4, "recession" = 4,
-  "opec" = 4,             "tariff" = 4,        "trade war" = 4,
-  # Supply chain / geopolitical (new high-weight tier)
-  "strait of hormuz" = 5, "suez canal" = 5,    "red sea" = 5,
-  "supply chain" = 4,     "port strike" = 4,   "shipping" = 3,
-  "freight" = 3,          "container" = 3,     "logistics" = 3,
-  "sanctions" = 4,        "geopolitical" = 3,  "conflict" = 3,
-  "war" = 3,              "embargo" = 4,       "blockade" = 4,
-  # Energy / commodities
-  "oil price" = 4,        "crude" = 3,         "gasoline" = 3,
-  "diesel" = 3,           "natural gas" = 3,   "energy crisis" = 4,
-  "pipeline" = 3,         "refinery" = 3,
-  # Labor
-  "unemployment" = 3,     "jobs" = 2,          "wages" = 2,
-  "payrolls" = 3,         "labor market" = 3,
-  # Housing / consumer
-  "housing" = 2,          "mortgage" = 2,      "retail" = 2,
-  "consumer spending" = 3,
-  # Financial
-  "gdp" = 3,              "treasury" = 2,      "yield" = 2,
-  "dollar" = 2,           "debt ceiling" = 3,  "credit" = 2,
-  # General
-  "economy" = 1,          "market" = 1,        "trade" = 1,
-  "growth" = 1,           "manufacturing" = 2, "industrial" = 2
+  # ── Monetary policy (highest signal) ─────────────────────────────────────────
+  "federal reserve"       = 5,
+  "fomc"                  = 5,
+  "rate cut"              = 5,
+  "rate hike"             = 5,
+  "jerome powell"         = 4,
+  "fed funds"             = 4,
+  "interest rate"         = 4,
+  "quantitative tightening"= 4,
+  "dot plot"              = 4,
+
+  # ── Inflation / prices ────────────────────────────────────────────────────────
+  "inflation"             = 4,
+  "cost of living"        = 4,
+  "affordability"         = 4,
+  "unaffordable"          = 3,
+  "price pressure"        = 3,
+  "cpi"                   = 3,
+  "pce"                   = 3,
+
+  # ── Labor / employment ────────────────────────────────────────────────────────
+  "unemployment"          = 4,
+  "jobs report"           = 4,
+  "nonfarm payrolls"      = 4,
+  "payrolls"              = 3,
+  "labor market"          = 4,
+  "job openings"          = 3,
+  "job ladder"            = 3,
+  "wage growth"           = 3,
+  "wages"                 = 2,
+  "healthcare jobs"       = 3,
+  "labor force"           = 3,
+  "workers"               = 1,
+
+  # ── Housing ───────────────────────────────────────────────────────────────────
+  "housing market"        = 4,
+  "housing starts"        = 4,
+  "mortgage demand"       = 4,
+  "mortgage rate"         = 4,
+  "mortgage"              = 3,
+  "housing supply"        = 4,
+  "home prices"           = 3,
+  "housing bills"         = 3,
+  "rent"                  = 2,
+  "vacancy"               = 2,
+  "affordability"         = 3,   # also in housing context
+
+  # ── Supply chain / geopolitics ────────────────────────────────────────────────
+  "strait of hormuz"      = 5,
+  "suez canal"            = 5,
+  "red sea"               = 5,
+  "supply chain"          = 4,
+  "port strike"           = 4,
+  "shipping rates"        = 4,
+  "freight"               = 3,
+  "container"             = 3,
+  "sanctions"             = 4,
+  "tariff"                = 4,
+  "trade war"             = 4,
+  "geopolitical"          = 3,
+  "conflict"              = 2,
+  "embargo"               = 4,
+
+  # ── Energy / commodities ──────────────────────────────────────────────────────
+  "oil price"             = 4,
+  "opec"                  = 4,
+  "crude"                 = 3,
+  "natural gas"           = 3,
+  "energy prices"         = 3,
+  "gasoline"              = 3,
+  "diesel"                = 2,
+
+  # ── Consumer / spending ───────────────────────────────────────────────────────
+  "consumer spending"     = 3,
+  "retail sales"          = 3,
+  "consumer confidence"   = 3,
+  "consumer sentiment"    = 3,
+  "spending"              = 1,
+
+  # ── Financial markets ─────────────────────────────────────────────────────────
+  "yield curve"           = 3,
+  "credit spreads"        = 3,
+  "treasury"              = 2,
+  "earnings"              = 2,
+  "stock market"          = 2,
+  "vix"                   = 2,
+  "dollar"                = 2,
+
+  # ── Macro / fiscal ────────────────────────────────────────────────────────────
+  "recession"             = 4,
+  "gdp"                   = 3,
+  "economic growth"       = 3,
+  "debt ceiling"          = 3,
+  "fiscal policy"         = 3,
+  "deficit"               = 2,
+  "manufacturing"         = 2,
+  "industrial"            = 2,
+
+  # ── General (low weight) ──────────────────────────────────────────────────────
+  "economy"               = 1,
+  "market"                = 1,
+  "trade"                 = 1,
+  "growth"                = 1,
+  "jobs"                  = 1
 )
 
 # Supply chain causal chain descriptions (used in LLM context + synopsis)

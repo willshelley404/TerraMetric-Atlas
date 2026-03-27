@@ -1116,6 +1116,15 @@ server <- function(input, output, session) {
     render_synopsis_html(blocks)
   })
 
+  output$growth_outlook_panel <- renderUI({
+    req(rv$fred_data, rv$kpis)
+    outlook <- tryCatch(
+      build_growth_outlook(rv$fred_data, rv$kpis, rv$mkt_returns),
+      error=function(e){ message("[Growth outlook] ",e$message); NULL }
+    )
+    render_growth_outlook_html(outlook)
+  })
+
   # Tab-level synopsis panels (render on demand when data is available)
   .tab_synopsis <- function(fn) renderUI({
     if (is.null(rv$fred_data) || is.null(rv$kpis)) return(NULL)

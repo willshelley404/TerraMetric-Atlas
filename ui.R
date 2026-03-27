@@ -120,6 +120,31 @@ ui <- dashboardPage(
           )
         ),
         fluidRow(
+          box(
+            title = tagList(
+              tags$i(class="fa fa-brain", style="color:#f4a261;margin-right:8px;"),
+              "So What? — 6–12 Month GDP Growth Outlook"
+            ),
+            status      = "warning",
+            solidHeader = TRUE,
+            width       = 12,
+            collapsible = TRUE,
+            collapsed   = FALSE,
+            div(style = "color:#9aa3b2;font-size:11px;margin-bottom:12px;",
+                "Composite scoring model across 6 macro dimensions. ",
+                "Each dimension scores –1 (negative impulse) to +1 (positive). ",
+                "Weighted sum → growth regime + GDP range estimate. No LLM — computed from live data."
+            ),
+            withSpinner(
+              uiOutput("growth_outlook_panel"),
+              type  = 4,
+              color = "#f4a261",
+              color.background = "#161b27",
+              size  = 0.7
+            )
+          )
+        ),
+        fluidRow(
           box(title = "Latest Economic Headlines", status = "primary", solidHeader = TRUE, width = 12,
               htmlOutput("news_brief"))
         )
