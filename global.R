@@ -55,8 +55,6 @@ FRED_CFG <- list(
   BAMLH0A0HYM2       = list(label="HY Credit Spread",       unit="%",       tab="markets"),
   VIXCLS             = list(label="VIX",                    unit="Index",   tab="markets"),
   DTWEXBGS           = list(label="USD Index",              unit="Index",   tab="markets"),
-  # Gold: London PM Fix (USD/troy oz) — use GOLDPMGBD228NLBM; AM fix deprecated on FRED
-  GOLDPMGBD228NLBM   = list(label="Gold Price (London PM)",  unit="$/oz",    tab="markets"),
   # Yield curve tenors (for yield curve chart)
   DGS1MO             = list(label="1-Month Treasury",       unit="%",       tab="monetary"),
   DGS3MO             = list(label="3-Month Treasury",       unit="%",       tab="monetary"),
@@ -106,36 +104,37 @@ LLM_PROVIDERS <- list(
   groq = list(
     base_url      = "https://api.groq.com/openai/v1",
     key_env       = "GROQ_API_KEY",
-    # llama-3.3-70b trained on data through Dec 2024; fast & free
+    # llama-3.3-70b-versatile: knowledge through Dec 2024, free, fast
     default_model = "llama-3.3-70b-versatile",
     models        = c(
-      "llama-3.3-70b-versatile",   # best quality, ~Dec 2024 knowledge
-      "llama-3.1-8b-instant"        # fast, lower latency
+      "llama-3.3-70b-versatile",   # best quality
+      "llama-3.1-8b-instant"        # lower latency
     ),
-    display_name  = "Groq"
+    display_name  = "Groq (Llama 3.3)"
   ),
   openrouter = list(
     base_url      = "https://openrouter.ai/api/v1",
     key_env       = "OPENROUTER_API_KEY",
-    # Free-tier models as of early 2026; DeepSeek R1 has Jan 2025 knowledge
+    # DeepSeek R1 free: knowledge through Jan 2025, strong reasoning
+    # Note: free tier has strict rate limits — may return 429
     default_model = "deepseek/deepseek-r1:free",
     models        = c(
-      "deepseek/deepseek-r1:free",            # strong reasoning, ~Jan 2025
-      "deepseek/deepseek-chat:free",           # faster DeepSeek V3
-      "meta-llama/llama-3.3-70b-instruct:free" # fallback
+      "deepseek/deepseek-r1:free",           # ~Jan 2025 knowledge
+      "deepseek/deepseek-chat-v3-0324:free"  # DeepSeek V3 March 2025
     ),
-    display_name  = "OpenRouter (Free)"
+    display_name  = "OpenRouter (DeepSeek)"
   ),
   gemini = list(
     base_url      = "https://generativelanguage.googleapis.com/v1beta/openai",
     key_env       = "GEMINI_API_KEY",
-    # Gemini 2.0 Flash — free tier via Google AI Studio, ~early 2025 knowledge
+    # Gemini 2.0 Flash: free via AI Studio, fast, ~early 2025 knowledge
+    # Get key: https://aistudio.google.com/apikey
     default_model = "gemini-2.0-flash",
     models        = c(
-      "gemini-2.0-flash",     # fast, strong, free tier
-      "gemini-1.5-flash"      # fallback
+      "gemini-2.0-flash",
+      "gemini-1.5-flash"
     ),
-    display_name  = "Google Gemini"
+    display_name  = "Google Gemini (Flash)"
   )
 )
 

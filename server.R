@@ -76,9 +76,19 @@ server <- function(input, output, session) {
 
     # Markets
     tryCatch({
-      raw_mkt      <- fetch_market_data(lookback_days = max(lookback * 365, 400))
-      rv$mkt_data  <- raw_mkt
+      raw_mkt        <- fetch_market_data(lookback_days = max(lookback * 365, 400))
+      rv$mkt_data    <- raw_mkt
       rv$mkt_returns <- compute_returns(raw_mkt)
+      # Patch gold_price into kpis from GLD ETF (FRED gold series deprecated)
+      if (!is.null(rv$kpis) && !is.null(rv$mkt_returns)) {
+        gld <- rv$mkt_returns %>%
+          dplyr::filter(symbol == "GLD") %>%
+          dplyr::slice_tail(n = 1)
+        if (nrow(gld) > 0 && !is.na(gld$close)) {
+          # GLD ≈ 1/10th of spot gold price in USD/oz
+          rv$kpis$gold_price <- round(gld$close * 10, 0)
+        }
+      }
     }, error = function(e) message("Market load error: ", e$message))
 
     # News
