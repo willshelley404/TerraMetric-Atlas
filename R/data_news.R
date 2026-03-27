@@ -158,10 +158,10 @@ fetch_news_raw <- function(days_back = 4, max_articles = 100) {
 }
 
 # ── 10-day rolling cache ───────────────────────────────────────────────────────
-# Accumulates unique headlines over a rolling 10-day window.
-# On each fetch, merges new articles with cached ones, deduplicates by title,
-# and trims anything older than 10 days. Adds a `days_in_cache` column so
-# the LLM and synopsis can say "this story has been running for X days".
+# The cache always accumulates 10 days of history regardless of the UI slider.
+# days_back controls: (a) how far back the fresh API fetch goes, and (b) which
+# articles are shown in the news feed UI. The full 10-day history is always
+# available to the LLM for context (ongoing story detection).
 
 load_news_cache <- function() {
   tryCatch({
@@ -174,45 +174,57 @@ save_news_cache <- function(df) {
 }
 
 fetch_news <- function(days_back = 4, max_articles = 80, cache_days = 10) {
-  # 1. Pull fresh articles
+  # 1. Fetch fresh articles (controlled by days_back slider)
   fresh <- fetch_news_raw(days_back = days_back, max_articles = max_articles)
 
-  # 2. Load existing cache
+  # 2. Load full 10-day cache
   cached <- load_news_cache()
 
-  # 3. Combine + deduplicate (keep freshest copy of each title)
-  combined <- dplyr::bind_rows(cached, fresh) %>%
+  # 3. Merge all history (cache + fresh), deduplicate
+  all_history <- dplyr::bind_rows(cached, fresh) %>%
     dplyr::filter(!is.na(published)) %>%
     dplyr::group_by(title) %>%
     dplyr::slice_min(hours_ago, n = 1, with_ties = FALSE) %>%
     dplyr::ungroup() %>%
-    # Drop articles older than cache_days
+    # Cache window: always keep 10 days for LLM context
     dplyr::filter(
       as.numeric(difftime(Sys.time(), published, units = "hours")) < cache_days * 24
     ) %>%
-    # Recompute hours_ago from current time
     dplyr::mutate(
-      hours_ago    = as.numeric(difftime(Sys.time(), published, units = "hours")),
-      days_in_cache = pmax(
-        1,
-        as.integer(difftime(Sys.Date(), as.Date(published), units = "days")) + 1L
-      )
+      hours_ago     = as.numeric(difftime(Sys.time(), published, units = "hours")),
+      days_in_cache = pmax(1L,
+        as.integer(difftime(Sys.Date(), as.Date(published), units = "days")) + 1L)
     ) %>%
     dplyr::arrange(dplyr::desc(relevance_score), dplyr::desc(published))
 
-  if (nrow(combined) == 0) return(fresh)
+  # 4. Save updated full cache
+  if (nrow(all_history) > 0) save_news_cache(all_history)
 
-  # 4. Save updated cache
-  save_news_cache(combined)
+  # 5. Return two views as attributes:
+  #    $display  = articles within days_back window (what the news feed shows)
+  #    $full     = all 10 days of cache (what the LLM uses for context)
+  display_view <- all_history %>%
+    dplyr::filter(hours_ago <= days_back * 24)
 
-  combined
+  structure(
+    display_view,
+    full_history = all_history
+  )
 }
 
-# ── Context for LLM — includes supply chain chain analysis ────────────────────
-headlines_for_llm <- function(news_df, n = 20) {
-  if (is.null(news_df) || nrow(news_df) == 0) return("No recent headlines available.")
+# Convenience accessor
+news_full_history <- function(news_df) {
+  attr(news_df, "full_history") %||% news_df
+}
 
-  rows <- news_df %>% dplyr::slice_head(n = n) %>%
+# ── Context for LLM — always uses full 10-day history ─────────────────────────
+headlines_for_llm <- function(news_df, n = 25) {
+  if (is.null(news_df)) return("No recent headlines available.")
+  # Use full 10-day history for LLM context (not just the display window)
+  df <- news_full_history(news_df)
+  if (nrow(df) == 0) return("No recent headlines available.")
+
+  rows <- df %>% dplyr::slice_head(n = n) %>%
     dplyr::mutate(
       age_str = dplyr::case_when(
         hours_ago < 2  ~ "just now",
@@ -222,18 +234,19 @@ headlines_for_llm <- function(news_df, n = 20) {
     )
 
   lines <- vapply(seq_len(nrow(rows)), function(i) {
-    r       <- rows[i, ]
-    desc    <- if (!is.na(r$description) && nchar(r$description) > 0)
-                 paste0(" — ", stringr::str_trunc(r$description, 110)) else ""
+    r          <- rows[i, ]
+    desc       <- if (!is.na(r$description) && nchar(r$description) > 0)
+                    paste0(" — ", stringr::str_trunc(r$description, 110)) else ""
     cache_note <- if (!is.na(r$days_in_cache) && r$days_in_cache > 1)
                     sprintf(" [ongoing: %d days]", r$days_in_cache) else ""
-    chain_note  <- if (!is.na(r$supply_chain) && nchar(r$supply_chain) > 0)
+    chain_note <- if (!is.na(r$supply_chain) && nchar(r$supply_chain) > 0)
                     sprintf("\n   SUPPLY CHAIN IMPACT: %s",
                             paste(sapply(strsplit(r$supply_chain, "; ")[[1]],
                                          function(k) SUPPLY_CHAIN_CHAINS[[k]] %||% k),
                                   collapse = " | "))
-    else ""
-    paste0(i, ". [", r$source_name, " | ", r$age_str, cache_note, "] ", r$title, desc, chain_note)
+                  else ""
+    paste0(i, ". [", r$source_name, " | ", r$age_str, cache_note, "] ",
+           r$title, desc, chain_note)
   }, character(1))
 
   paste(lines, collapse = "\n")

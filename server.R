@@ -861,6 +861,112 @@ server <- function(input, output, session) {
     }
   })
 
+  # ── Populate metro selector when metro_data loads ────────────────────────────
+  observe({
+    req(rv$metro_data)
+    choices <- sort(rv$metro_data$metro)
+    updateSelectInput(session, "metro_ai_select",
+                      choices  = choices,
+                      selected = choices[1])
+  })
+
+  # ── Metro AI analysis ─────────────────────────────────────────────────────────
+  rv_metro_ai <- reactiveValues(text = NULL)
+
+  observeEvent(input$btn_metro_ai, {
+    req(rv$metro_data, input$metro_ai_select, rv$kpis)
+    rv_metro_ai$text <- NULL
+
+    withProgress(message = paste("Analysing", input$metro_ai_select, "…"), value = 0.2, {
+      # Find selected metro row
+      metro_row <- rv$metro_data %>%
+        dplyr::filter(metro == input$metro_ai_select) %>%
+        dplyr::slice(1)
+
+      if (nrow(metro_row) == 0) {
+        rv_metro_ai$text <- "Metro not found in dataset."
+        return()
+      }
+
+      us_avg <- attr(rv$metro_data, "us_avg") %||% list()
+      incProgress(0.2, detail = "Building structured summary…")
+
+      summary_obj <- tryCatch(
+        build_metro_summary(metro_row, us_avg, kpis = rv$kpis),
+        error = function(e) { message("[Metro AI] build_metro_summary: ", e$message); NULL }
+      )
+      if (is.null(summary_obj)) {
+        rv_metro_ai$text <- "Could not build metro summary."
+        return()
+      }
+
+      news_ctx <- headlines_for_llm(rv$news_data, n = 15)
+      prompt   <- build_metro_prompt(summary_obj, news_ctx)
+
+      incProgress(0.3, detail = "Calling LLM…")
+      result <- tryCatch(
+        call_llm(
+          messages    = list(list(role = "user", content = prompt)),
+          provider    = input$llm_provider,
+          model       = input$llm_model,
+          max_tokens  = 1200,
+          temperature = 0.55
+        ),
+        error = function(e) paste0("LLM error: ", e$message)
+      )
+      incProgress(1)
+      rv_metro_ai$text <- result
+    })
+  })
+
+  output$metro_ai_output <- renderUI({
+    if (is.null(rv_metro_ai$text)) {
+      div(style = "color:#6b7585;font-size:13px;padding:20px;text-align:center;",
+          icon("robot", style="font-size:28px;color:#2a3042;display:block;margin-bottom:10px;"),
+          "Select a metro and click Generate to get a structured economic assessment.",
+          tags$br(),
+          div(style="color:#555;font-size:11px;margin-top:8px;",
+              "Powered by ACS 5-year data + national macro context + news headlines")
+      )
+    } else {
+      div(id = "metro_ai_output",
+          style = "background:#1e2640;border-radius:8px;padding:18px;font-size:13px;
+                   line-height:1.75;color:#d0d0d0;max-height:500px;overflow-y:auto;",
+          HTML(markdown::markdownToHTML(text = rv_metro_ai$text, fragment.only = TRUE))
+      )
+    }
+  })
+
+  # ── Settings: model selector updates with provider ────────────────────────────
+  output$cfg_llm_model_ui <- renderUI({
+    prov   <- input$cfg_llm_provider %||% ACTIVE_PROVIDER %||% "groq"
+    models <- if (prov %in% names(LLM_PROVIDERS)) LLM_PROVIDERS[[prov]]$models else character(0)
+    selectInput("cfg_llm_model", "Default Model:", choices = models, selected = models[1])
+  })
+
+  # Apply & Refresh from settings
+  observeEvent(input$cfg_apply, {
+    w$show()
+    load_all_data()
+    w$hide()
+    showNotification("Settings applied. Data refreshed.", type = "message", duration = 4)
+  })
+
+  # Clear news cache
+  observeEvent(input$cfg_clear_cache, {
+    tryCatch({
+      if (file.exists(NEWS_CACHE_FILE)) {
+        file.remove(NEWS_CACHE_FILE)
+        showNotification("News cache cleared. Next refresh will fetch fresh headlines.",
+                         type = "message", duration = 5)
+      } else {
+        showNotification("No cache file found.", type = "warning", duration = 3)
+      }
+    }, error = function(e) {
+      showNotification(paste("Cache clear failed:", e$message), type = "error", duration = 5)
+    })
+  })
+
   # ═══════════════════════════════════════════════════════════════════════════
   # FORECASTING
   # ═══════════════════════════════════════════════════════════════════════════
@@ -1026,32 +1132,6 @@ server <- function(input, output, session) {
     render_news_html(rv$news_data, n = 20)
   })
 
-  # ═══════════════════════════════════════════════════════════════════════════
-  # SETTINGS: API STATUS TABLE
-  # ═══════════════════════════════════════════════════════════════════════════
-
-  output$tbl_api_status <- renderTable({
-    apis <- list(
-      "FRED"         = "FRED_API_KEY",
-      "BLS"          = "BLS_API_KEY",
-      "Census"       = "CENSUS_API_KEY",
-      "Groq (LLM)"   = "GROQ_API_KEY",
-      "OpenRouter"   = "OPENROUTER_API_KEY",
-      "Together AI"  = "TOGETHER_API_KEY",
-      "NewsAPI"      = "NEWS_API_KEY"
-    )
-    rows <- map_dfr(names(apis), function(name) {
-      key_val <- Sys.getenv(apis[[name]])
-      configured <- nchar(key_val) > 0
-      tibble(
-        Service   = name,
-        Variable  = apis[[name]],
-        Status    = if (configured) "✅ Configured" else "❌ Not Set",
-        Required  = if (name %in% c("FRED","BLS")) "Yes" else "Recommended"
-      )
-    })
-    rows
-  }, striped=TRUE, hover=TRUE, bordered=FALSE,
-  rownames=FALSE, na="—")
 
 }
+

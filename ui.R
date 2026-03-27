@@ -312,7 +312,9 @@ ui <- dashboardPage(
                       "Poverty Rate"          = "poverty_rate",
                       "Labor Force Part. Rate"= "lfp_rate",
                       "Median HH Income"      = "med_income",
-                      "Median Home Value"     = "med_home_val"
+                      "Median Home Value"     = "med_home_val",
+                      "Rent Burden Rate"      = "rent_burden_rate",
+                      "Bachelor's+ Rate"      = "bachelors_plus_rate"
                     ), selected = "unemp_rate"),
                   sliderInput("metro_min_pop", "Min. Population (M):",
                               min = 0.1, max = 3, value = 0.5, step = 0.1),
@@ -320,8 +322,8 @@ ui <- dashboardPage(
                     div(style = "color:#9aa3b2;font-size:11px;line-height:1.9;",
                       icon("circle", style="color:#00b4d8;"),
                       " Bubble size = population.", tags$br(),
-                      " Bubble colour = selected variable.", tags$br(),
-                      " Click bubble for full detail.", tags$br(),
+                      " Colour = selected variable.", tags$br(),
+                      " Click for full detail.", tags$br(),
                       " ACS 5-Year Estimates."
                     )
                   )
@@ -329,6 +331,25 @@ ui <- dashboardPage(
                 column(9,
                   withSpinner(leafletOutput("metro_bubble_map", height = "480px"),
                               type=4, color="#7c5cbf", color.background="#161b27", size=0.7)
+                )
+              ),
+              hr(style = "border-color:#2a3042; margin-top:16px;"),
+              # Metro AI Analysis
+              box(title = tagList(icon("robot", style="color:#7c5cbf;"), " Metro AI Analysis"),
+                  status = "info", solidHeader = TRUE, width = 12,
+                fluidRow(
+                  column(4,
+                    selectInput("metro_ai_select", "Select Metro for Analysis:",
+                                choices = character(0)),
+                    actionButton("btn_metro_ai", "Generate Metro Analysis",
+                                 class="btn-ai", style="margin-top:8px;width:100%;"),
+                    div(style="color:#9aa3b2;font-size:11px;margin-top:8px;",
+                        "Synthesises ACS data + macro environment + news headlines into a structured regional economic assessment.")
+                  ),
+                  column(8,
+                    withSpinner(uiOutput("metro_ai_output"),
+                                type=4, color="#7c5cbf", color.background="#161b27", size=0.7)
+                  )
                 )
               ),
               hr(style = "border-color:#2a3042; margin-top:16px;"),
@@ -458,38 +479,50 @@ ui <- dashboardPage(
       # SETTINGS TAB
       # ══════════════════════════════════════════════════════
       tabItem("settings",
-        box(title = "Configuration & API Status", status = "primary",
-            solidHeader = TRUE, width = 12,
+        box(title = "Configuration", status = "primary", solidHeader = TRUE, width = 12,
           h4(style = "color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;",
-             "API Key Status"),
-          tableOutput("tbl_api_status"),
-          hr(style = "border-color:#2a3042;"),
-          h4(style = "color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;",
-             "Data Fetch Settings"),
+             "Data Settings"),
           fluidRow(
-            column(4,
-              sliderInput("cfg_lookback", "Data Lookback (years):",
-                          min = 2, max = 10, value = 7, step = 1)),
-            column(4,
-              sliderInput("cfg_news_days", "News Lookback (days):",
-                          min = 1, max = 7,  value = 4, step = 1))
+            column(4, sliderInput("cfg_lookback", "Data Lookback (years):",
+                                  min=2, max=10, value=7, step=1)),
+            column(4, sliderInput("cfg_news_days", "News Display Window (days):",
+                                  min=1, max=7, value=4, step=1)),
+            column(4, sliderInput("cfg_forecast_horizon", "Forecast Horizon (months):",
+                                  min=6, max=24, value=18, step=3))
           ),
-          hr(style = "border-color:#2a3042;"),
-          h4(style = "color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;",
-             "About"),
-          div(style = "color:#9aa3b2;font-size:13px;line-height:2.1;",
-            strong(style="color:#e0e0e0;", "EconPulse AI"), " — Real-Time Economic Intelligence Dashboard", tags$br(),
-            icon("database", style="color:#00b4d8;"), " Data: FRED · BLS · Yahoo Finance · U.S. Census ACS · NewsAPI", tags$br(),
-            icon("robot",    style="color:#7c5cbf;"), " LLM: Provider-agnostic (Groq · OpenRouter · Together AI)", tags$br(),
-            icon("magic",    style="color:#f4a261;"), " Forecasting: Meta Prophet with annual seasonality + 90% CI", tags$br(),
-            icon("map",      style="color:#2dce89;"), " Metro Map: tidycensus ACS 5-Year Estimates + Leaflet", tags$br(),
-            tags$br(),
-            div(style = "background:#1e2640;border-radius:6px;padding:12px;",
-              p(style="color:#9aa3b2;font-size:12px;margin:0;",
-                icon("key", style="color:#f4a261;"), " API keys should be set in ", code(".Renviron"), " (see ", code(".Renviron.example"), ").",
-                tags$br(),
-                "Restart the app after updating environment variables."
+          hr(style="border-color:#2a3042;"),
+          h4(style="color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;",
+             "LLM Settings"),
+          fluidRow(
+            column(4, selectInput("cfg_llm_provider", "Default Provider:",
+              choices = setNames(names(LLM_PROVIDERS),
+                                 vapply(names(LLM_PROVIDERS),
+                                        function(x) LLM_PROVIDERS[[x]]$display_name, character(1))),
+              selected = ACTIVE_PROVIDER %||% "groq")),
+            column(4, uiOutput("cfg_llm_model_ui")),
+            column(4,
+              div(style="margin-top:28px;",
+                actionButton("cfg_apply", "Apply & Refresh Data",
+                             class="btn-primary-custom", icon=icon("sync-alt"))))
+          ),
+          hr(style="border-color:#2a3042;"),
+          h4(style="color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;",
+             "News Cache"),
+          fluidRow(
+            column(6,
+              div(style="background:#1e2640;border-radius:6px;padding:12px;color:#9aa3b2;font-size:12px;line-height:1.9;",
+                icon("database", style="color:#00b4d8;"), " Cache stores 10 days of headlines across sessions.", tags$br(),
+                icon("clock", style="color:#f4a261;"), " Display window (above) filters what you see in the news feed.", tags$br(),
+                icon("robot", style="color:#7c5cbf;"), " LLM always receives the full 10-day context.", tags$br(),
+                icon("folder", style="color:#2dce89;"), " Cache path: ",
+                code(style="color:#e0e0e0;", file.path(getwd(), "cache"))
               )
+            ),
+            column(3,
+              div(style="margin-top:8px;",
+                actionButton("cfg_clear_cache", "Clear News Cache",
+                             icon=icon("trash"), class="btn btn-sm",
+                             style="background:#e94560;border:none;color:white;margin-top:4px;"))
             )
           )
         )
