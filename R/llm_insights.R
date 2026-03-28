@@ -83,15 +83,26 @@ call_llm <- function(messages, provider=NULL, model=NULL,
         Sys.sleep(wait)
         return("__RETRY__")
       }
-      # All other errors or final attempt — classify and return
-      guidance <- dplyr::case_when(
-        grepl("429", msg)             ~ " — **Rate limited.** Switch to Groq or wait 60s.",
-        grepl("404", msg)             ~ " — **Model not found.** Try the default model.",
-        grepl("400", msg)             ~ " — **Bad request.** Try Groq Llama 3.3.",
-        grepl("401|403", msg)         ~ " — **Auth failed.** Check your API key.",
-        grepl("timeout|timed out", msg, ignore.case=TRUE) ~ " — **Timed out.** Try a smaller model.",
-        TRUE                          ~ ""
-      )
+      # All other errors or final attempt — classify with if/else (avoids dplyr scalar warning)
+      guidance <- if (grepl("resolve|Could not resolve|resolve hostname", msg, ignore.case=TRUE)) {
+        paste0(" — **DNS/network error.** The server cannot reach `", cfg$base_url, "`.",
+               " On Posit Connect, enable outbound connections in App Settings,",
+               " or ask your admin to allowlist the LLM hostname.")
+      } else if (grepl("429", msg)) {
+        " — **Rate limited.** Wait 60 seconds and retry, or switch to Groq."
+      } else if (grepl("404", msg)) {
+        " — **Model not found.** Select a different model from the dropdown."
+      } else if (grepl("400", msg)) {
+        " — **Bad request.** Try switching to Groq Llama 3.3."
+      } else if (grepl("401|403", msg)) {
+        " — **Auth failed.** Check your API key is correct and active."
+      } else if (grepl("timeout|timed out", msg, ignore.case=TRUE)) {
+        " — **Request timed out.** Try a smaller/faster model."
+      } else if (grepl("network|connect|connection", msg, ignore.case=TRUE)) {
+        " — **Network error.** Check outbound internet access from this server."
+      } else {
+        ""
+      }
       paste0("**LLM call failed (", cfg$display_name, "):** ", msg, guidance)
     })
 

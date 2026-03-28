@@ -962,21 +962,6 @@ server <- function(input, output, session) {
     showNotification("Settings applied. Data refreshed.", type = "message", duration = 4)
   })
 
-  # Clear news cache
-  observeEvent(input$cfg_clear_cache, {
-    tryCatch({
-      if (file.exists(NEWS_CACHE_FILE)) {
-        file.remove(NEWS_CACHE_FILE)
-        showNotification("News cache cleared. Next refresh will fetch fresh headlines.",
-                         type = "message", duration = 5)
-      } else {
-        showNotification("No cache file found.", type = "warning", duration = 3)
-      }
-    }, error = function(e) {
-      showNotification(paste("Cache clear failed:", e$message), type = "error", duration = 5)
-    })
-  })
-
   # ═══════════════════════════════════════════════════════════════════════════
   # FORECASTING
   # ═══════════════════════════════════════════════════════════════════════════
