@@ -183,6 +183,33 @@ NEWSAPI_SHORT_QUERY <- paste(
   collapse = " "
 )
 
+# Domains to exclude from news results — highly partisan sources that
+# introduce political framing rather than economic analysis.
+# Focus: centrist (Reuters, AP, WSJ, Bloomberg) and centre-left (NYT, WaPo,
+# FT, Economist) outlets known for factual economic reporting.
+NEWS_EXCLUDED_DOMAINS <- paste(
+  c("breitbart.com", "dailywire.com", "newsmax.com", "thefederalist.com",
+    "washingtonexaminer.com", "nypost.com", "oann.com", "westernjournal.com",
+    "townhall.com", "redstate.com", "dailycaller.com", "theblaze.com",
+    "pjmedia.com", "zerohedge.com", "naturalnews.com", "infowars.com"),
+  collapse = ","
+)
+
+# Source pattern filter applied to ALL sources (NewsAPI, MediaStack, GDELT)
+.is_excluded_source <- function(source_names) {
+  excluded_patterns <- c(
+    "breitbart", "daily wire", "newsmax", "federalist", "washington examiner",
+    "new york post", "one america", "western journal", "townhall", "red state",
+    "daily caller", "the blaze", "pj media", "zero hedge", "natural news",
+    "infowars", "epoch times", "gateway pundit", "american thinker",
+    "daily mail"  # known for sensationalism
+  )
+  tolower(source_names) %in% tolower(excluded_patterns) |
+    sapply(tolower(source_names), function(s) {
+      any(sapply(excluded_patterns, function(p) grepl(p, s, fixed=TRUE)))
+    })
+}
+
 fetch_newsapi <- function(days_back = 4, max_articles = 100) {
   key <- Sys.getenv("NEWS_API_KEY")
   if (nchar(key) == 0) return(list(data=NULL, error="key_not_set"))
@@ -190,12 +217,13 @@ fetch_newsapi <- function(days_back = 4, max_articles = 100) {
   tryCatch({
     resp <- httr2::request("https://newsapi.org/v2/everything") %>%
       httr2::req_url_query(
-        q        = NEWSAPI_SHORT_QUERY,          # short — avoids HTTP 400
-        from     = format(Sys.Date() - days_back, "%Y-%m-%d"),
-        sortBy   = "relevancy",
-        language = "en",
-        pageSize = as.character(min(max_articles, 100)),
-        apiKey   = key
+        q              = NEWSAPI_SHORT_QUERY,
+        excludeDomains = NEWS_EXCLUDED_DOMAINS,   # exclude partisan sources
+        from           = format(Sys.Date() - days_back, "%Y-%m-%d"),
+        sortBy         = "relevancy",
+        language       = "en",
+        pageSize       = as.character(min(max_articles, 100)),
+        apiKey         = key
       ) %>%
       httr2::req_timeout(25) %>%
       httr2::req_perform()
@@ -361,7 +389,12 @@ fetch_gdelt <- function(days_back = 4, max_articles = 50) {
       relevance_score = score_relevance(title, description),
       supply_chain    = mapply(detect_chains, title, description, SIMPLIFY=TRUE)
     ) %>%
-    dplyr::filter(!is.na(published), hours_ago >= 0, hours_ago < days_back * 24) %>%
+    dplyr::filter(
+      !is.na(published),
+      hours_ago >= 0,
+      hours_ago < days_back * 24,
+      !.is_excluded_source(source_name)   # remove partisan sources
+    ) %>%
     dplyr::arrange(dplyr::desc(relevance_score), dplyr::desc(published))
 }
 

@@ -36,7 +36,8 @@ fetch_all_fred <- function(lookback_years = 7, progress_cb = NULL) {
   # Daily series benefit from much longer history for context
   LONG_HISTORY_IDS <- c("DGS10","DGS2","DGS1MO","DGS3MO","DGS6MO","DGS1","DGS3",
                          "DGS5","DGS7","DGS20","DGS30","T10Y2Y","FEDFUNDS",
-                         "MORTGAGE30US","VIXCLS","DCOILWTICO","DTWEXBGS")
+                         "MORTGAGE30US","VIXCLS","DCOILWTICO","DTWEXBGS",
+                         "ICSA","LNS11300060")  # weekly claims + prime-age LFPR need history
 
   start_default <- as.Date(Sys.Date() - years(lookback_years))
   start_long    <- as.Date(Sys.Date() - years(max(lookback_years, 15)))
@@ -111,10 +112,40 @@ build_kpis <- function(dlist) {
     gdp_yoy      = yoy_val(dlist, "GDPC1", lag_months = 4),  # quarterly
     # Markets — gold comes from GLD ETF via tidyquant (FRED gold series deprecated)
     oil_price    = latest_val(dlist, "DCOILWTICO"),
+    oil_yoy      = yoy_val(dlist,   "DCOILWTICO"),   # oil price shock signal
     gold_price   = NA_real_,   # populated from market data in server.R after mkt fetch
     hy_spread    = latest_val(dlist, "BAMLH0A0HYM2"),
     vix          = latest_val(dlist, "VIXCLS"),
-    usd_idx      = latest_val(dlist, "DTWEXBGS")
+    usd_idx      = latest_val(dlist, "DTWEXBGS"),
+    usd_yoy      = yoy_val(dlist,   "DTWEXBGS"),     # dollar surge signal
+    # Enhanced recession model inputs
+    prime_age_lfpr   = latest_val(dlist, "LNS11300060"), # prime-age LFPR 25-54
+    prime_age_lfpr_chg = {                               # 6-month change in prime-age LFPR
+      df <- dlist[["LNS11300060"]]
+      if (!is.null(df) && nrow(df) >= 7) {
+        df <- df %>% arrange(date)
+        n  <- nrow(df)
+        df$value[n] - df$value[n - 6]
+      } else NA_real_
+    },
+    jobless_claims_4wk = {                               # 4-week MA of initial claims
+      df <- dlist[["ICSA"]]
+      if (!is.null(df) && nrow(df) >= 4) {
+        mean(tail(df$value, 4), na.rm = TRUE) / 1000   # convert to thousands
+      } else NA_real_
+    },
+    jobless_claims_trend = {                             # claims rising? (4wk vs 26wk MA)
+      df <- dlist[["ICSA"]]
+      if (!is.null(df) && nrow(df) >= 26) {
+        ma4  <- mean(tail(df$value, 4),  na.rm = TRUE)
+        ma26 <- mean(tail(df$value, 26), na.rm = TRUE)
+        ma4 / ma26 - 1   # positive = claims trending up = bad
+      } else NA_real_
+    },
+    inventory_sales_ratio = latest_val(dlist, "ISRATIO"),
+    cc_delinquency        = latest_val(dlist, "DRCCLACBS"),
+    quits_rate            = latest_val(dlist, "JTSQUL"),
+    quits_yoy             = yoy_val(dlist, "JTSQUL")    # quits falling YoY = workers scared
   )
 }
 
