@@ -29,14 +29,19 @@
 # ── Source tier 2 (which sources tier 1) ─────────────────────────────────────
 local({
   candidates <- c(
-    tryCatch(normalizePath(sys.frame(1)$ofile), error=function(e) NULL),
+    tryCatch(normalizePath(sys.frame(1)$ofile), error = function(e) NULL),
     "R/synopsis_tier2.R"
   )
   for (p in candidates) {
     tier2 <- sub("tier3", "tier2", p)
-    if (file.exists(tier2)) { source(tier2, local=FALSE); return(invisible()) }
+    if (file.exists(tier2)) {
+      source(tier2, local = FALSE)
+      return(invisible())
+    }
   }
-  stop("[synopsis_tier3] Cannot locate synopsis_tier2.R. Set working directory to project root.")
+  stop(
+    "[synopsis_tier3] Cannot locate synopsis_tier2.R. Set working directory to project root."
+  )
 })
 
 
@@ -44,15 +49,17 @@ local({
 # CONSTANTS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-.MARKOV_FREQ_MAX    <- 0.25   # recession state covering >25% of history = bad fit
-.MARKOV_FREQ_TARGET <- 0.13   # NBER base rate ~13%
+.MARKOV_FREQ_MAX <- 0.25 # recession state covering >25% of history = bad fit
+.MARKOV_FREQ_TARGET <- 0.13 # NBER base rate ~13%
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-.prob_to_lo <- function(p) log(pmax(1e-6, pmin(1-1e-6, p)) / (1 - pmax(1e-6, pmin(1-1e-6, p))))
+.prob_to_lo <- function(p) {
+  log(pmax(1e-6, pmin(1 - 1e-6, p)) / (1 - pmax(1e-6, pmin(1 - 1e-6, p))))
+}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -61,68 +68,108 @@ local({
 
 #' Hamilton filter: forward pass computing P(S_t=j | y_{1..t})
 .hamilton_filter <- function(y, mu, sigma, P, pi0) {
-  T <- length(y); k <- length(mu)
-  xi <- matrix(0, T, k); loglik <- 0
+  T <- length(y)
+  k <- length(mu)
+  xi <- matrix(0, T, k)
+  loglik <- 0
   xi_prev <- pi0
   for (t in seq_len(T)) {
-    pred  <- as.numeric(t(P) %*% xi_prev)
-    dens  <- dnorm(y[t], mean=mu, sd=sigma)
+    pred <- as.numeric(t(P) %*% xi_prev)
+    dens <- dnorm(y[t], mean = mu, sd = sigma)
     joint <- pred * dens
-    s     <- sum(joint); if (s < 1e-300) s <- 1e-300
+    s <- sum(joint)
+    if (s < 1e-300) {
+      s <- 1e-300
+    }
     xi[t, ] <- joint / s
-    loglik  <- loglik + log(s)
+    loglik <- loglik + log(s)
     xi_prev <- xi[t, ]
   }
-  list(xi=xi, loglik=loglik)
+  list(xi = xi, loglik = loglik)
 }
 
 #' Kim (1994) smoother: backward pass computing P(S_t=j | y_{1..T})
 .kim_smoother <- function(xi, P) {
-  T <- nrow(xi); k <- ncol(xi)
-  sp <- matrix(0, T, k); sp[T, ] <- xi[T, ]
-  for (t in (T-1):1) {
+  T <- nrow(xi)
+  k <- ncol(xi)
+  sp <- matrix(0, T, k)
+  sp[T, ] <- xi[T, ]
+  for (t in (T - 1):1) {
     pred_next <- pmax(as.numeric(t(P) %*% xi[t, ]), 1e-300)
-    sp[t, ]   <- xi[t, ] * as.numeric(P %*% (sp[t+1, ] / pred_next))
-    sp[t, ]   <- pmax(sp[t, ], 0)
-    s <- sum(sp[t, ]); if (s > 0) sp[t, ] <- sp[t, ] / s
+    sp[t, ] <- xi[t, ] * as.numeric(P %*% (sp[t + 1, ] / pred_next))
+    sp[t, ] <- pmax(sp[t, ], 0)
+    s <- sum(sp[t, ])
+    if (s > 0) sp[t, ] <- sp[t, ] / s
   }
   sp
 }
 
 #' Fit k-state Gaussian Markov-switching model via EM.
 #' Initialised by splitting quantile range into k equal bands.
-.fit_hamilton_em <- function(y, k=3L, max_iter=500L, tol=1e-6, seed=42L) {
-  set.seed(seed); T <- length(y)
-  breaks <- quantile(y, probs=seq(0,1,length.out=k+1), na.rm=TRUE)
+.fit_hamilton_em <- function(
+  y,
+  k = 3L,
+  max_iter = 500L,
+  tol = 1e-6,
+  seed = 42L
+) {
+  set.seed(seed)
+  T <- length(y)
+  breaks <- quantile(y, probs = seq(0, 1, length.out = k + 1), na.rm = TRUE)
   mu <- sigma <- numeric(k)
   for (j in seq_len(k)) {
-    band <- y[y >= breaks[j] & y <= breaks[j+1]]
-    if (length(band) < 2) band <- y
-    mu[j]    <- mean(band, na.rm=TRUE)
-    sigma[j] <- max(sd(band, na.rm=TRUE), 0.01)
+    band <- y[y >= breaks[j] & y <= breaks[j + 1]]
+    if (length(band) < 2) {
+      band <- y
+    }
+    mu[j] <- mean(band, na.rm = TRUE)
+    sigma[j] <- max(sd(band, na.rm = TRUE), 0.01)
   }
-  P <- matrix(1/k, k, k); pi0 <- rep(1/k, k); prev_ll <- -Inf; converged <- FALSE
+  P <- matrix(1 / k, k, k)
+  pi0 <- rep(1 / k, k)
+  prev_ll <- -Inf
+  converged <- FALSE
   for (iter in seq_len(max_iter)) {
     filt <- .hamilton_filter(y, mu, sigma, P, pi0)
-    sp   <- .kim_smoother(filt$xi, P)
-    ll   <- filt$loglik
+    sp <- .kim_smoother(filt$xi, P)
+    ll <- filt$loglik
     # M-step: transition matrix
     P_new <- matrix(0, k, k)
     for (t in 2:T) {
-      pred_t <- pmax(as.numeric(t(P) %*% filt$xi[t-1, ]), 1e-300)
-      for (i in seq_len(k)) for (j in seq_len(k))
-        P_new[i,j] <- P_new[i,j] + filt$xi[t-1,i] * P[i,j] * sp[t,j] / pred_t[j]
+      pred_t <- pmax(as.numeric(t(P) %*% filt$xi[t - 1, ]), 1e-300)
+      for (i in seq_len(k)) {
+        for (j in seq_len(k)) {
+          P_new[i, j] <- P_new[i, j] +
+            filt$xi[t - 1, i] * P[i, j] * sp[t, j] / pred_t[j]
+        }
+      }
     }
-    rs <- rowSums(P_new); rs[rs < 1e-300] <- 1e-300; P <- P_new / rs
+    rs <- rowSums(P_new)
+    rs[rs < 1e-300] <- 1e-300
+    P <- P_new / rs
     # M-step: means + standard deviations
     wt <- pmax(colSums(sp), 1e-10)
-    mu    <- colSums(sp * y) / wt
-    sigma <- pmax(sqrt(colSums(sp * outer(y, mu, function(a,b)(a-b)^2)) / wt), 0.01)
-    pi0   <- sp[1, ]
-    if (abs(ll - prev_ll) < tol) { converged <- TRUE; break }
+    mu <- colSums(sp * y) / wt
+    sigma <- pmax(
+      sqrt(colSums(sp * outer(y, mu, function(a, b) (a - b)^2)) / wt),
+      0.01
+    )
+    pi0 <- sp[1, ]
+    if (abs(ll - prev_ll) < tol) {
+      converged <- TRUE
+      break
+    }
     prev_ll <- ll
   }
-  list(smooth_probs=sp, mu=mu, sigma=sigma, P=P, loglik=ll, converged=converged, n_iter=iter)
+  list(
+    smooth_probs = sp,
+    mu = mu,
+    sigma = sigma,
+    P = P,
+    loglik = ll,
+    converged = converged,
+    n_iter = iter
+  )
 }
 
 
@@ -133,138 +180,253 @@ local({
 # ═══════════════════════════════════════════════════════════════════════════════
 
 build_glm_feature_matrix <- function(fred_data) {
-  tryCatch({
-    # Helper: read monthly from fred_data (recent window)
-    gm <- function(sid, val_name) {
-      df <- fred_data[[sid]]
-      if (is.null(df) || nrow(df) < 4) return(NULL)
-      df %>% dplyr::arrange(date) %>%
-        dplyr::mutate(month=lubridate::floor_date(date,"month")) %>%
-        dplyr::group_by(month) %>%
-        dplyr::summarise(!!val_name:=mean(value,na.rm=TRUE),.groups="drop") %>%
-        dplyr::rename(date=month)
-    }
-    # Helper: try fredr full history first, fall back to gm()
-    gf <- function(sid, val_name, start=as.Date("1959-01-01")) {
-      tryCatch(
-        fredr::fredr(sid, observation_start=start, frequency="m") %>%
-          dplyr::select(date, !!val_name:=value),
-        error=function(e) {
-          message(sprintf("[t3] fredr('%s') unavailable: %s — using fred_data", sid, e$message))
-          gm(sid, val_name)
-        })
-    }
+  tryCatch(
+    {
+      # Helper: read monthly from fred_data (recent window)
+      gm <- function(sid, val_name) {
+        df <- fred_data[[sid]]
+        if (is.null(df) || nrow(df) < 4) {
+          return(NULL)
+        }
+        df %>%
+          dplyr::arrange(date) %>%
+          dplyr::mutate(month = lubridate::floor_date(date, "month")) %>%
+          dplyr::group_by(month) %>%
+          dplyr::summarise(
+            !!val_name := mean(value, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          dplyr::rename(date = month)
+      }
+      # Helper: try fredr full history first, fall back to gm()
+      gf <- function(sid, val_name, start = as.Date("1959-01-01")) {
+        tryCatch(
+          fredr::fredr(sid, observation_start = start, frequency = "m") %>%
+            dplyr::select(date, !!val_name := value),
+          error = function(e) {
+            message(sprintf(
+              "[t3] fredr('%s') unavailable: %s — using fred_data",
+              sid,
+              e$message
+            ))
+            gm(sid, val_name)
+          }
+        )
+      }
 
-    # ── Step 1: NBER recession indicator ─────────────────────────────────────
-    usrec <- tryCatch({
-      r <- fredr::fredr("USREC", observation_start=as.Date("1959-01-01"), frequency="m")
-      if (is.null(r) || nrow(r) < 120) stop("too short")
-      message(sprintf("[t3] USREC: %d months from fredr", nrow(r)))
-      r %>% dplyr::select(date, recession=value) %>% dplyr::arrange(date)
-    }, error=function(e) {
-      message(sprintf("[t3] USREC fredr failed (%s) — building Sahm proxy from UNRATE", e$message))
-      ur <- fred_data$UNRATE
-      if (is.null(ur) || nrow(ur) < 24) { message("[t3] UNRATE missing."); return(NULL) }
-      base <- ur %>% dplyr::arrange(date) %>%
-        dplyr::mutate(month=lubridate::floor_date(date,"month")) %>%
-        dplyr::group_by(month) %>%
-        dplyr::summarise(u=mean(value,na.rm=TRUE),.groups="drop") %>%
-        dplyr::rename(date=month) %>% dplyr::arrange(date) %>%
-        dplyr::mutate(u_min12=zoo::rollapply(u,12,min,fill=NA,align="right"))
-      for (thresh in c(0.5, 0.3)) {
-        cand <- base %>% dplyr::mutate(recession=as.numeric((u-u_min12)>=thresh)) %>%
-          dplyr::filter(!is.na(recession)) %>% dplyr::select(date,recession)
-        if (sum(cand$recession) >= 12) {
-          message(sprintf("[t3] Sahm proxy (%.1fpp): %d recession months", thresh, sum(cand$recession)))
-          return(cand)
+      # ── Step 1: NBER recession indicator ─────────────────────────────────────
+      usrec <- tryCatch(
+        {
+          r <- fredr::fredr(
+            "USREC",
+            observation_start = as.Date("1959-01-01"),
+            frequency = "m"
+          )
+          if (is.null(r) || nrow(r) < 120) {
+            stop("too short")
+          }
+          message(sprintf("[t3] USREC: %d months from fredr", nrow(r)))
+          r %>% dplyr::select(date, recession = value) %>% dplyr::arrange(date)
+        },
+        error = function(e) {
+          message(sprintf(
+            "[t3] USREC fredr failed (%s) — building Sahm proxy from UNRATE",
+            e$message
+          ))
+          ur <- fred_data$UNRATE
+          if (is.null(ur) || nrow(ur) < 24) {
+            message("[t3] UNRATE missing.")
+            return(NULL)
+          }
+          base <- ur %>%
+            dplyr::arrange(date) %>%
+            dplyr::mutate(month = lubridate::floor_date(date, "month")) %>%
+            dplyr::group_by(month) %>%
+            dplyr::summarise(
+              u = mean(value, na.rm = TRUE),
+              .groups = "drop"
+            ) %>%
+            dplyr::rename(date = month) %>%
+            dplyr::arrange(date) %>%
+            dplyr::mutate(
+              u_min12 = zoo::rollapply(u, 12, min, fill = NA, align = "right")
+            )
+          for (thresh in c(0.5, 0.3)) {
+            cand <- base %>%
+              dplyr::mutate(recession = as.numeric((u - u_min12) >= thresh)) %>%
+              dplyr::filter(!is.na(recession)) %>%
+              dplyr::select(date, recession)
+            if (sum(cand$recession) >= 12) {
+              message(sprintf(
+                "[t3] Sahm proxy (%.1fpp): %d recession months",
+                thresh,
+                sum(cand$recession)
+              ))
+              return(cand)
+            }
+          }
+          message("[t3] Sahm proxy produced zero recession months.")
+          NULL
+        }
+      )
+      if (is.null(usrec) || nrow(usrec) < 120) {
+        message("[t3] Recession indicator unavailable.")
+        return(NULL)
+      }
+
+      # ── Step 2: Feature series — ALL via gf() so history goes back to 1959 ───
+      t10y2y <- gf("T10Y2Y", "yield_spread")
+      unrate <- gf("UNRATE", "u") # ← was gm(), caused 67-row problem
+      fedfund <- gf("FEDFUNDS", "ff") # ← was gm()
+      cpi_m <- gf("CPIAUCSL", "cpi") # ← was gm()
+      hy_m <- gf("BAMLH0A0HYM2", "hy_spread") # ← was gm()
+      oil_m <- gf("DCOILWTICO", "oil") # ← was gm()
+      pay_m <- gf("PAYEMS", "payems") # ← was gm()
+      lfpr_m <- gf("LNS11300060", "prime_lfpr")
+      usd_m <- gf("DTWEXBGS", "usd")
+      isr_m <- gm("ISRATIO", "inv_sales") # shorter history, gm() fine
+      cc_m <- gm("DRCCLACBS", "cc_del")
+      sent_m <- gm("UMCSENT", "sentiment")
+
+      if (is.null(unrate) || is.null(cpi_m) || is.null(fedfund)) {
+        message("[t3] Missing core series (UNRATE/CPIAUCSL/FEDFUNDS).")
+        return(NULL)
+      }
+
+      if (is.null(t10y2y)) {
+        t10 <- gf("DGS10", "t10")
+        t2 <- gf("DGS2", "t2")
+        if (!is.null(t10) && !is.null(t2)) {
+          t10y2y <- dplyr::inner_join(t10, t2, by = "date") %>%
+            dplyr::mutate(yield_spread = t10 - t2) %>%
+            dplyr::select(date, yield_spread)
         }
       }
-      message("[t3] Sahm proxy produced zero recession months."); NULL
-    })
-    if (is.null(usrec) || nrow(usrec) < 120) {
-      message("[t3] Recession indicator unavailable."); return(NULL)
+
+      # ── Step 3: Derived features ──────────────────────────────────────────────
+      u_df <- unrate %>%
+        dplyr::arrange(date) %>%
+        dplyr::mutate(
+          u_trough12 = zoo::rollapply(u, 12, min, fill = NA, align = "right"),
+          u_rise = u - u_trough12
+        ) %>%
+        dplyr::select(date, u, u_rise)
+
+      pay_df <- if (!is.null(pay_m)) {
+        pay_m %>%
+          dplyr::arrange(date) %>%
+          dplyr::mutate(
+            pay_chg = payems - dplyr::lag(payems, 1),
+            pay_3m = zoo::rollmean(pay_chg, 3, fill = NA, align = "right")
+          ) %>%
+          dplyr::select(date, pay_3m)
+      } else {
+        NULL
+      }
+
+      cpi_df <- cpi_m %>%
+        dplyr::arrange(date) %>%
+        dplyr::mutate(cpi_yoy = (cpi / dplyr::lag(cpi, 12) - 1) * 100) %>%
+        dplyr::select(date, cpi_yoy)
+
+      oil_df <- if (!is.null(oil_m)) {
+        oil_m %>%
+          dplyr::arrange(date) %>%
+          dplyr::mutate(oil_yoy = (oil / dplyr::lag(oil, 12) - 1) * 100) %>%
+          dplyr::select(date, oil_yoy)
+      } else {
+        NULL
+      }
+
+      usd_df <- if (!is.null(usd_m)) {
+        usd_m %>%
+          dplyr::arrange(date) %>%
+          dplyr::mutate(usd_yoy = (usd / dplyr::lag(usd, 12) - 1) * 100) %>%
+          dplyr::select(date, usd_yoy)
+      } else {
+        NULL
+      }
+
+      # ── Step 4: Forward recession label ──────────────────────────────────────
+      n_r <- nrow(usrec)
+      usrec$rec_next12 <- vapply(
+        seq_len(n_r),
+        function(i) {
+          idx <- (i + 1):min(i + 12, n_r)
+          if (length(idx) < 6) {
+            return(NA_real_)
+          }
+          as.numeric(any(usrec$recession[idx] == 1))
+        },
+        numeric(1)
+      )
+
+      # ── Step 5: Assemble panel ────────────────────────────────────────────────
+      # NOTE: cc_m (DRCCLACBS) is a quarterly series — it has real values only
+      # at Q-end dates; all other months are NA after a monthly left-join.
+      # We forward-fill (LOCF) so that each monthly row carries the most recent
+      # quarterly reading.  This is the correct treatment for low-frequency
+      # predictors: the value doesn't change intra-quarter, so propagating it
+      # forward introduces no look-ahead bias.
+      locf <- function(df, value_col) {
+        if (is.null(df)) {
+          return(NULL)
+        }
+        df %>%
+          dplyr::arrange(date) %>%
+          dplyr::mutate(
+            !!value_col := zoo::na.locf(!!rlang::sym(value_col), na.rm = FALSE)
+          )
+      }
+
+      empty_date_df <- data.frame(
+        date = as.Date(character()),
+        stringsAsFactors = FALSE
+      )
+      panel <- usrec %>%
+        dplyr::left_join(
+          if (!is.null(t10y2y)) t10y2y else empty_date_df,
+          by = "date"
+        ) %>%
+        dplyr::left_join(u_df, by = "date") %>%
+        dplyr::left_join(cpi_df, by = "date") %>%
+        dplyr::left_join(fedfund, by = "date") %>% # fedfund already has col 'ff'
+        dplyr::mutate(real_rate = ff - cpi_yoy)
+
+      for (df in list(
+        pay_df,
+        hy_m, # hy_m: just pass directly, no pipe trick
+        oil_df,
+        lfpr_m,
+        usd_df,
+        locf(isr_m, "inv_sales"), # ISRATIO: monthly, locf is no-op but safe
+        locf(cc_m, "cc_del"), # DRCCLACBS: quarterly → forward-fill
+        sent_m
+      )) {
+        if (!is.null(df)) panel <- dplyr::left_join(panel, df, by = "date")
+      }
+
+      panel <- panel %>% dplyr::filter(!is.na(rec_next12), !is.na(u_rise))
+
+      if (nrow(panel) < 120) {
+        message(sprintf(
+          "[t3] GLM panel too small: %d rows (need ≥120).",
+          nrow(panel)
+        ))
+        return(NULL)
+      }
+      message(sprintf(
+        "[t3] GLM feature matrix: %d months, base_rate=%.1f%%",
+        nrow(panel),
+        mean(panel$rec_next12, na.rm = TRUE) * 100
+      ))
+      panel
+    },
+    error = function(e) {
+      message("[t3] build_glm_feature_matrix failed: ", e$message)
+      NULL
     }
-
-    # ── Step 2: Feature series — ALL via gf() so history goes back to 1959 ───
-    t10y2y  <- gf("T10Y2Y", "yield_spread")
-    unrate  <- gf("UNRATE",       "u")          # ← was gm(), caused 67-row problem
-    fedfund <- gf("FEDFUNDS",     "ff")          # ← was gm()
-    cpi_m   <- gf("CPIAUCSL",     "cpi")         # ← was gm()
-    hy_m    <- gf("BAMLH0A0HYM2", "hy_spread")  # ← was gm()
-    oil_m   <- gf("DCOILWTICO",   "oil")         # ← was gm()
-    pay_m   <- gf("PAYEMS",       "payems")      # ← was gm()
-    lfpr_m  <- gf("LNS11300060",  "prime_lfpr")
-    usd_m   <- gf("DTWEXBGS",     "usd")
-    isr_m   <- gm("ISRATIO",      "inv_sales")   # shorter history, gm() fine
-    cc_m    <- gm("DRCCLACBS",    "cc_del")
-    sent_m  <- gm("UMCSENT",      "sentiment")
-
-    if (is.null(unrate) || is.null(cpi_m) || is.null(fedfund)) {
-      message("[t3] Missing core series (UNRATE/CPIAUCSL/FEDFUNDS)."); return(NULL)
-    }
-
-    if (is.null(t10y2y)) {
-      t10 <- gf("DGS10","t10"); t2 <- gf("DGS2","t2")
-      if (!is.null(t10) && !is.null(t2))
-        t10y2y <- dplyr::inner_join(t10,t2,by="date") %>%
-          dplyr::mutate(yield_spread=t10-t2) %>% dplyr::select(date,yield_spread)
-    }
-
-    # ── Step 3: Derived features ──────────────────────────────────────────────
-    u_df <- unrate %>% dplyr::arrange(date) %>%
-      dplyr::mutate(u_trough12=zoo::rollapply(u,12,min,fill=NA,align="right"),
-                    u_rise=u-u_trough12) %>%
-      dplyr::select(date, u, u_rise)
-
-    pay_df <- if (!is.null(pay_m))
-      pay_m %>% dplyr::arrange(date) %>%
-        dplyr::mutate(pay_chg=payems-dplyr::lag(payems,1),
-                      pay_3m=zoo::rollmean(pay_chg,3,fill=NA,align="right")) %>%
-        dplyr::select(date, pay_3m) else NULL
-
-    cpi_df <- cpi_m %>% dplyr::arrange(date) %>%
-      dplyr::mutate(cpi_yoy=(cpi/dplyr::lag(cpi,12)-1)*100) %>%
-      dplyr::select(date, cpi_yoy)
-
-    oil_df <- if (!is.null(oil_m)) oil_m %>% dplyr::arrange(date) %>%
-      dplyr::mutate(oil_yoy=(oil/dplyr::lag(oil,12)-1)*100) %>%
-      dplyr::select(date, oil_yoy) else NULL
-
-    usd_df <- if (!is.null(usd_m)) usd_m %>% dplyr::arrange(date) %>%
-      dplyr::mutate(usd_yoy=(usd/dplyr::lag(usd,12)-1)*100) %>%
-      dplyr::select(date, usd_yoy) else NULL
-
-    # ── Step 4: Forward recession label ──────────────────────────────────────
-    n_r <- nrow(usrec)
-    usrec$rec_next12 <- vapply(seq_len(n_r), function(i) {
-      idx <- (i+1):min(i+12, n_r)
-      if (length(idx) < 6) return(NA_real_)
-      as.numeric(any(usrec$recession[idx]==1))
-    }, numeric(1))
-
-    # ── Step 5: Assemble panel ────────────────────────────────────────────────
-    empty_date_df <- data.frame(date=as.Date(character()), stringsAsFactors=FALSE)
-    panel <- usrec %>%
-      dplyr::left_join(if(!is.null(t10y2y)) t10y2y else empty_date_df, by="date") %>%
-      dplyr::left_join(u_df, by="date") %>%
-      dplyr::left_join(cpi_df, by="date") %>%
-      dplyr::left_join(fedfund %>% dplyr::rename(ff=ff), by="date") %>%
-      dplyr::mutate(real_rate=ff-cpi_yoy)
-
-    for (df in list(pay_df, hy_m %>% {if(!is.null(.)) . else NULL},
-                    oil_df, lfpr_m, usd_df, isr_m, cc_m, sent_m))
-      if (!is.null(df)) panel <- dplyr::left_join(panel, df, by="date")
-
-    panel <- panel %>% dplyr::filter(!is.na(rec_next12), !is.na(u_rise))
-
-    if (nrow(panel) < 120) {
-      message(sprintf("[t3] GLM panel too small: %d rows (need ≥120).", nrow(panel)))
-      return(NULL)
-    }
-    message(sprintf("[t3] GLM feature matrix: %d months, base_rate=%.1f%%",
-                    nrow(panel), mean(panel$rec_next12,na.rm=TRUE)*100))
-    panel
-  }, error=function(e) { message("[t3] build_glm_feature_matrix failed: ",e$message); NULL })
+  )
 }
 
 
@@ -272,39 +434,87 @@ build_glm_feature_matrix <- function(fred_data) {
 # rolling_retrain — stores training_panel for OOS Brier scoring
 # ═══════════════════════════════════════════════════════════════════════════════
 
-rolling_retrain <- function(fred_data, window=360L) {
+rolling_retrain <- function(fred_data, window = 360L) {
   message(sprintf("[t3] Rolling GLM retrain (window=%dM)...", window))
   panel <- build_glm_feature_matrix(fred_data)
-  if (is.null(panel)) { message("[t3] build_glm_feature_matrix returned NULL — cannot train GLM."); return(NULL) }
+  if (is.null(panel)) {
+    message("[t3] build_glm_feature_matrix returned NULL — cannot train GLM.")
+    return(NULL)
+  }
 
   panel_rolling <- tail(panel, window)
-  if (nrow(panel_rolling) < 100) panel_rolling <- panel
+  if (nrow(panel_rolling) < 100) {
+    panel_rolling <- panel
+  }
 
-  possible  <- c("yield_spread","u_rise","pay_3m","real_rate","hy_spread","oil_yoy",
-                 "prime_lfpr","usd_yoy","inv_sales","cc_del","sentiment")
+  possible <- c(
+    "yield_spread",
+    "u_rise",
+    "pay_3m",
+    "real_rate",
+    "hy_spread",
+    "oil_yoy",
+    "prime_lfpr",
+    "usd_yoy",
+    "inv_sales",
+    "cc_del",
+    "sentiment"
+  )
   available <- intersect(possible, names(panel_rolling))
-  if (length(available) < 3) { message("[t3] Too few predictors for GLM."); return(NULL) }
+  if (length(available) < 3) {
+    message("[t3] Too few predictors for GLM.")
+    return(NULL)
+  }
 
   panel_clean <- panel_rolling %>%
-    dplyr::select(rec_next12, dplyr::all_of(available)) %>% tidyr::drop_na()
-  if (nrow(panel_clean) < 60) { message(sprintf("[t3] Clean panel too small: %d rows.", nrow(panel_clean))); return(NULL) }
+    dplyr::select(rec_next12, dplyr::all_of(available)) %>%
+    tidyr::drop_na()
+  if (nrow(panel_clean) < 60) {
+    message(sprintf("[t3] Clean panel too small: %d rows.", nrow(panel_clean)))
+    return(NULL)
+  }
 
-  fml <- as.formula(paste("rec_next12 ~", paste(available, collapse=" + ")))
-  tryCatch({
-    model    <- glm(fml, data=panel_clean, family=binomial(link="logit"))
-    sm       <- summary(model)
-    coef_tbl <- as.data.frame(sm$coefficients); coef_tbl$predictor <- rownames(coef_tbl)
-    coef_tbl <- coef_tbl %>% dplyr::filter(predictor!="(Intercept)") %>%
-      dplyr::rename(estimate=Estimate,se=`Std. Error`,z_stat=`z value`,p_val=`Pr(>|z|)`) %>%
-      dplyr::select(predictor,estimate,se,z_stat,p_val)
-    ad <- build_anomaly_detector(panel_clean[,available,drop=FALSE])
-    message(sprintf("[t3] GLM: n=%d, window=%dM, AIC=%.1f, %d predictors",
-                    nrow(panel_clean), window, AIC(model), length(available)))
-    list(model=model, coef_table=coef_tbl, n_obs=nrow(panel_clean),
-         aic=round(AIC(model),1), predictors=available, trained_at=Sys.time(),
-         anomaly_detector=ad, window_months=window,
-         training_panel=panel_clean)   # ← critical for Brier scoring
-  }, error=function(e) { message("[t3] GLM fit failed: ",e$message); NULL })
+  fml <- as.formula(paste("rec_next12 ~", paste(available, collapse = " + ")))
+  tryCatch(
+    {
+      model <- glm(fml, data = panel_clean, family = binomial(link = "logit"))
+      sm <- summary(model)
+      coef_tbl <- as.data.frame(sm$coefficients)
+      coef_tbl$predictor <- rownames(coef_tbl)
+      coef_tbl <- coef_tbl %>%
+        dplyr::filter(predictor != "(Intercept)") %>%
+        dplyr::rename(
+          estimate = Estimate,
+          se = `Std. Error`,
+          z_stat = `z value`,
+          p_val = `Pr(>|z|)`
+        ) %>%
+        dplyr::select(predictor, estimate, se, z_stat, p_val)
+      ad <- build_anomaly_detector(panel_clean[, available, drop = FALSE])
+      message(sprintf(
+        "[t3] GLM: n=%d, window=%dM, AIC=%.1f, %d predictors",
+        nrow(panel_clean),
+        window,
+        AIC(model),
+        length(available)
+      ))
+      list(
+        model = model,
+        coef_table = coef_tbl,
+        n_obs = nrow(panel_clean),
+        aic = round(AIC(model), 1),
+        predictors = available,
+        trained_at = Sys.time(),
+        anomaly_detector = ad,
+        window_months = window,
+        training_panel = panel_clean
+      ) # ← critical for Brier scoring
+    },
+    error = function(e) {
+      message("[t3] GLM fit failed: ", e$message)
+      NULL
+    }
+  )
 }
 
 
@@ -312,104 +522,214 @@ rolling_retrain <- function(fred_data, window=360L) {
 # train_markov_model — pure-R Hamilton EM, no MSwM
 # ═══════════════════════════════════════════════════════════════════════════════
 
-train_markov_model <- function(fred_data, n_states=3L, n_restarts=5L) {
-  tryCatch({
-    gm_local <- function(sid, val_name) {
-      df <- fred_data[[sid]]; if(is.null(df)||nrow(df)<24) return(NULL)
-      df %>% dplyr::arrange(date) %>%
-        dplyr::mutate(month=lubridate::floor_date(date,"month")) %>%
-        dplyr::group_by(month) %>%
-        dplyr::summarise(!!val_name:=mean(value,na.rm=TRUE),.groups="drop") %>%
-        dplyr::rename(date=month)
-    }
-    gf <- function(sid, val_name, start=as.Date("1959-01-01")) {
-      tryCatch(
-        fredr::fredr(sid,observation_start=start,frequency="m") %>%
-          dplyr::select(date,!!val_name:=value),
-        error=function(e){ message(sprintf("[t3] fredr('%s') failed: %s",sid,e$message)); gm_local(sid,val_name) })
-    }
-
-    # Cascade: INDPRO YoY → PAYEMS MoM → UNRATE
-    switching_var <- NULL; switch_name <- NULL; higher_is_recession <- FALSE
-    indpro_raw <- gf("INDPRO","indpro")
-    if (!is.null(indpro_raw) && nrow(indpro_raw) >= 24) {
-      cand <- indpro_raw %>% dplyr::arrange(date) %>%
-        dplyr::mutate(sw_var=(indpro/dplyr::lag(indpro,12)-1)*100) %>%
-        dplyr::filter(!is.na(sw_var)) %>% dplyr::select(date,sw_var)
-      if (nrow(cand) >= 60) { switching_var<-cand; switch_name<-"IP YoY %"; higher_is_recession<-FALSE }
-    }
-    if (is.null(switching_var)) {
-      pay_raw <- gf("PAYEMS","payems")
-      if (!is.null(pay_raw) && nrow(pay_raw) >= 24) {
-        cand <- pay_raw %>% dplyr::arrange(date) %>%
-          dplyr::mutate(sw_var=payems-dplyr::lag(payems,1)) %>%
-          dplyr::filter(!is.na(sw_var)) %>% dplyr::select(date,sw_var)
-        if (nrow(cand) >= 60) { switching_var<-cand; switch_name<-"Payroll MoM (K)"; higher_is_recession<-FALSE }
+train_markov_model <- function(fred_data, n_states = 3L, n_restarts = 5L) {
+  tryCatch(
+    {
+      gm_local <- function(sid, val_name) {
+        df <- fred_data[[sid]]
+        if (is.null(df) || nrow(df) < 24) {
+          return(NULL)
+        }
+        df %>%
+          dplyr::arrange(date) %>%
+          dplyr::mutate(month = lubridate::floor_date(date, "month")) %>%
+          dplyr::group_by(month) %>%
+          dplyr::summarise(
+            !!val_name := mean(value, na.rm = TRUE),
+            .groups = "drop"
+          ) %>%
+          dplyr::rename(date = month)
       }
-    }
-    if (is.null(switching_var)) {
-      urate_raw <- gf("UNRATE","unemp")
-      if (!is.null(urate_raw) && nrow(urate_raw) >= 60) {
-        switching_var <- urate_raw %>% dplyr::rename(sw_var=unemp)
-        switch_name<-"Unemployment rate"; higher_is_recession<-TRUE
+      gf <- function(sid, val_name, start = as.Date("1959-01-01")) {
+        tryCatch(
+          fredr::fredr(sid, observation_start = start, frequency = "m") %>%
+            dplyr::select(date, !!val_name := value),
+          error = function(e) {
+            message(sprintf("[t3] fredr('%s') failed: %s", sid, e$message))
+            gm_local(sid, val_name)
+          }
+        )
       }
+
+      # Cascade: INDPRO YoY → PAYEMS MoM → UNRATE
+      switching_var <- NULL
+      switch_name <- NULL
+      higher_is_recession <- FALSE
+      indpro_raw <- gf("INDPRO", "indpro")
+      if (!is.null(indpro_raw) && nrow(indpro_raw) >= 24) {
+        cand <- indpro_raw %>%
+          dplyr::arrange(date) %>%
+          dplyr::mutate(
+            sw_var = (indpro / dplyr::lag(indpro, 12) - 1) * 100
+          ) %>%
+          dplyr::filter(!is.na(sw_var)) %>%
+          dplyr::select(date, sw_var)
+        if (nrow(cand) >= 60) {
+          switching_var <- cand
+          switch_name <- "IP YoY %"
+          higher_is_recession <- FALSE
+        }
+      }
+      if (is.null(switching_var)) {
+        pay_raw <- gf("PAYEMS", "payems")
+        if (!is.null(pay_raw) && nrow(pay_raw) >= 24) {
+          cand <- pay_raw %>%
+            dplyr::arrange(date) %>%
+            dplyr::mutate(sw_var = payems - dplyr::lag(payems, 1)) %>%
+            dplyr::filter(!is.na(sw_var)) %>%
+            dplyr::select(date, sw_var)
+          if (nrow(cand) >= 60) {
+            switching_var <- cand
+            switch_name <- "Payroll MoM (K)"
+            higher_is_recession <- FALSE
+          }
+        }
+      }
+      if (is.null(switching_var)) {
+        urate_raw <- gf("UNRATE", "unemp")
+        if (!is.null(urate_raw) && nrow(urate_raw) >= 60) {
+          switching_var <- urate_raw %>% dplyr::rename(sw_var = unemp)
+          switch_name <- "Unemployment rate"
+          higher_is_recession <- TRUE
+        }
+      }
+      if (is.null(switching_var)) {
+        message("[t3] No switching variable.")
+        return(NULL)
+      }
+
+      y <- switching_var$sw_var[!is.na(switching_var$sw_var)]
+      dates_used <- switching_var$date[!is.na(switching_var$sw_var)]
+      message(sprintf(
+        "[t3] Markov EM: '%s' (%d obs), %d states, %d restarts",
+        switch_name,
+        length(y),
+        n_states,
+        n_restarts
+      ))
+
+      fit_once <- function(r) {
+        tryCatch(
+          {
+            y_fit <- if (r > 1) {
+              y + rnorm(length(y), 0, sd(y) * 0.04 * (r - 1))
+            } else {
+              y
+            }
+            fit <- .fit_hamilton_em(
+              y_fit,
+              k = n_states,
+              max_iter = 500L,
+              tol = 1e-6,
+              seed = r * 37L
+            )
+            sp <- fit$smooth_probs
+            sa <- apply(sp, 1, which.max)
+            emp <- sapply(seq_len(n_states), function(s) {
+              mean(y[sa == s], na.rm = TRUE)
+            })
+            rs <- if (higher_is_recession) which.max(emp) else which.min(emp)
+            freq <- mean(sa == rs)
+            message(sprintf(
+              "[t3]   restart %d: ll=%.1f conv=%s | means=[%s] | rec=%d freq=%.0f%%",
+              r,
+              fit$loglik,
+              fit$converged,
+              paste(round(emp, 1), collapse = ","),
+              rs,
+              freq * 100
+            ))
+            list(
+              fit = fit,
+              smooth_probs = sp,
+              recession_state = rs,
+              emp_means = emp,
+              freq_rec = freq,
+              state_assign = sa
+            )
+          },
+          error = function(e) {
+            message(sprintf("[t3]   restart %d failed: %s", r, e$message))
+            NULL
+          }
+        )
+      }
+
+      cands <- Filter(Negate(is.null), lapply(seq_len(n_restarts), fit_once))
+      if (length(cands) == 0) {
+        message("[t3] All EM restarts failed.")
+        return(NULL)
+      }
+
+      best <- cands[[which.min(sapply(cands, function(c) {
+        abs(c$freq_rec - .MARKOV_FREQ_TARGET)
+      }))]]
+      sp <- best$smooth_probs
+      rs <- best$recession_state
+      emp <- best$emp_means
+      sa <- best$state_assign
+      freq_rec <- best$freq_rec
+      cur_p <- sp[length(y), rs]
+      reliable <- freq_rec <= .MARKOV_FREQ_MAX
+
+      ord <- order(emp, decreasing = !higher_is_recession)
+      lbl <- character(n_states)
+      if (n_states == 3L) {
+        lbl[ord[1]] <- "Expansion"
+        lbl[ord[2]] <- "Stall"
+        lbl[ord[3]] <- "Contraction"
+      } else {
+        lbl[rs] <- "Contraction"
+        lbl[setdiff(seq_len(n_states), rs)[1]] <- "Expansion"
+      }
+
+      exp_st <- ord[1]
+      sw_means <- list(
+        variable = switch_name,
+        expansion = round(emp[exp_st], 2),
+        recession = round(emp[rs], 2)
+      )
+
+      if (!reliable) {
+        message(sprintf(
+          "[t3] WARNING: rec state = %.0f%% of history (max %.0f%%). Weight will be capped.",
+          freq_rec * 100,
+          .MARKOV_FREQ_MAX * 100
+        ))
+      }
+      message(sprintf(
+        "[t3] Markov final: [%s] | rec='%s' mean=%.2f (%.0f%%) | p_rec=%.1f%% | reliable=%s",
+        paste(sprintf("%s=%.1f", lbl, emp), collapse = " / "),
+        lbl[rs],
+        emp[rs],
+        freq_rec * 100,
+        cur_p * 100,
+        reliable
+      ))
+
+      list(
+        model = best$fit,
+        smooth_probs = sp,
+        recession_state = rs,
+        current_rec_prob = cur_p,
+        state_means_sw = emp,
+        state_labels = lbl,
+        switch_name = switch_name,
+        higher_is_recession = higher_is_recession,
+        regime_means = list(),
+        sw_regime_means = sw_means,
+        state_freq_recession = freq_rec,
+        reliable = reliable,
+        n_states = n_states,
+        n_obs = length(y),
+        trained_at = Sys.time()
+      )
+    },
+    error = function(e) {
+      message("[t3] Markov failed: ", e$message)
+      NULL
     }
-    if (is.null(switching_var)) { message("[t3] No switching variable."); return(NULL) }
-
-    y         <- switching_var$sw_var[!is.na(switching_var$sw_var)]
-    dates_used <- switching_var$date[!is.na(switching_var$sw_var)]
-    message(sprintf("[t3] Markov EM: '%s' (%d obs), %d states, %d restarts",
-                    switch_name, length(y), n_states, n_restarts))
-
-    fit_once <- function(r) {
-      tryCatch({
-        y_fit <- if (r > 1) y + rnorm(length(y), 0, sd(y)*0.04*(r-1)) else y
-        fit   <- .fit_hamilton_em(y_fit, k=n_states, max_iter=500L, tol=1e-6, seed=r*37L)
-        sp    <- fit$smooth_probs
-        sa    <- apply(sp, 1, which.max)
-        emp   <- sapply(seq_len(n_states), function(s) mean(y[sa==s], na.rm=TRUE))
-        rs    <- if (higher_is_recession) which.max(emp) else which.min(emp)
-        freq  <- mean(sa==rs)
-        message(sprintf("[t3]   restart %d: ll=%.1f conv=%s | means=[%s] | rec=%d freq=%.0f%%",
-                        r, fit$loglik, fit$converged, paste(round(emp,1),collapse=","), rs, freq*100))
-        list(fit=fit, smooth_probs=sp, recession_state=rs, emp_means=emp, freq_rec=freq, state_assign=sa)
-      }, error=function(e){ message(sprintf("[t3]   restart %d failed: %s",r,e$message)); NULL })
-    }
-
-    cands <- Filter(Negate(is.null), lapply(seq_len(n_restarts), fit_once))
-    if (length(cands)==0) { message("[t3] All EM restarts failed."); return(NULL) }
-
-    best        <- cands[[which.min(sapply(cands, function(c) abs(c$freq_rec-.MARKOV_FREQ_TARGET)))]]
-    sp          <- best$smooth_probs
-    rs          <- best$recession_state
-    emp         <- best$emp_means
-    sa          <- best$state_assign
-    freq_rec    <- best$freq_rec
-    cur_p       <- sp[length(y), rs]
-    reliable    <- freq_rec <= .MARKOV_FREQ_MAX
-
-    ord <- order(emp, decreasing=!higher_is_recession)
-    lbl <- character(n_states)
-    if (n_states==3L) { lbl[ord[1]]<-"Expansion"; lbl[ord[2]]<-"Stall"; lbl[ord[3]]<-"Contraction" }
-    else { lbl[rs]<-"Contraction"; lbl[setdiff(seq_len(n_states),rs)[1]]<-"Expansion" }
-
-    exp_st <- ord[1]
-    sw_means <- list(variable=switch_name, expansion=round(emp[exp_st],2), recession=round(emp[rs],2))
-
-    if (!reliable)
-      message(sprintf("[t3] WARNING: rec state = %.0f%% of history (max %.0f%%). Weight will be capped.",
-                      freq_rec*100, .MARKOV_FREQ_MAX*100))
-    message(sprintf("[t3] Markov final: [%s] | rec='%s' mean=%.2f (%.0f%%) | p_rec=%.1f%% | reliable=%s",
-                    paste(sprintf("%s=%.1f",lbl,emp),collapse=" / "),
-                    lbl[rs], emp[rs], freq_rec*100, cur_p*100, reliable))
-
-    list(model=best$fit, smooth_probs=sp, recession_state=rs,
-         current_rec_prob=cur_p, state_means_sw=emp, state_labels=lbl,
-         switch_name=switch_name, higher_is_recession=higher_is_recession,
-         regime_means=list(), sw_regime_means=sw_means,
-         state_freq_recession=freq_rec, reliable=reliable,
-         n_states=n_states, n_obs=length(y), trained_at=Sys.time())
-  }, error=function(e){ message("[t3] Markov failed: ",e$message); NULL })
+  )
 }
 
 
@@ -417,84 +737,185 @@ train_markov_model <- function(fred_data, n_states=3L, n_restarts=5L) {
 # compute_ensemble_weights — true OOS Brier scoring + reliability penalty
 # ═══════════════════════════════════════════════════════════════════════════════
 
-compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=36L) {
-  fallback <- list(w_glm=0.60,w_ms=0.40,glm_brier=NA_real_,ms_brier=NA_real_,
-                   n_holdout=0L,method="fallback (equal-ish)")
+compute_ensemble_weights <- function(
+  glm_result,
+  markov_result,
+  holdout_months = 36L
+) {
+  fallback <- list(
+    w_glm = 0.60,
+    w_ms = 0.40,
+    glm_brier = NA_real_,
+    ms_brier = NA_real_,
+    n_holdout = 0L,
+    method = "fallback (equal-ish)"
+  )
 
   if (is.null(glm_result) || is.null(glm_result$training_panel)) {
-    message("[t3] compute_ensemble_weights: training_panel missing, using fallback.")
+    message(
+      "[t3] compute_ensemble_weights: training_panel missing, using fallback."
+    )
     return(fallback)
   }
-  panel <- glm_result$training_panel; n <- nrow(panel)
+  panel <- glm_result$training_panel
+  n <- nrow(panel)
   if (n < holdout_months + 30L) {
-    message(sprintf("[t3] Panel too small for holdout (n=%d). Fallback.", n)); return(fallback)
+    message(sprintf("[t3] Panel too small for holdout (n=%d). Fallback.", n))
+    return(fallback)
   }
 
-  hold_idx   <- (n - holdout_months + 1L):n
-  train_idx  <- seq_len(n - holdout_months)
-  hold_df    <- panel[hold_idx,  , drop=FALSE]
-  train_df   <- panel[train_idx, , drop=FALSE]
-  y_act      <- hold_df$rec_next12
-  ok         <- !is.na(y_act)
+  hold_idx <- (n - holdout_months + 1L):n
+  train_idx <- seq_len(n - holdout_months)
+  hold_df <- panel[hold_idx, , drop = FALSE]
+  train_df <- panel[train_idx, , drop = FALSE]
+  y_act <- hold_df$rec_next12
+  ok <- !is.na(y_act)
   if (sum(ok) < 12L) {
-    message(sprintf("[t3] Only %d valid holdout outcomes. Fallback.", sum(ok))); return(fallback)
+    message(sprintf("[t3] Only %d valid holdout outcomes. Fallback.", sum(ok)))
+    return(fallback)
   }
-  hold_df <- hold_df[ok,,drop=FALSE]; y_act <- y_act[ok]
-  avail   <- intersect(glm_result$predictors, names(panel))
+  hold_df <- hold_df[ok, , drop = FALSE]
+  y_act <- y_act[ok]
+  avail <- intersect(glm_result$predictors, names(panel))
 
   # Fit temporary scoring-only GLM (never sees holdout)
-  glm_brier <- tryCatch({
-    sc <- train_df %>% dplyr::select(rec_next12,dplyr::all_of(avail)) %>% tidyr::drop_na()
-    if (nrow(sc) < 60) stop("scoring train set too small")
-    tmp  <- glm(as.formula(paste("rec_next12~",paste(avail,collapse="+"))),data=sc,family=binomial)
-    hdf  <- hold_df[,avail,drop=FALSE]
-    for (col in names(hdf)) if(is.na(hdf[[col]])) hdf[[col]] <- 0
-    mean((predict(tmp,newdata=hdf,type="response") - y_act)^2, na.rm=TRUE)
-  }, error=function(e){ message("[t3] GLM Brier failed: ",e$message); NA_real_ })
+  glm_brier <- tryCatch(
+    {
+      sc <- train_df %>%
+        dplyr::select(rec_next12, dplyr::all_of(avail)) %>%
+        tidyr::drop_na()
+      if (nrow(sc) < 60) {
+        stop("scoring train set too small")
+      }
+      tmp <- glm(
+        as.formula(paste("rec_next12~", paste(avail, collapse = "+"))),
+        data = sc,
+        family = binomial
+      )
+      hdf <- hold_df[, avail, drop = FALSE]
+      for (col in names(hdf)) {
+        if (is.na(hdf[[col]])) hdf[[col]] <- 0
+      }
+      mean(
+        (predict(tmp, newdata = hdf, type = "response") - y_act)^2,
+        na.rm = TRUE
+      )
+    },
+    error = function(e) {
+      message("[t3] GLM Brier failed: ", e$message)
+      NA_real_
+    }
+  )
 
-  ms_brier <- tryCatch({
-    if (is.null(markov_result)||is.null(markov_result$smooth_probs)) stop("no smooth_probs")
-    sp_rec <- markov_result$smooth_probs[,markov_result$recession_state]
-    n_h    <- length(y_act)
-    if (length(sp_rec) < n_h) stop("smooth_probs too short")
-    mean((tail(sp_rec,n_h) - y_act)^2, na.rm=TRUE)
-  }, error=function(e){ message("[t3] Markov Brier failed: ",e$message); NA_real_ })
+  ms_brier <- tryCatch(
+    {
+      if (is.null(markov_result) || is.null(markov_result$smooth_probs)) {
+        stop("no smooth_probs")
+      }
+      sp_rec <- markov_result$smooth_probs[, markov_result$recession_state]
+      n_h <- length(y_act)
+      if (length(sp_rec) < n_h) {
+        stop("smooth_probs too short")
+      }
+      mean((tail(sp_rec, n_h) - y_act)^2, na.rm = TRUE)
+    },
+    error = function(e) {
+      message("[t3] Markov Brier failed: ", e$message)
+      NA_real_
+    }
+  )
 
-  message(sprintf("[t3] Brier — GLM:%s Markov:%s holdout:%d months",
-                  if(is.na(glm_brier))"NA" else sprintf("%.4f",glm_brier),
-                  if(is.na(ms_brier)) "NA" else sprintf("%.4f",ms_brier),
-                  length(y_act)))
+  message(sprintf(
+    "[t3] Brier — GLM:%s Markov:%s holdout:%d months",
+    if (is.na(glm_brier)) "NA" else sprintf("%.4f", glm_brier),
+    if (is.na(ms_brier)) "NA" else sprintf("%.4f", ms_brier),
+    length(y_act)
+  ))
 
-  if (is.na(glm_brier) && is.na(ms_brier)) return(fallback)
-  if (is.na(ms_brier))  return(modifyList(fallback,list(w_glm=0.85,w_ms=0.15,glm_brier=glm_brier,n_holdout=length(y_act),method="GLM only")))
-  if (is.na(glm_brier)) return(modifyList(fallback,list(w_glm=0.15,w_ms=0.85,ms_brier=ms_brier,n_holdout=length(y_act),method="Markov only")))
+  if (is.na(glm_brier) && is.na(ms_brier)) {
+    return(fallback)
+  }
+  if (is.na(ms_brier)) {
+    return(modifyList(
+      fallback,
+      list(
+        w_glm = 0.85,
+        w_ms = 0.15,
+        glm_brier = glm_brier,
+        n_holdout = length(y_act),
+        method = "GLM only"
+      )
+    ))
+  }
+  if (is.na(glm_brier)) {
+    return(modifyList(
+      fallback,
+      list(
+        w_glm = 0.15,
+        w_ms = 0.85,
+        ms_brier = ms_brier,
+        n_holdout = length(y_act),
+        method = "Markov only"
+      )
+    ))
+  }
 
-  base_rate  <- mean(panel$rec_next12, na.rm=TRUE)
-  clim       <- base_rate * (1 - base_rate)
-  gs <- max(0, 1 - glm_brier/clim); ms <- max(0, 1 - ms_brier/clim)
+  base_rate <- mean(panel$rec_next12, na.rm = TRUE)
+  clim <- base_rate * (1 - base_rate)
+  gs <- max(0, 1 - glm_brier / clim)
+  ms <- max(0, 1 - ms_brier / clim)
   tot <- gs + ms
-  if (tot < 1e-4) { message("[t3] Both models near-zero skill. Fallback."); return(fallback) }
+  if (tot < 1e-4) {
+    message("[t3] Both models near-zero skill. Fallback.")
+    return(fallback)
+  }
 
-  w_glm <- gs/tot; w_ms <- ms/tot
+  w_glm <- gs / tot
+  w_ms <- ms / tot
 
   # Reliability penalty: cap Markov if its recession state > 25% of history
   if (!is.null(markov_result) && isFALSE(markov_result$reliable)) {
-    w_ms  <- min(w_ms, 0.10); w_glm <- 1 - w_ms
-    message(sprintf("[t3] Markov weight capped at 10%% (state freq=%.0f%%)",
-                    markov_result$state_freq_recession*100))
+    w_ms <- min(w_ms, 0.10)
+    w_glm <- 1 - w_ms
+    message(sprintf(
+      "[t3] Markov weight capped at 10%% (state freq=%.0f%%)",
+      markov_result$state_freq_recession * 100
+    ))
   }
 
-  method <- sprintf("OOS Brier skill (clim=%.4f, n=%d months)", clim, length(y_act))
-  if (!is.null(markov_result) && isFALSE(markov_result$reliable))
-    method <- paste0(method, sprintf(" [Markov capped: freq=%.0f%%]", markov_result$state_freq_recession*100))
+  method <- sprintf(
+    "OOS Brier skill (clim=%.4f, n=%d months)",
+    clim,
+    length(y_act)
+  )
+  if (!is.null(markov_result) && isFALSE(markov_result$reliable)) {
+    method <- paste0(
+      method,
+      sprintf(
+        " [Markov capped: freq=%.0f%%]",
+        markov_result$state_freq_recession * 100
+      )
+    )
+  }
 
-  message(sprintf("[t3] Weights → GLM=%.0f%% (skill=%.3f) | Markov=%.0f%% (skill=%.3f)",
-                  w_glm*100, gs, w_ms*100, ms))
+  message(sprintf(
+    "[t3] Weights → GLM=%.0f%% (skill=%.3f) | Markov=%.0f%% (skill=%.3f)",
+    w_glm * 100,
+    gs,
+    w_ms * 100,
+    ms
+  ))
 
-  list(w_glm=round(w_glm,3),w_ms=round(w_ms,3),
-       glm_brier=round(glm_brier,4),ms_brier=round(ms_brier,4),
-       glm_skill=round(gs,3),ms_skill=round(ms,3),
-       n_holdout=length(y_act),method=method)
+  list(
+    w_glm = round(w_glm, 3),
+    w_ms = round(w_ms, 3),
+    glm_brier = round(glm_brier, 4),
+    ms_brier = round(ms_brier, 4),
+    glm_skill = round(gs, 3),
+    ms_skill = round(ms, 3),
+    n_holdout = length(y_act),
+    method = method
+  )
 }
 
 
@@ -503,16 +924,42 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
 # ═══════════════════════════════════════════════════════════════════════════════
 
 .classify_recession_tier <- function(prob) {
-  if      (prob >= 65) list(label="Elevated",      color="#e94560", icon="exclamation-triangle",
-    desc="Multiple leading indicators aligned recessionary. Historical hit rate ~65%. Defensive positioning warranted.")
-  else if (prob >= 50) list(label="High",           color="#e07040", icon="exclamation-circle",
-    desc="More than half the probability weight sits on the recessionary side. Multiple genuine warning signs are active. Historically precedes recession in roughly half of cases.")
-  else if (prob >= 30) list(label="Moderate",       color="#f4a261", icon="minus-circle",
-    desc="Mixed signals. Some meaningful risk factors are elevated but no acute stress. Late-cycle slowdown most likely; recession requires additional deterioration.")
-  else if (prob >= 15) list(label="Low\u2013Moderate", color="#f4a261", icon="check-circle",
-    desc="A handful of headwinds present but overall macro picture is cautiously positive. Monitor labor momentum and credit spreads.")
-  else                 list(label="Low",            color="#2dce89", icon="check-circle",
-    desc="Most leading indicators benign. At or below historical 12-month recession base rate (~13%). No acute stress signals.")
+  if (prob >= 65) {
+    list(
+      label = "Elevated",
+      color = "#e94560",
+      icon = "exclamation-triangle",
+      desc = "Multiple leading indicators aligned recessionary. Historical hit rate ~65%. Defensive positioning warranted."
+    )
+  } else if (prob >= 50) {
+    list(
+      label = "High",
+      color = "#e07040",
+      icon = "exclamation-circle",
+      desc = "More than half the probability weight sits on the recessionary side. Multiple genuine warning signs are active. Historically precedes recession in roughly half of cases."
+    )
+  } else if (prob >= 30) {
+    list(
+      label = "Moderate",
+      color = "#f4a261",
+      icon = "minus-circle",
+      desc = "Mixed signals. Some meaningful risk factors are elevated but no acute stress. Late-cycle slowdown most likely; recession requires additional deterioration."
+    )
+  } else if (prob >= 15) {
+    list(
+      label = "Low\u2013Moderate",
+      color = "#f4a261",
+      icon = "check-circle",
+      desc = "A handful of headwinds present but overall macro picture is cautiously positive. Monitor labor momentum and credit spreads."
+    )
+  } else {
+    list(
+      label = "Low",
+      color = "#2dce89",
+      icon = "check-circle",
+      desc = "Most leading indicators benign. At or below historical 12-month recession base rate (~13%). No acute stress signals."
+    )
+  }
 }
 
 
@@ -521,14 +968,39 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
 # ═══════════════════════════════════════════════════════════════════════════════
 
 .regime_from_score <- function(s) {
-  if      (s >= 7.5) list(label="Expansion",        color="#2dce89", icon="arrow-up",
-    gdp_est="+2.5% to +3.5%", summary="Broad-based growth signals. Labor solid, consumer resilient, financial conditions supportive.")
-  else if (s >= 5.5) list(label="Moderate Growth",  color="#00b4d8", icon="minus",
-    gdp_est="+1.0% to +2.5%", summary="Below-trend but positive growth likely. Mixed signals — watch rate transmission and consumer confidence.")
-  else if (s >= 3.5) list(label="Stall / Slowdown", color="#f4a261", icon="arrow-down",
-    gdp_est="-0.5% to +1.0%", summary="Growth at risk. Restrictive monetary conditions or financial stress beginning to bite.")
-  else               list(label="Contraction Risk", color="#e94560", icon="exclamation-triangle",
-    gdp_est="Below -0.5%",    summary="Multiple negative signals. Recession probability elevated.")
+  if (s >= 7.5) {
+    list(
+      label = "Expansion",
+      color = "#2dce89",
+      icon = "arrow-up",
+      gdp_est = "+2.5% to +3.5%",
+      summary = "Broad-based growth signals. Labor solid, consumer resilient, financial conditions supportive."
+    )
+  } else if (s >= 5.5) {
+    list(
+      label = "Moderate Growth",
+      color = "#00b4d8",
+      icon = "minus",
+      gdp_est = "+1.0% to +2.5%",
+      summary = "Below-trend but positive growth likely. Mixed signals — watch rate transmission and consumer confidence."
+    )
+  } else if (s >= 3.5) {
+    list(
+      label = "Stall / Slowdown",
+      color = "#f4a261",
+      icon = "arrow-down",
+      gdp_est = "-0.5% to +1.0%",
+      summary = "Growth at risk. Restrictive monetary conditions or financial stress beginning to bite."
+    )
+  } else {
+    list(
+      label = "Contraction Risk",
+      color = "#e94560",
+      icon = "exclamation-triangle",
+      gdp_est = "Below -0.5%",
+      summary = "Multiple negative signals. Recession probability elevated."
+    )
+  }
 }
 
 
@@ -536,8 +1008,12 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
 # .growth_outlook_loading_html — animated screen while models train
 # ═══════════════════════════════════════════════════════════════════════════════
 
-.growth_outlook_loading_html <- function(step=NULL) {
-  step_label <- if (!is.null(step)) htmltools::htmlEscape(step) else "Fitting models\u2026"
+.growth_outlook_loading_html <- function(step = NULL) {
+  step_label <- if (!is.null(step)) {
+    htmltools::htmlEscape(step)
+  } else {
+    "Fitting models\u2026"
+  }
   shiny::HTML(sprintf(
     "<style>
        @keyframes t3spin{to{transform:rotate(360deg);}}
@@ -573,7 +1049,9 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
        </div>
        <div style='color:#555;font-size:10px;margin-top:6px;'>
          First run: 10\u201360 seconds. Cached 30 days.</div>
-     </div>", step_label))
+     </div>",
+    step_label
+  ))
 }
 
 
@@ -582,47 +1060,117 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
 # ═══════════════════════════════════════════════════════════════════════════════
 
 .compute_recession_prob <- function(
-  yield_spread, inv_months, unemp, u, pay_3m, real_rate,
-  hy_v, vix_v, cs, ip_y, hs,
-  prime_age_lfpr=NA, prime_age_lfpr_chg=NA, jobless_claims_trend=NA,
-  quits_yoy=NA, oil_yoy=NA, equity_drawdown_pct=NA, usd_yoy=NA,
-  inventory_sales_ratio=NA, cc_delinquency=NA,
-  glm_result=NULL, anomaly_detector=NULL, markov_result=NULL, ensemble_weights=NULL
+  yield_spread,
+  inv_months,
+  unemp,
+  u,
+  pay_3m,
+  real_rate,
+  hy_v,
+  vix_v,
+  cs,
+  ip_y,
+  hs,
+  prime_age_lfpr = NA,
+  prime_age_lfpr_chg = NA,
+  jobless_claims_trend = NA,
+  quits_yoy = NA,
+  oil_yoy = NA,
+  equity_drawdown_pct = NA,
+  usd_yoy = NA,
+  inventory_sales_ratio = NA,
+  cc_delinquency = NA,
+  glm_result = NULL,
+  anomaly_detector = NULL,
+  markov_result = NULL,
+  ensemble_weights = NULL
 ) {
-  ANOMALY_WEIGHT <- 0.35; ANOMALY_FLOOR <- 0.25; COMPRESS_CENTER <- 0.50
+  ANOMALY_WEIGHT <- 0.35
+  ANOMALY_FLOOR <- 0.25
+  COMPRESS_CENTER <- 0.50
   contribs <- list()
-  add_contrib <- function(id,lbl,delta,z_stat=NA_real_,data_missing=FALSE)
-    contribs[[id]] <<- list(name=lbl,contribution=delta,z_stat=z_stat,data_missing=data_missing)
+  add_contrib <- function(
+    id,
+    lbl,
+    delta,
+    z_stat = NA_real_,
+    data_missing = FALSE
+  ) {
+    contribs[[id]] <<- list(
+      name = lbl,
+      contribution = delta,
+      z_stat = z_stat,
+      data_missing = data_missing
+    )
+  }
 
-  u_rise_val <- if(!is.na(u)&&!is.null(unemp)&&length(unemp)>=12)
-    u-min(tail(unemp,12),na.rm=TRUE) else NA_real_
-  feat_df <- build_current_feature_vector(yield_spread,u_rise_val,pay_3m,real_rate,hy_v,oil_yoy,
-                                           prime_age_lfpr,usd_yoy,inventory_sales_ratio,cc_delinquency,cs)
+  u_rise_val <- if (!is.na(u) && !is.null(unemp) && length(unemp) >= 12) {
+    u - min(tail(unemp, 12), na.rm = TRUE)
+  } else {
+    NA_real_
+  }
+  feat_df <- build_current_feature_vector(
+    yield_spread,
+    u_rise_val,
+    pay_3m,
+    real_rate,
+    hy_v,
+    oil_yoy,
+    prime_age_lfpr,
+    usd_yoy,
+    inventory_sales_ratio,
+    cc_delinquency,
+    cs
+  )
   anomaly_result <- compute_anomaly_score(anomaly_detector, feat_df)
   A <- anomaly_result$score
 
   # ── GLM probability ──────────────────────────────────────────────────────────
   glm_prob_raw <- NA_real_
   if (!is.null(glm_result) && !is.null(glm_result$model)) {
-    kc      <- intersect(glm_result$predictors, names(feat_df))
-    feat_sub <- feat_df[,kc,drop=FALSE]
-    for (col in names(feat_sub)) if(is.na(feat_sub[[col]])) feat_sub[[col]] <- 0
-    glm_prob_raw <- tryCatch(predict(glm_result$model,newdata=feat_sub,type="response")[[1]],error=function(e)NA_real_)
+    kc <- intersect(glm_result$predictors, names(feat_df))
+    feat_sub <- feat_df[, kc, drop = FALSE]
+    for (col in names(feat_sub)) {
+      if (is.na(feat_sub[[col]])) feat_sub[[col]] <- 0
+    }
+    glm_prob_raw <- tryCatch(
+      predict(glm_result$model, newdata = feat_sub, type = "response")[[1]],
+      error = function(e) NA_real_
+    )
     if (!is.na(glm_prob_raw)) {
-      coefs <- coef(glm_result$model); ct <- glm_result$coef_table
-      fv    <- as.list(feat_df[1,,drop=FALSE])
-      labs  <- c(yield_spread="Yield Curve (10Y-2Y spread)",u_rise="Sahm Rule (unemployment rise)",
-                 pay_3m="Payroll Momentum (3M avg)",real_rate="Real Fed Funds Rate",
-                 hy_spread="HY Credit Spreads",oil_yoy="Oil Price Shock (YoY)",
-                 prime_lfpr="Prime-Age LFPR (25\u201354)",usd_yoy="USD Surge (YoY)",
-                 inv_sales="Inventory-to-Sales Ratio",cc_del="CC Delinquency Rate",
-                 sentiment="Consumer Sentiment")
+      coefs <- coef(glm_result$model)
+      ct <- glm_result$coef_table
+      fv <- as.list(feat_df[1, , drop = FALSE])
+      labs <- c(
+        yield_spread = "Yield Curve (10Y-2Y spread)",
+        u_rise = "Sahm Rule (unemployment rise)",
+        pay_3m = "Payroll Momentum (3M avg)",
+        real_rate = "Real Fed Funds Rate",
+        hy_spread = "HY Credit Spreads",
+        oil_yoy = "Oil Price Shock (YoY)",
+        prime_lfpr = "Prime-Age LFPR (25\u201354)",
+        usd_yoy = "USD Surge (YoY)",
+        inv_sales = "Inventory-to-Sales Ratio",
+        cc_del = "CC Delinquency Rate",
+        sentiment = "Consumer Sentiment"
+      )
       for (pred in kc) {
-        b  <- if(pred%in%names(coefs))coefs[[pred]]else NA_real_
-        x  <- fv[[pred]]; miss <- is.na(x)
-        z  <- if(pred%in%ct$predictor)ct$z_stat[ct$predictor==pred]else NA_real_
-        lbl<- if(pred%in%names(labs))labs[[pred]]else pred
-        add_contrib(pred,lbl,if(!is.na(b)&&!miss)b*x else 0,z,data_missing=miss)
+        b <- if (pred %in% names(coefs)) coefs[[pred]] else NA_real_
+        x <- fv[[pred]]
+        miss <- is.na(x)
+        z <- if (pred %in% ct$predictor) {
+          ct$z_stat[ct$predictor == pred]
+        } else {
+          NA_real_
+        }
+        lbl <- if (pred %in% names(labs)) labs[[pred]] else pred
+        add_contrib(
+          pred,
+          lbl,
+          if (!is.na(b) && !miss) b * x else 0,
+          z,
+          data_missing = miss
+        )
       }
     }
   }
@@ -630,79 +1178,396 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
   # ── Hand-tuned fallback ───────────────────────────────────────────────────────
   if (is.na(glm_prob_raw)) {
     lo <- -1.73
-    ht <- function(id,lbl,val,fn){ if(is.na(val)){add_contrib(id,lbl,0,data_missing=TRUE);return(0)};d<-fn(val);add_contrib(id,lbl,d);d }
-    lo<-lo+ht("yield_curve","Yield Curve (10Y-2Y spread)",yield_spread,function(v){d<- -v*0.85;if(!is.na(inv_months))d<-d+if(inv_months>=18)1.5 else if(inv_months>=12)1.2 else if(inv_months>=6)0.6 else if(inv_months>=3)0.3 else 0;d})
-    if(!is.na(u)&&!is.null(unemp)&&length(unemp)>=12){sh<-0;ur<-u-min(tail(unemp,12),na.rm=TRUE);sh<-sh+if(ur>=0.5)1.8 else if(ur>=0.3)0.9 else if(ur>=0.1)0.3 else if(ur<(-0.2))-0.4 else 0;if(!is.na(pay_3m))sh<-sh+if(pay_3m<(-50))1.5 else if(pay_3m<0)0.6 else if(pay_3m<100)0.1 else if(pay_3m>250)-0.5 else 0;add_contrib("sahm","Sahm Rule / Labor Momentum",sh);lo<-lo+sh}else add_contrib("sahm","Sahm Rule / Labor Momentum",0,data_missing=TRUE)
-    lo<-lo+ht("prime_lfpr","Prime-Age LFPR (25\u201354)",prime_age_lfpr,function(v){d<-if(v<80.5)0.8 else if(v<82)0.4 else if(v>83.5)-0.3 else 0;if(!is.na(prime_age_lfpr_chg))d<-d+if(prime_age_lfpr_chg<(-0.5))0.9 else if(prime_age_lfpr_chg<(-0.2))0.4 else if(prime_age_lfpr_chg>0.3)-0.3 else 0;d})
-    lo<-lo+ht("claims","Jobless Claims Trend (4wk/26wk)",jobless_claims_trend,function(v)if(v>0.20)1.2 else if(v>0.10)0.6 else if(v>0.05)0.2 else if(v<(-0.10))-0.3 else 0)
-    lo<-lo+ht("quits","Quits Rate YoY",quits_yoy,function(v)if(v<(-15))0.8 else if(v<(-8))0.4 else if(v<(-3))0.2 else if(v>8)-0.3 else 0)
-    lo<-lo+ht("oil","Oil Price Shock (YoY)",oil_yoy,function(v)if(v>50)1.0 else if(v>25)0.6 else if(v>15)0.2 else if(v<(-30))0.5 else if(v<(-15))0.2 else if(v>0&&v<10)-0.1 else 0)
-    lo<-lo+ht("equity","Equity Bear Market",equity_drawdown_pct,function(v){dd<-abs(v);if(dd>30)1.6 else if(dd>20)1.1 else if(dd>10)0.5 else if(dd<5)-0.2 else 0})
-    lo<-lo+ht("hy_spreads","HY Credit Spreads",hy_v,function(v)if(v>7)1.4 else if(v>5.5)0.7 else if(v>4.5)0.2 else if(v<3.5)-0.4 else 0)
-    lo<-lo+ht("usd","USD Surge (YoY)",usd_yoy,function(v)if(v>12)0.8 else if(v>8)0.4 else if(v>4)0.1 else if(v<(-5))-0.2 else 0)
-    lo<-lo+ht("real_rate","Real Fed Funds Rate",real_rate,function(v)if(v>3)1.0 else if(v>2)0.5 else if(v>1)0.2 else if(v<0)-0.3 else 0)
-    lo<-lo+ht("sentiment","Consumer Sentiment",cs,function(v)if(v<60)0.7 else if(v<70)0.3 else if(v>90)-0.4 else 0)
-    lo<-lo+ht("inv_sales","Inventory-to-Sales Ratio",inventory_sales_ratio,function(v)if(v>1.55)0.7 else if(v>1.45)0.3 else if(v>1.40)0.1 else if(v<1.30)-0.2 else 0)
-    lo<-lo+ht("cc_del","CC Delinquency Rate",cc_delinquency,function(v)if(v>4)0.9 else if(v>3)0.5 else if(v>2.5)0.2 else if(v<1.8)-0.3 else 0)
-    glm_prob_raw <- 1/(1+exp(-lo))
+    ht <- function(id, lbl, val, fn) {
+      if (is.na(val)) {
+        add_contrib(id, lbl, 0, data_missing = TRUE)
+        return(0)
+      }
+      d <- fn(val)
+      add_contrib(id, lbl, d)
+      d
+    }
+    lo <- lo +
+      ht(
+        "yield_curve",
+        "Yield Curve (10Y-2Y spread)",
+        yield_spread,
+        function(v) {
+          d <- -v * 0.85
+          if (!is.na(inv_months)) {
+            d <- d +
+              if (inv_months >= 18) {
+                1.5
+              } else if (inv_months >= 12) {
+                1.2
+              } else if (inv_months >= 6) {
+                0.6
+              } else if (inv_months >= 3) {
+                0.3
+              } else {
+                0
+              }
+          }
+          d
+        }
+      )
+    if (!is.na(u) && !is.null(unemp) && length(unemp) >= 12) {
+      sh <- 0
+      ur <- u - min(tail(unemp, 12), na.rm = TRUE)
+      sh <- sh +
+        if (ur >= 0.5) {
+          1.8
+        } else if (ur >= 0.3) {
+          0.9
+        } else if (ur >= 0.1) {
+          0.3
+        } else if (ur < (-0.2)) {
+          -0.4
+        } else {
+          0
+        }
+      if (!is.na(pay_3m)) {
+        sh <- sh +
+          if (pay_3m < (-50)) {
+            1.5
+          } else if (pay_3m < 0) {
+            0.6
+          } else if (pay_3m < 100) {
+            0.1
+          } else if (pay_3m > 250) {
+            -0.5
+          } else {
+            0
+          }
+      }
+      add_contrib("sahm", "Sahm Rule / Labor Momentum", sh)
+      lo <- lo + sh
+    } else {
+      add_contrib("sahm", "Sahm Rule / Labor Momentum", 0, data_missing = TRUE)
+    }
+    lo <- lo +
+      ht(
+        "prime_lfpr",
+        "Prime-Age LFPR (25\u201354)",
+        prime_age_lfpr,
+        function(v) {
+          d <- if (v < 80.5) {
+            0.8
+          } else if (v < 82) {
+            0.4
+          } else if (v > 83.5) {
+            -0.3
+          } else {
+            0
+          }
+          if (!is.na(prime_age_lfpr_chg)) {
+            d <- d +
+              if (prime_age_lfpr_chg < (-0.5)) {
+                0.9
+              } else if (prime_age_lfpr_chg < (-0.2)) {
+                0.4
+              } else if (prime_age_lfpr_chg > 0.3) {
+                -0.3
+              } else {
+                0
+              }
+          }
+          d
+        }
+      )
+    lo <- lo +
+      ht(
+        "claims",
+        "Jobless Claims Trend (4wk/26wk)",
+        jobless_claims_trend,
+        function(v) {
+          if (v > 0.20) {
+            1.2
+          } else if (v > 0.10) {
+            0.6
+          } else if (v > 0.05) {
+            0.2
+          } else if (v < (-0.10)) {
+            -0.3
+          } else {
+            0
+          }
+        }
+      )
+    lo <- lo +
+      ht("quits", "Quits Rate YoY", quits_yoy, function(v) {
+        if (v < (-15)) {
+          0.8
+        } else if (v < (-8)) {
+          0.4
+        } else if (v < (-3)) {
+          0.2
+        } else if (v > 8) {
+          -0.3
+        } else {
+          0
+        }
+      })
+    lo <- lo +
+      ht("oil", "Oil Price Shock (YoY)", oil_yoy, function(v) {
+        if (v > 50) {
+          1.0
+        } else if (v > 25) {
+          0.6
+        } else if (v > 15) {
+          0.2
+        } else if (v < (-30)) {
+          0.5
+        } else if (v < (-15)) {
+          0.2
+        } else if (v > 0 && v < 10) {
+          -0.1
+        } else {
+          0
+        }
+      })
+    lo <- lo +
+      ht("equity", "Equity Bear Market", equity_drawdown_pct, function(v) {
+        dd <- abs(v)
+        if (dd > 30) {
+          1.6
+        } else if (dd > 20) {
+          1.1
+        } else if (dd > 10) {
+          0.5
+        } else if (dd < 5) {
+          -0.2
+        } else {
+          0
+        }
+      })
+    lo <- lo +
+      ht("hy_spreads", "HY Credit Spreads", hy_v, function(v) {
+        if (v > 7) {
+          1.4
+        } else if (v > 5.5) {
+          0.7
+        } else if (v > 4.5) {
+          0.2
+        } else if (v < 3.5) {
+          -0.4
+        } else {
+          0
+        }
+      })
+    lo <- lo +
+      ht("usd", "USD Surge (YoY)", usd_yoy, function(v) {
+        if (v > 12) {
+          0.8
+        } else if (v > 8) {
+          0.4
+        } else if (v > 4) {
+          0.1
+        } else if (v < (-5)) {
+          -0.2
+        } else {
+          0
+        }
+      })
+    lo <- lo +
+      ht("real_rate", "Real Fed Funds Rate", real_rate, function(v) {
+        if (v > 3) {
+          1.0
+        } else if (v > 2) {
+          0.5
+        } else if (v > 1) {
+          0.2
+        } else if (v < 0) {
+          -0.3
+        } else {
+          0
+        }
+      })
+    lo <- lo +
+      ht("sentiment", "Consumer Sentiment", cs, function(v) {
+        if (v < 60) {
+          0.7
+        } else if (v < 70) {
+          0.3
+        } else if (v > 90) {
+          -0.4
+        } else {
+          0
+        }
+      })
+    lo <- lo +
+      ht(
+        "inv_sales",
+        "Inventory-to-Sales Ratio",
+        inventory_sales_ratio,
+        function(v) {
+          if (v > 1.55) {
+            0.7
+          } else if (v > 1.45) {
+            0.3
+          } else if (v > 1.40) {
+            0.1
+          } else if (v < 1.30) {
+            -0.2
+          } else {
+            0
+          }
+        }
+      )
+    lo <- lo +
+      ht("cc_del", "CC Delinquency Rate", cc_delinquency, function(v) {
+        if (v > 4) {
+          0.9
+        } else if (v > 3) {
+          0.5
+        } else if (v > 2.5) {
+          0.2
+        } else if (v < 1.8) {
+          -0.3
+        } else {
+          0
+        }
+      })
+    glm_prob_raw <- 1 / (1 + exp(-lo))
   }
 
   # ── Markov contribution — in log-odds units so it's on the same scale as β×x ─
-  ew    <- ensemble_weights %||% list(w_glm=0.60,w_ms=0.40)
-  W_GLM <- ew$w_glm; W_MS <- ew$w_ms
+  ew <- ensemble_weights %||% list(w_glm = 0.60, w_ms = 0.40)
+  W_GLM <- ew$w_glm
+  W_MS <- ew$w_ms
   ms_prob_raw <- NA_real_
 
   if (!is.null(markov_result) && !is.na(markov_result$current_rec_prob)) {
-    ms_prob_raw  <- markov_result$current_rec_prob
-    lo_glm  <- .prob_to_lo(glm_prob_raw)
-    lo_ms   <- .prob_to_lo(ms_prob_raw)
-    ms_delta <- (lo_ms - lo_glm) * W_MS   # log-odds units, same scale as other bars
-    sn   <- markov_result$switch_name %||% "IP YoY"
-    sm   <- markov_result$sw_regime_means
-    freq <- round((markov_result$state_freq_recession %||% 0)*100)
-    add_contrib("markov_regime",
-                sprintf("Markov Regime (w=%.0f%%; p_rec=%.0f%%; %s: exp=%.1f rec=%.1f; %d%% of history in rec state)",
-                        W_MS*100, ms_prob_raw*100, sn,
-                        sm$expansion %||% 0, sm$recession %||% 0, freq),
-                ms_delta)
+    ms_prob_raw <- markov_result$current_rec_prob
+    lo_glm <- .prob_to_lo(glm_prob_raw)
+    lo_ms <- .prob_to_lo(ms_prob_raw)
+    ms_delta <- (lo_ms - lo_glm) * W_MS # log-odds units, same scale as other bars
+    sn <- markov_result$switch_name %||% "IP YoY"
+    sm <- markov_result$sw_regime_means
+    freq <- round((markov_result$state_freq_recession %||% 0) * 100)
+    add_contrib(
+      "markov_regime",
+      sprintf(
+        "Markov Regime (w=%.0f%%; p_rec=%.0f%%; %s: exp=%.1f rec=%.1f; %d%% of history in rec state)",
+        W_MS * 100,
+        ms_prob_raw * 100,
+        sn,
+        sm$expansion %||% 0,
+        sm$recession %||% 0,
+        freq
+      ),
+      ms_delta
+    )
   }
 
   W_GLM <- if (!is.na(ms_prob_raw)) ew$w_glm else 1.0
-  W_MS  <- if (!is.na(ms_prob_raw)) ew$w_ms  else 0.0
+  W_MS <- if (!is.na(ms_prob_raw)) ew$w_ms else 0.0
 
-  blended <- if (!is.na(ms_prob_raw)) W_GLM*glm_prob_raw + W_MS*ms_prob_raw else glm_prob_raw
-  blended <- if (A > 0.05) max(blended + ANOMALY_WEIGHT*A*(COMPRESS_CENTER-blended), ANOMALY_FLOOR*A) else blended
+  blended <- if (!is.na(ms_prob_raw)) {
+    W_GLM * glm_prob_raw + W_MS * ms_prob_raw
+  } else {
+    glm_prob_raw
+  }
+  blended <- if (A > 0.05) {
+    max(
+      blended + ANOMALY_WEIGHT * A * (COMPRESS_CENTER - blended),
+      ANOMALY_FLOOR * A
+    )
+  } else {
+    blended
+  }
 
-  if (A > 0.05)
-    add_contrib("anomaly_signal",
-                sprintf("Anomaly Signal (MD\u2248%.1f; %s)", anomaly_result$md %||% 0, anomaly_result$label),
-                .prob_to_lo(blended) - .prob_to_lo(if(!is.na(ms_prob_raw))W_GLM*glm_prob_raw+W_MS*ms_prob_raw else glm_prob_raw))
+  if (A > 0.05) {
+    add_contrib(
+      "anomaly_signal",
+      sprintf(
+        "Anomaly Signal (MD\u2248%.1f; %s)",
+        anomaly_result$md %||% 0,
+        anomaly_result$label
+      ),
+      .prob_to_lo(blended) -
+        .prob_to_lo(
+          if (!is.na(ms_prob_raw)) {
+            W_GLM * glm_prob_raw + W_MS * ms_prob_raw
+          } else {
+            glm_prob_raw
+          }
+        )
+    )
+  }
 
-  prob <- max(2, min(97, round(blended*100, 1)))
+  prob <- max(2, min(97, round(blended * 100, 1)))
   tier <- .classify_recession_tier(prob)
 
-  cdf <- do.call(rbind, lapply(names(contribs), function(id) {
-    r <- contribs[[id]]
-    data.frame(name=r$name, contribution=r$contribution, z_stat=r$z_stat,
-               data_missing=r$data_missing %||% FALSE, stringsAsFactors=FALSE)
-  }))
-  cdf <- cdf[order(abs(cdf$contribution),decreasing=TRUE),]
+  cdf <- do.call(
+    rbind,
+    lapply(names(contribs), function(id) {
+      r <- contribs[[id]]
+      data.frame(
+        name = r$name,
+        contribution = r$contribution,
+        z_stat = r$z_stat,
+        data_missing = r$data_missing %||% FALSE,
+        stringsAsFactors = FALSE
+      )
+    })
+  )
+  cdf <- cdf[order(abs(cdf$contribution), decreasing = TRUE), ]
 
-  du<-character(0); dd<-character(0)
-  for (i in seq_len(min(8,nrow(cdf)))) {
-    r <- cdf[i,]; if(isTRUE(r$data_missing)) next
-    if(r$contribution>0.1) du<-c(du,r$name)
-    if(r$contribution<(-0.1)) dd<-c(dd,r$name)
+  du <- character(0)
+  dd <- character(0)
+  for (i in seq_len(min(8, nrow(cdf)))) {
+    r <- cdf[i, ]
+    if (isTRUE(r$data_missing)) {
+      next
+    }
+    if (r$contribution > 0.1) {
+      du <- c(du, r$name)
+    }
+    if (r$contribution < (-0.1)) dd <- c(dd, r$name)
   }
-  if(A>0.3) du<-c(sprintf("\u26a0 %s (MD=%.1f)",anomaly_result$label,anomaly_result$md%||%0),du)
-  if(!is.na(ms_prob_raw)&&ms_prob_raw>0.4) du<-c(sprintf("Markov regime: %.0f%% recession probability",ms_prob_raw*100),du)
+  if (A > 0.3) {
+    du <- c(
+      sprintf(
+        "\u26a0 %s (MD=%.1f)",
+        anomaly_result$label,
+        anomaly_result$md %||% 0
+      ),
+      du
+    )
+  }
+  if (!is.na(ms_prob_raw) && ms_prob_raw > 0.4) {
+    du <- c(
+      sprintf("Markov regime: %.0f%% recession probability", ms_prob_raw * 100),
+      du
+    )
+  }
 
-  mt <- if(!is.null(glm_result)&&!is.na(ms_prob_raw)) sprintf("GLM + Markov + Anomaly (w_glm=%.0f%% w_ms=%.0f%%)",W_GLM*100,W_MS*100)
-        else if(!is.null(glm_result)) "GLM + Anomaly" else "Hand-tuned + Anomaly"
+  mt <- if (!is.null(glm_result) && !is.na(ms_prob_raw)) {
+    sprintf(
+      "GLM + Markov + Anomaly (w_glm=%.0f%% w_ms=%.0f%%)",
+      W_GLM * 100,
+      W_MS * 100
+    )
+  } else if (!is.null(glm_result)) {
+    "GLM + Anomaly"
+  } else {
+    "Hand-tuned + Anomaly"
+  }
 
-  list(prob=prob,tier=tier,drivers_up=head(du,4),drivers_down=head(dd,3),
-       factor_contributions=cdf,anomaly=anomaly_result,markov_prob=ms_prob_raw,
-       ensemble_weights=ew,model_type=mt,n_obs=glm_result$n_obs%||%NULL,aic=glm_result$aic%||%NULL)
+  list(
+    prob = prob,
+    tier = tier,
+    drivers_up = head(du, 4),
+    drivers_down = head(dd, 3),
+    factor_contributions = cdf,
+    anomaly = anomaly_result,
+    markov_prob = ms_prob_raw,
+    ensemble_weights = ew,
+    model_type = mt,
+    n_obs = glm_result$n_obs %||% NULL,
+    aic = glm_result$aic %||% NULL
+  )
 }
 
 
@@ -710,83 +1575,295 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
 # build_growth_outlook — withProgress + .regime_from_score
 # ═══════════════════════════════════════════════════════════════════════════════
 
-build_growth_outlook <- function(fred_data, kpis, mkt_returns=NULL) {
-  if (is.null(kpis)) return(NULL)
-  gv <- function(sid){ df<-fred_data[[sid]]; if(is.null(df)||nrow(df)<2)return(NULL); df%>%dplyr::arrange(date)%>%dplyr::pull(value) }
-  unemp<-gv("UNRATE"); payrolls<-gv("PAYEMS"); cpi<-gv("CPIAUCSL"); fedfunds<-gv("FEDFUNDS")
-  t10<-gv("DGS10"); t2<-gv("DGS2"); mort<-gv("MORTGAGE30US")
-  sent<-gv("UMCSENT"); vix_vals<-gv("VIXCLS"); hy<-gv("BAMLH0A0HYM2"); oil<-gv("DCOILWTICO"); retail<-gv("RSAFS")
-  u<-kpis$unemp_rate%||%NA; cpi_y<-kpis$cpi_yoy%||%NA; pce_y<-kpis$core_pce%||%NA
-  ff<-kpis$fed_funds%||%NA; t10v<-kpis$t10yr%||%NA; t2v<-kpis$t2yr%||%NA
-  mort_v<-kpis$mortgage30%||%NA; hs<-kpis$housing_starts%||%NA; ret_y<-kpis$retail_yoy%||%NA
-  cs<-kpis$cons_sent%||%NA; ip_y<-kpis$indpro_yoy%||%NA; vix_v<-kpis$vix%||%NA; hy_v<-kpis$hy_spread%||%NA
-  real_rate    <- if(!is.na(ff)&&!is.na(cpi_y)) ff-cpi_y else NA
-  yield_spread <- if(!is.na(t10v)&&!is.na(t2v)) t10v-t2v else NA
-  pay_3m       <- if(!is.null(payrolls)&&length(payrolls)>=4) mean(diff(tail(payrolls,4)),na.rm=TRUE) else NA
-  ret_real     <- if(!is.na(ret_y)&&!is.na(cpi_y)) ret_y-cpi_y else NA
-  inv_months   <- if(!is.null(t10)&&!is.null(t2)){n<-min(length(t10),length(t2),18);sum((tail(t10,n)-tail(t2,n))<0,na.rm=TRUE)}else 0
+build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
+  if (is.null(kpis)) {
+    return(NULL)
+  }
+  gv <- function(sid) {
+    df <- fred_data[[sid]]
+    if (is.null(df) || nrow(df) < 2) {
+      return(NULL)
+    }
+    df %>% dplyr::arrange(date) %>% dplyr::pull(value)
+  }
+  unemp <- gv("UNRATE")
+  payrolls <- gv("PAYEMS")
+  cpi <- gv("CPIAUCSL")
+  fedfunds <- gv("FEDFUNDS")
+  t10 <- gv("DGS10")
+  t2 <- gv("DGS2")
+  mort <- gv("MORTGAGE30US")
+  sent <- gv("UMCSENT")
+  vix_vals <- gv("VIXCLS")
+  hy <- gv("BAMLH0A0HYM2")
+  oil <- gv("DCOILWTICO")
+  retail <- gv("RSAFS")
+  u <- kpis$unemp_rate %||% NA
+  cpi_y <- kpis$cpi_yoy %||% NA
+  pce_y <- kpis$core_pce %||% NA
+  ff <- kpis$fed_funds %||% NA
+  t10v <- kpis$t10yr %||% NA
+  t2v <- kpis$t2yr %||% NA
+  mort_v <- kpis$mortgage30 %||% NA
+  hs <- kpis$housing_starts %||% NA
+  ret_y <- kpis$retail_yoy %||% NA
+  cs <- kpis$cons_sent %||% NA
+  ip_y <- kpis$indpro_yoy %||% NA
+  vix_v <- kpis$vix %||% NA
+  hy_v <- kpis$hy_spread %||% NA
+  real_rate <- if (!is.na(ff) && !is.na(cpi_y)) ff - cpi_y else NA
+  yield_spread <- if (!is.na(t10v) && !is.na(t2v)) t10v - t2v else NA
+  pay_3m <- if (!is.null(payrolls) && length(payrolls) >= 4) {
+    mean(diff(tail(payrolls, 4)), na.rm = TRUE)
+  } else {
+    NA
+  }
+  ret_real <- if (!is.na(ret_y) && !is.na(cpi_y)) ret_y - cpi_y else NA
+  inv_months <- if (!is.null(t10) && !is.null(t2)) {
+    n <- min(length(t10), length(t2), 18)
+    sum((tail(t10, n) - tail(t2, n)) < 0, na.rm = TRUE)
+  } else {
+    0
+  }
 
   components <- list(
-    labor    =list(weight=2.5,label="Labor Market",     score=mean(c(.score(u,3.5,5.0,FALSE),.score(pay_3m,150,50,TRUE),.score(u,4.5,5.5,FALSE)),na.rm=TRUE), detail=if(!is.na(u)&&!is.na(pay_3m))sprintf("%.1f%% unemployment; %+.0fK/mo payrolls",u,pay_3m)else"N/A"),
-    consumer =list(weight=2.0,label="Consumer Demand",  score=mean(c(.score(ret_real,1,-1,TRUE),.score(cs,85,65,TRUE)),na.rm=TRUE), detail=if(!is.na(ret_real)&&!is.na(cs))sprintf("Real retail %.1f%%; sentiment %.0f",ret_real,cs)else"N/A"),
-    monetary =list(weight=2.0,label="Monetary Conditions",score=mean(c(.score(real_rate,0.5,2.5,FALSE),.score(yield_spread,0.5,-0.25,TRUE),.score(inv_months,3,9,FALSE)),na.rm=TRUE), detail=if(!is.na(real_rate)&&!is.na(yield_spread))sprintf("Real rate %.1f%%; 10Y-2Y %.2f pp; %d mo inv.",real_rate,yield_spread,inv_months)else"N/A"),
-    housing  =list(weight=1.5,label="Housing",          score=mean(c(.score(hs,1400,1000,TRUE),.score(mort_v,6,7.5,FALSE)),na.rm=TRUE), detail=if(!is.na(hs)&&!is.na(mort_v))sprintf("%.0fK starts; %.2f%% mortgage",hs,mort_v)else"N/A"),
-    financial=list(weight=1.5,label="Financial Conditions",score=mean(c(.score(vix_v,18,28,FALSE),.score(hy_v,4.5,6,FALSE)),na.rm=TRUE), detail=if(!is.na(vix_v)&&!is.na(hy_v))sprintf("VIX %.1f; HY %.2f%%",vix_v,hy_v)else"N/A"),
-    inflation=list(weight=1.5,label="Inflation",        score=mean(c(.score(cpi_y,2.5,4.5,FALSE),.score(pce_y,2.3,3.5,FALSE)),na.rm=TRUE), detail=if(!is.na(cpi_y)&&!is.na(pce_y))sprintf("CPI %.1f%%; Core PCE %.1f%%",cpi_y,pce_y)else"N/A"),
-    industrial=list(weight=1.0,label="Industrial Output",score=.score(ip_y,1,-1,TRUE), detail=if(!is.na(ip_y))sprintf("IP YoY %.1f%%",ip_y)else"N/A")
+    labor = list(
+      weight = 2.5,
+      label = "Labor Market",
+      score = mean(
+        c(
+          .score(u, 3.5, 5.0, FALSE),
+          .score(pay_3m, 150, 50, TRUE),
+          .score(u, 4.5, 5.5, FALSE)
+        ),
+        na.rm = TRUE
+      ),
+      detail = if (!is.na(u) && !is.na(pay_3m)) {
+        sprintf("%.1f%% unemployment; %+.0fK/mo payrolls", u, pay_3m)
+      } else {
+        "N/A"
+      }
+    ),
+    consumer = list(
+      weight = 2.0,
+      label = "Consumer Demand",
+      score = mean(
+        c(.score(ret_real, 1, -1, TRUE), .score(cs, 85, 65, TRUE)),
+        na.rm = TRUE
+      ),
+      detail = if (!is.na(ret_real) && !is.na(cs)) {
+        sprintf("Real retail %.1f%%; sentiment %.0f", ret_real, cs)
+      } else {
+        "N/A"
+      }
+    ),
+    monetary = list(
+      weight = 2.0,
+      label = "Monetary Conditions",
+      score = mean(
+        c(
+          .score(real_rate, 0.5, 2.5, FALSE),
+          .score(yield_spread, 0.5, -0.25, TRUE),
+          .score(inv_months, 3, 9, FALSE)
+        ),
+        na.rm = TRUE
+      ),
+      detail = if (!is.na(real_rate) && !is.na(yield_spread)) {
+        sprintf(
+          "Real rate %.1f%%; 10Y-2Y %.2f pp; %d mo inv.",
+          real_rate,
+          yield_spread,
+          inv_months
+        )
+      } else {
+        "N/A"
+      }
+    ),
+    housing = list(
+      weight = 1.5,
+      label = "Housing",
+      score = mean(
+        c(.score(hs, 1400, 1000, TRUE), .score(mort_v, 6, 7.5, FALSE)),
+        na.rm = TRUE
+      ),
+      detail = if (!is.na(hs) && !is.na(mort_v)) {
+        sprintf("%.0fK starts; %.2f%% mortgage", hs, mort_v)
+      } else {
+        "N/A"
+      }
+    ),
+    financial = list(
+      weight = 1.5,
+      label = "Financial Conditions",
+      score = mean(
+        c(.score(vix_v, 18, 28, FALSE), .score(hy_v, 4.5, 6, FALSE)),
+        na.rm = TRUE
+      ),
+      detail = if (!is.na(vix_v) && !is.na(hy_v)) {
+        sprintf("VIX %.1f; HY %.2f%%", vix_v, hy_v)
+      } else {
+        "N/A"
+      }
+    ),
+    inflation = list(
+      weight = 1.5,
+      label = "Inflation",
+      score = mean(
+        c(.score(cpi_y, 2.5, 4.5, FALSE), .score(pce_y, 2.3, 3.5, FALSE)),
+        na.rm = TRUE
+      ),
+      detail = if (!is.na(cpi_y) && !is.na(pce_y)) {
+        sprintf("CPI %.1f%%; Core PCE %.1f%%", cpi_y, pce_y)
+      } else {
+        "N/A"
+      }
+    ),
+    industrial = list(
+      weight = 1.0,
+      label = "Industrial Output",
+      score = .score(ip_y, 1, -1, TRUE),
+      detail = if (!is.na(ip_y)) sprintf("IP YoY %.1f%%", ip_y) else "N/A"
+    )
   )
-  tw <- sum(sapply(components,`[[`,"weight"))
-  raw_score  <- sum(sapply(components,function(c)c$score*c$weight))/tw
-  score_0_10 <- max(0,min(10,round((raw_score+1)/2*10,1)))
-  regime <- .regime_from_score(score_0_10)   # ← no case_when
-  drag <- names(which.min(sapply(components,`[[`,"score")))
-  supp <- names(which.max(sapply(components,`[[`,"score")))
+  tw <- sum(sapply(components, `[[`, "weight"))
+  raw_score <- sum(sapply(components, function(c) c$score * c$weight)) / tw
+  score_0_10 <- max(0, min(10, round((raw_score + 1) / 2 * 10, 1)))
+  regime <- .regime_from_score(score_0_10) # ← no case_when
+  drag <- names(which.min(sapply(components, `[[`, "score")))
+  supp <- names(which.max(sapply(components, `[[`, "score")))
   swing <- list(
-    biggest_drag=list(name=components[[drag]]$label,score=round(components[[drag]]$score,2),detail=components[[drag]]$detail),
-    biggest_support=list(name=components[[supp]]$label,score=round(components[[supp]]$score,2),detail=components[[supp]]$detail),
-    yield_curve_watch=if(inv_months>6)sprintf("Inverted %d months.",inv_months)else if(!is.na(yield_spread)&&yield_spread>0)sprintf("Re-steepened to %.2f pp.",yield_spread)else NULL,
-    fed_watch=if(!is.na(real_rate)&&real_rate>2)sprintf("Real rate %.1f%% \u2014 restrictive.",real_rate)else NULL)
+    biggest_drag = list(
+      name = components[[drag]]$label,
+      score = round(components[[drag]]$score, 2),
+      detail = components[[drag]]$detail
+    ),
+    biggest_support = list(
+      name = components[[supp]]$label,
+      score = round(components[[supp]]$score, 2),
+      detail = components[[supp]]$detail
+    ),
+    yield_curve_watch = if (inv_months > 6) {
+      sprintf("Inverted %d months.", inv_months)
+    } else if (!is.na(yield_spread) && yield_spread > 0) {
+      sprintf("Re-steepened to %.2f pp.", yield_spread)
+    } else {
+      NULL
+    },
+    fed_watch = if (!is.na(real_rate) && real_rate > 2) {
+      sprintf("Real rate %.1f%% \u2014 restrictive.", real_rate)
+    } else {
+      NULL
+    }
+  )
 
-  eq_dd <- if(!is.null(mkt_returns)){spy<-mkt_returns%>%dplyr::filter(symbol=="SPY")%>%dplyr::arrange(date);if(nrow(spy)>=52){cur<-tail(spy$close,1);pk<-max(spy$close[max(1,nrow(spy)-252):nrow(spy)],na.rm=TRUE);round((cur/pk-1)*100,1)}else NA_real_}else NA_real_
+  eq_dd <- if (!is.null(mkt_returns)) {
+    spy <- mkt_returns %>%
+      dplyr::filter(symbol == "SPY") %>%
+      dplyr::arrange(date)
+    if (nrow(spy) >= 52) {
+      cur <- tail(spy$close, 1)
+      pk <- max(spy$close[max(1, nrow(spy) - 252):nrow(spy)], na.rm = TRUE)
+      round((cur / pk - 1) * 100, 1)
+    } else {
+      NA_real_
+    }
+  } else {
+    NA_real_
+  }
 
   # ── Train / retrieve with Shiny progress bar ─────────────────────────────────
   cache_name <- ".recession_t3_cache"
-  cache <- tryCatch(if(exists(cache_name,envir=.GlobalEnv))get(cache_name,envir=.GlobalEnv)else NULL,error=function(e)NULL)
-  needs_train <- is.null(cache)||is.null(cache$glm)||
-    difftime(Sys.time(),cache$glm$trained_at%||%(Sys.time()-1e9),units="days")>30
+  cache <- tryCatch(
+    if (exists(cache_name, envir = .GlobalEnv)) {
+      get(cache_name, envir = .GlobalEnv)
+    } else {
+      NULL
+    },
+    error = function(e) NULL
+  )
+  needs_train <- is.null(cache) ||
+    is.null(cache$glm) ||
+    difftime(
+      Sys.time(),
+      cache$glm$trained_at %||% (Sys.time() - 1e9),
+      units = "days"
+    ) >
+      30
 
   if (needs_train) {
     run_training <- function() {
-      prog <- function(msg,val) tryCatch(shiny::setProgress(val,message=msg),error=function(e)message("[t3] ",msg))
+      prog <- function(msg, val) {
+        tryCatch(shiny::setProgress(val, message = msg), error = function(e) {
+          message("[t3] ", msg)
+        })
+      }
       prog("Fetching FRED history + training GLM\u2026", 0.05)
-      glm_obj <- rolling_retrain(fred_data, window=360L)
+      glm_obj <- rolling_retrain(fred_data, window = 360L)
       prog("Fitting 3-state Markov-switching model\u2026", 0.45)
-      ms_obj  <- train_markov_model(fred_data)
+      ms_obj <- train_markov_model(fred_data)
       prog("Scoring on 36-month holdout (Brier)\u2026", 0.75)
-      ew_obj  <- compute_ensemble_weights(glm_obj, ms_obj, holdout_months=36L)
+      ew_obj <- compute_ensemble_weights(glm_obj, ms_obj, holdout_months = 36L)
       prog("Caching results\u2026", 0.95)
-      assign(cache_name, list(glm=glm_obj,markov=ms_obj,ew=ew_obj), envir=.GlobalEnv)
+      assign(
+        cache_name,
+        list(glm = glm_obj, markov = ms_obj, ew = ew_obj),
+        envir = .GlobalEnv
+      )
     }
     tryCatch(
-      shiny::withProgress(message="Fitting econometric models\u2026", value=0, run_training()),
-      error=function(e) run_training())   # no-op outside Shiny
-    cache <- tryCatch(get(cache_name,envir=.GlobalEnv),error=function(e)NULL)
+      shiny::withProgress(
+        message = "Fitting econometric models\u2026",
+        value = 0,
+        run_training()
+      ),
+      error = function(e) run_training()
+    ) # no-op outside Shiny
+    cache <- tryCatch(get(cache_name, envir = .GlobalEnv), error = function(e) {
+      NULL
+    })
   }
 
-  glm_result    <- cache$glm; markov_result <- cache$markov; ew <- cache$ew
-  ad            <- if(!is.null(glm_result)) glm_result$anomaly_detector else NULL
+  glm_result <- cache$glm
+  markov_result <- cache$markov
+  ew <- cache$ew
+  ad <- if (!is.null(glm_result)) glm_result$anomaly_detector else NULL
 
   recession_prob <- .compute_recession_prob(
-    yield_spread=yield_spread,inv_months=inv_months,unemp=unemp,u=u,
-    pay_3m=pay_3m,real_rate=real_rate,hy_v=hy_v,vix_v=vix_v,cs=cs,ip_y=ip_y,hs=hs,
-    prime_age_lfpr=kpis$prime_age_lfpr%||%NA,prime_age_lfpr_chg=kpis$prime_age_lfpr_chg%||%NA,
-    jobless_claims_trend=kpis$jobless_claims_trend%||%NA,quits_yoy=kpis$quits_yoy%||%NA,
-    oil_yoy=kpis$oil_yoy%||%NA,equity_drawdown_pct=eq_dd,usd_yoy=kpis$usd_yoy%||%NA,
-    inventory_sales_ratio=kpis$inventory_sales_ratio%||%NA,cc_delinquency=kpis$cc_delinquency%||%NA,
-    glm_result=glm_result,anomaly_detector=ad,markov_result=markov_result,ensemble_weights=ew)
+    yield_spread = yield_spread,
+    inv_months = inv_months,
+    unemp = unemp,
+    u = u,
+    pay_3m = pay_3m,
+    real_rate = real_rate,
+    hy_v = hy_v,
+    vix_v = vix_v,
+    cs = cs,
+    ip_y = ip_y,
+    hs = hs,
+    prime_age_lfpr = kpis$prime_age_lfpr %||% NA,
+    prime_age_lfpr_chg = kpis$prime_age_lfpr_chg %||% NA,
+    jobless_claims_trend = kpis$jobless_claims_trend %||% NA,
+    quits_yoy = kpis$quits_yoy %||% NA,
+    oil_yoy = kpis$oil_yoy %||% NA,
+    equity_drawdown_pct = eq_dd,
+    usd_yoy = kpis$usd_yoy %||% NA,
+    inventory_sales_ratio = kpis$inventory_sales_ratio %||% NA,
+    cc_delinquency = kpis$cc_delinquency %||% NA,
+    glm_result = glm_result,
+    anomaly_detector = ad,
+    markov_result = markov_result,
+    ensemble_weights = ew
+  )
 
-  list(score=score_0_10,raw_score=raw_score,regime=regime,components=components,
-       swing=swing,recession_prob=recession_prob,as_of=Sys.Date())
+  list(
+    score = score_0_10,
+    raw_score = raw_score,
+    regime = regime,
+    components = components,
+    swing = swing,
+    recession_prob = recession_prob,
+    as_of = Sys.Date()
+  )
 }
 
 
@@ -794,48 +1871,160 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns=NULL) {
 # render_growth_outlook_html + .build_factor_bar_chart + .build_model_modal
 # ═══════════════════════════════════════════════════════════════════════════════
 
-.build_factor_bar_chart <- function(fc, model_type="Hand-tuned", mr=NULL, ew=NULL) {
-  if (is.null(fc)||nrow(fc)==0) return("<p style='color:#6b7585;font-size:11px;'>No data.</p>")
-  fc <- head(fc[order(abs(fc$contribution),decreasing=TRUE),], 15)
-  max_abs <- max(abs(fc$contribution),na.rm=TRUE); if(max_abs<0.01) max_abs<-1
-  has_z   <- any(!is.na(fc$z_stat)&!isTRUE(fc$data_missing))
+.build_factor_bar_chart <- function(
+  fc,
+  model_type = "Hand-tuned",
+  mr = NULL,
+  ew = NULL
+) {
+  if (is.null(fc) || nrow(fc) == 0) {
+    return("<p style='color:#6b7585;font-size:11px;'>No data.</p>")
+  }
+  fc <- head(fc[order(abs(fc$contribution), decreasing = TRUE), ], 15)
+  max_abs <- max(abs(fc$contribution), na.rm = TRUE)
+  if (max_abs < 0.01) {
+    max_abs <- 1
+  }
+  has_z <- any(!is.na(fc$z_stat) & !isTRUE(fc$data_missing))
 
-  ew_note <- if(!is.null(ew)&&!is.null(ew$glm_brier))
-    sprintf(" &nbsp;|&nbsp; w_GLM=<b style='color:#2dce89;'>%.0f%%</b> w_MS=<b style='color:#00b4d8;'>%.0f%%</b> Brier GLM=%.3f MS=%.3f",
-            ew$w_glm*100,ew$w_ms*100,ew$glm_brier,ew$ms_brier) else
-    if(!is.null(ew)) sprintf(" &nbsp;|&nbsp; w_GLM=%.0f%% w_MS=%.0f%%",ew$w_glm*100,ew$w_ms*100) else ""
+  ew_note <- if (!is.null(ew) && !is.null(ew$glm_brier)) {
+    sprintf(
+      " &nbsp;|&nbsp; w_GLM=<b style='color:#2dce89;'>%.0f%%</b> w_MS=<b style='color:#00b4d8;'>%.0f%%</b> Brier GLM=%.3f MS=%.3f",
+      ew$w_glm * 100,
+      ew$w_ms * 100,
+      ew$glm_brier,
+      ew$ms_brier
+    )
+  } else if (!is.null(ew)) {
+    sprintf(
+      " &nbsp;|&nbsp; w_GLM=%.0f%% w_MS=%.0f%%",
+      ew$w_glm * 100,
+      ew$w_ms * 100
+    )
+  } else {
+    ""
+  }
 
-  subtitle <- if(grepl("GLM",model_type))
-    paste0("<span style='color:#2dce89;font-size:10px;'>&#x2713; GLM-estimated \u03b2s + Markov (teal) + Anomaly (purple)",ew_note,"</span>")
-  else "<span style='color:#f4a261;font-size:10px;'>\u26a0 Hand-tuned fallback \u2014 GLM/Markov training pending</span>"
+  subtitle <- if (grepl("GLM", model_type)) {
+    paste0(
+      "<span style='color:#2dce89;font-size:10px;'>&#x2713; GLM-estimated \u03b2s + Markov (teal) + Anomaly (purple)",
+      ew_note,
+      "</span>"
+    )
+  } else {
+    "<span style='color:#f4a261;font-size:10px;'>\u26a0 Hand-tuned fallback \u2014 GLM/Markov training pending</span>"
+  }
 
-  rows <- vapply(seq_len(nrow(fc)), function(i) {
-    row <- fc[i,]; delta <- row$contribution
-    is_miss    <- isTRUE(row$data_missing)
-    is_anomaly <- grepl("Anomaly Signal",row$name)
-    is_markov  <- grepl("Markov Regime", row$name)
-    is_zero    <- (!is_miss&&!is_anomaly&&!is_markov&&abs(delta)<0.001)
-    col <- if(is_markov)"#00b4d8" else if(is_anomaly)"#7c5cbf" else if(is_miss||is_zero)"#3a4052" else if(delta>0)"#e94560" else "#2dce89"
-    pct <- if(is_miss||is_zero) 0 else round(min(abs(delta)/max_abs*44,44))
-    bar <- if(is_miss) "left:50%;width:2px;background:repeating-linear-gradient(180deg,#4a5062 0,#4a5062 3px,transparent 3px,transparent 6px);"
-           else if(is_zero) "left:50%;width:2px;background:#3a4052;"
-           else if(delta>=0) sprintf("left:50%%;width:%dpx;background:%s;",pct*3,col)
-           else              sprintf("right:50%%;width:%dpx;background:%s;",pct*3,col)
-    z_b <- if(has_z&&!is.na(row$z_stat)&&!is_miss){zc<-if(abs(row$z_stat)>2.5)"#d0d0d0"else if(abs(row$z_stat)>1.5)"#9aa3b2"else"#555";sprintf("&nbsp;<span style='color:%s;font-size:9px;'>(z=%.1f)</span>",zc,row$z_stat)}else""
-    tag <- if(is_markov)"&nbsp;<span style='color:#00b4d8;font-size:9px;'>\u25c6&nbsp;REGIME</span>" else if(is_anomaly)"&nbsp;<span style='color:#a785e0;font-size:9px;'>\u26a0&nbsp;ANOMALY</span>" else if(is_miss)"&nbsp;<span style='color:#555;font-size:9px;'>N/A</span>" else ""
-    nc  <- if(is_markov)"#7dd8f0" else if(is_anomaly)"#c8a8f0" else if(is_miss)"#555" else "#d0d0d0"
-    val_str <- if(is_miss)"<span style='color:#555;font-size:10px;'>N/A</span>" else sprintf("<span style='color:%s;font-size:10px;font-weight:600;'>%+.2f</span>",col,delta)
-    sprintf("<div style='display:flex;align-items:center;gap:6px;margin-bottom:7px;'><div style='width:220px;text-align:right;color:%s;font-size:10.5px;flex-shrink:0;line-height:1.3;'>%s%s%s</div><div style='flex:1;position:relative;height:13px;background:#2a3042;border-radius:3px;overflow:hidden;'><div style='position:absolute;top:0;left:50%%;width:1px;height:100%%;background:#3a4052;z-index:1;'></div><div style='position:absolute;top:0;height:100%%;border-radius:2px;%s'></div></div><div style='width:52px;text-align:right;'>%s</div></div>",
-            nc,htmltools::htmlEscape(row$name),z_b,tag,bar,val_str)
-  }, character(1))
+  rows <- vapply(
+    seq_len(nrow(fc)),
+    function(i) {
+      row <- fc[i, ]
+      delta <- row$contribution
+      is_miss <- isTRUE(row$data_missing)
+      is_anomaly <- grepl("Anomaly Signal", row$name)
+      is_markov <- grepl("Markov Regime", row$name)
+      is_zero <- (!is_miss && !is_anomaly && !is_markov && abs(delta) < 0.001)
+      col <- if (is_markov) {
+        "#00b4d8"
+      } else if (is_anomaly) {
+        "#7c5cbf"
+      } else if (is_miss || is_zero) {
+        "#3a4052"
+      } else if (delta > 0) {
+        "#e94560"
+      } else {
+        "#2dce89"
+      }
+      pct <- if (is_miss || is_zero) {
+        0
+      } else {
+        round(min(abs(delta) / max_abs * 44, 44))
+      }
+      bar <- if (is_miss) {
+        "left:50%;width:2px;background:repeating-linear-gradient(180deg,#4a5062 0,#4a5062 3px,transparent 3px,transparent 6px);"
+      } else if (is_zero) {
+        "left:50%;width:2px;background:#3a4052;"
+      } else if (delta >= 0) {
+        sprintf("left:50%%;width:%dpx;background:%s;", pct * 3, col)
+      } else {
+        sprintf("right:50%%;width:%dpx;background:%s;", pct * 3, col)
+      }
+      z_b <- if (has_z && !is.na(row$z_stat) && !is_miss) {
+        zc <- if (abs(row$z_stat) > 2.5) {
+          "#d0d0d0"
+        } else if (abs(row$z_stat) > 1.5) {
+          "#9aa3b2"
+        } else {
+          "#555"
+        }
+        sprintf(
+          "&nbsp;<span style='color:%s;font-size:9px;'>(z=%.1f)</span>",
+          zc,
+          row$z_stat
+        )
+      } else {
+        ""
+      }
+      tag <- if (is_markov) {
+        "&nbsp;<span style='color:#00b4d8;font-size:9px;'>\u25c6&nbsp;REGIME</span>"
+      } else if (is_anomaly) {
+        "&nbsp;<span style='color:#a785e0;font-size:9px;'>\u26a0&nbsp;ANOMALY</span>"
+      } else if (is_miss) {
+        "&nbsp;<span style='color:#555;font-size:9px;'>N/A</span>"
+      } else {
+        ""
+      }
+      nc <- if (is_markov) {
+        "#7dd8f0"
+      } else if (is_anomaly) {
+        "#c8a8f0"
+      } else if (is_miss) {
+        "#555"
+      } else {
+        "#d0d0d0"
+      }
+      val_str <- if (is_miss) {
+        "<span style='color:#555;font-size:10px;'>N/A</span>"
+      } else {
+        sprintf(
+          "<span style='color:%s;font-size:10px;font-weight:600;'>%+.2f</span>",
+          col,
+          delta
+        )
+      }
+      sprintf(
+        "<div style='display:flex;align-items:center;gap:6px;margin-bottom:7px;'><div style='width:220px;text-align:right;color:%s;font-size:10.5px;flex-shrink:0;line-height:1.3;'>%s%s%s</div><div style='flex:1;position:relative;height:13px;background:#2a3042;border-radius:3px;overflow:hidden;'><div style='position:absolute;top:0;left:50%%;width:1px;height:100%%;background:#3a4052;z-index:1;'></div><div style='position:absolute;top:0;height:100%%;border-radius:2px;%s'></div></div><div style='width:52px;text-align:right;'>%s</div></div>",
+        nc,
+        htmltools::htmlEscape(row$name),
+        z_b,
+        tag,
+        bar,
+        val_str
+      )
+    },
+    character(1)
+  )
 
-  n_miss <- sum(sapply(seq_len(nrow(fc)),function(i) isTRUE(fc$data_missing[i])))
-  miss_note <- if(n_miss>0) sprintf("<div style='font-size:9px;color:#555;margin-top:4px;'><span style='color:#6b7585;'>\u2139</span>&nbsp;%d factor%s showing N/A: FRED data not loaded. Ensure <code>kpis$prime_age_lfpr</code>, <code>kpis$quits_yoy</code>, <code>kpis$oil_yoy</code>, etc. are populated in data_fred.R.</div>",n_miss,if(n_miss==1)""else"s") else ""
+  n_miss <- sum(sapply(seq_len(nrow(fc)), function(i) {
+    isTRUE(fc$data_missing[i])
+  }))
+  miss_note <- if (n_miss > 0) {
+    sprintf(
+      "<div style='font-size:9px;color:#555;margin-top:4px;'><span style='color:#6b7585;'>\u2139</span>&nbsp;%d factor%s showing N/A: FRED data not loaded. Ensure <code>kpis$prime_age_lfpr</code>, <code>kpis$quits_yoy</code>, <code>kpis$oil_yoy</code>, etc. are populated in data_fred.R.</div>",
+      n_miss,
+      if (n_miss == 1) "" else "s"
+    )
+  } else {
+    ""
+  }
 
-  paste0("<div style='margin-bottom:18px;'>",
+  paste0(
+    "<div style='margin-bottom:18px;'>",
     "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;'>",
     "<span style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;'>Live Factor Contributions \u2014 Tier\u00a03</span></div>",
-    "<div style='margin-bottom:8px;'>",subtitle,"</div>",
+    "<div style='margin-bottom:8px;'>",
+    subtitle,
+    "</div>",
     "<div style='display:flex;flex-wrap:wrap;gap:14px;font-size:10px;color:#9aa3b2;margin-bottom:9px;'>",
     "<span><span style='display:inline-block;width:10px;height:10px;background:#e94560;border-radius:2px;margin-right:4px;'></span>Raises risk</span>",
     "<span><span style='display:inline-block;width:10px;height:10px;background:#2dce89;border-radius:2px;margin-right:4px;'></span>Lowers risk</span>",
@@ -844,73 +2033,395 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns=NULL) {
     "<span><span style='display:inline-block;width:10px;height:10px;background:#3a4052;border-radius:2px;margin-right:4px;'></span>Neutral/N/A</span>",
     "<span style='color:#555;'>| zero |</span></div>",
     "<div style='display:flex;justify-content:space-between;font-size:10px;color:#555;margin-bottom:6px;'><span>\u25c4 Protective</span><span>Recessionary \u25ba</span></div>",
-    paste(rows,collapse=""),miss_note,
-    "<div style='font-size:9px;color:#555;margin-top:6px;'>Coloured bar = active contribution. Flat line = neutral. N/A = data not loaded.</div></div>")
+    paste(rows, collapse = ""),
+    miss_note,
+    "<div style='font-size:9px;color:#555;margin-top:6px;'>Coloured bar = active contribution. Flat line = neutral. N/A = data not loaded.</div></div>"
+  )
 }
 
 render_growth_outlook_html <- function(outlook) {
-  if (is.null(outlook)) return(.growth_outlook_loading_html())
-  if (isTRUE(outlook$.training)) return(.growth_outlook_loading_html(outlook$.step))
-  if (is.null(outlook$regime)||!is.list(outlook$regime)||is.null(outlook$regime$color))
-    return(shiny::HTML("<div style='color:#e94560;padding:16px;'>Regime classification error \u2014 check console.</div>"))
+  if (is.null(outlook)) {
+    return(.growth_outlook_loading_html())
+  }
+  if (isTRUE(outlook$.training)) {
+    return(.growth_outlook_loading_html(outlook$.step))
+  }
+  if (
+    is.null(outlook$regime) ||
+      !is.list(outlook$regime) ||
+      is.null(outlook$regime$color)
+  ) {
+    return(shiny::HTML(
+      "<div style='color:#e94560;padding:16px;'>Regime classification error \u2014 check console.</div>"
+    ))
+  }
 
-  rp <- outlook$recession_prob; reg <- outlook$regime
-  score <- outlook$score; comps <- outlook$components; swing <- outlook$swing; gc <- reg$color
+  rp <- outlook$recession_prob
+  reg <- outlook$regime
+  score <- outlook$score
+  comps <- outlook$components
+  swing <- outlook$swing
+  gc <- reg$color
 
-  gauge_html <- sprintf("<div style='margin:12px 0 16px;'><div style='display:flex;justify-content:space-between;margin-bottom:5px;'><span style='color:#9aa3b2;font-size:11px;'>Contraction Risk</span><span style='color:#9aa3b2;font-size:11px;'>Expansion</span></div><div style='background:#2a3042;border-radius:6px;height:12px;overflow:hidden;'><div style='background:linear-gradient(90deg,%s,%s);width:%.0f%%;height:100%%;border-radius:6px;'></div></div><div style='margin-top:5px;display:flex;justify-content:space-between;'><span style='color:#9aa3b2;font-size:10px;'>0</span><span style='color:%s;font-size:11px;font-weight:700;'>Score: %.1f / 10</span><span style='color:#9aa3b2;font-size:10px;'>10</span></div></div>",if(score<5)"#e94560"else"#f4a261",gc,score/10*100,gc,score)
+  gauge_html <- sprintf(
+    "<div style='margin:12px 0 16px;'><div style='display:flex;justify-content:space-between;margin-bottom:5px;'><span style='color:#9aa3b2;font-size:11px;'>Contraction Risk</span><span style='color:#9aa3b2;font-size:11px;'>Expansion</span></div><div style='background:#2a3042;border-radius:6px;height:12px;overflow:hidden;'><div style='background:linear-gradient(90deg,%s,%s);width:%.0f%%;height:100%%;border-radius:6px;'></div></div><div style='margin-top:5px;display:flex;justify-content:space-between;'><span style='color:#9aa3b2;font-size:10px;'>0</span><span style='color:%s;font-size:11px;font-weight:700;'>Score: %.1f / 10</span><span style='color:#9aa3b2;font-size:10px;'>10</span></div></div>",
+    if (score < 5) "#e94560" else "#f4a261",
+    gc,
+    score / 10 * 100,
+    gc,
+    score
+  )
 
-  comp_html <- paste(vapply(names(comps),function(nm){c<-comps[[nm]];s<-c$score;col<-if(s>=0.4)"#2dce89"else if(s>=-0.4)"#f4a261"else"#e94560";bw<-round((s+1)/2*100);sprintf("<div style='margin-bottom:8px;'><div style='display:flex;justify-content:space-between;margin-bottom:3px;'><span style='color:#9aa3b2;font-size:11px;'>%s</span><span style='color:%s;font-size:11px;font-weight:600;'>%s</span></div><div style='background:#2a3042;border-radius:3px;height:5px;'><div style='background:%s;width:%d%%;height:100%%;border-radius:3px;'></div></div><div style='color:#6b7585;font-size:10px;margin-top:2px;'>%s</div></div>",c$label,col,if(s>=0.4)"Positive"else if(s>=-0.4)"Neutral"else"Negative",col,bw,htmltools::htmlEscape(c$detail))},character(1)),collapse="")
+  comp_html <- paste(
+    vapply(
+      names(comps),
+      function(nm) {
+        c <- comps[[nm]]
+        s <- c$score
+        col <- if (s >= 0.4) {
+          "#2dce89"
+        } else if (s >= -0.4) {
+          "#f4a261"
+        } else {
+          "#e94560"
+        }
+        bw <- round((s + 1) / 2 * 100)
+        sprintf(
+          "<div style='margin-bottom:8px;'><div style='display:flex;justify-content:space-between;margin-bottom:3px;'><span style='color:#9aa3b2;font-size:11px;'>%s</span><span style='color:%s;font-size:11px;font-weight:600;'>%s</span></div><div style='background:#2a3042;border-radius:3px;height:5px;'><div style='background:%s;width:%d%%;height:100%%;border-radius:3px;'></div></div><div style='color:#6b7585;font-size:10px;margin-top:2px;'>%s</div></div>",
+          c$label,
+          col,
+          if (s >= 0.4) {
+            "Positive"
+          } else if (s >= -0.4) {
+            "Neutral"
+          } else {
+            "Negative"
+          },
+          col,
+          bw,
+          htmltools::htmlEscape(c$detail)
+        )
+      },
+      character(1)
+    ),
+    collapse = ""
+  )
 
-  swing_html <- paste(c(if(!is.null(swing$biggest_drag))sprintf("<li style='margin-bottom:6px;'><span style='color:#e94560;font-weight:600;'>\u2b07 Biggest drag: %s</span> \u2014 %s</li>",swing$biggest_drag$name,htmltools::htmlEscape(swing$biggest_drag$detail)),if(!is.null(swing$biggest_support))sprintf("<li style='margin-bottom:6px;'><span style='color:#2dce89;font-weight:600;'>\u2b06 Biggest support: %s</span> \u2014 %s</li>",swing$biggest_support$name,htmltools::htmlEscape(swing$biggest_support$detail)),if(!is.null(swing$yield_curve_watch))sprintf("<li style='margin-bottom:6px;'><span style='color:#f4a261;font-weight:600;'>\u26a0 Yield Curve:</span> %s</li>",htmltools::htmlEscape(swing$yield_curve_watch)),if(!is.null(swing$fed_watch))sprintf("<li style='margin-bottom:6px;'><span style='color:#00b4d8;font-weight:600;'>\u2699 Fed:</span> %s</li>",htmltools::htmlEscape(swing$fed_watch))),collapse="")
+  swing_html <- paste(
+    c(
+      if (!is.null(swing$biggest_drag)) {
+        sprintf(
+          "<li style='margin-bottom:6px;'><span style='color:#e94560;font-weight:600;'>\u2b07 Biggest drag: %s</span> \u2014 %s</li>",
+          swing$biggest_drag$name,
+          htmltools::htmlEscape(swing$biggest_drag$detail)
+        )
+      },
+      if (!is.null(swing$biggest_support)) {
+        sprintf(
+          "<li style='margin-bottom:6px;'><span style='color:#2dce89;font-weight:600;'>\u2b06 Biggest support: %s</span> \u2014 %s</li>",
+          swing$biggest_support$name,
+          htmltools::htmlEscape(swing$biggest_support$detail)
+        )
+      },
+      if (!is.null(swing$yield_curve_watch)) {
+        sprintf(
+          "<li style='margin-bottom:6px;'><span style='color:#f4a261;font-weight:600;'>\u26a0 Yield Curve:</span> %s</li>",
+          htmltools::htmlEscape(swing$yield_curve_watch)
+        )
+      },
+      if (!is.null(swing$fed_watch)) {
+        sprintf(
+          "<li style='margin-bottom:6px;'><span style='color:#00b4d8;font-weight:600;'>\u2699 Fed:</span> %s</li>",
+          htmltools::htmlEscape(swing$fed_watch)
+        )
+      }
+    ),
+    collapse = ""
+  )
 
   rp_html <- ""
   if (!is.null(rp)) {
-    prob<-rp$prob; tier<-rp$tier; bc<-tier$color
-    ew<-rp$ensemble_weights
-    ew_badge<-if(!is.null(ew)&&!is.null(ew$glm_brier))sprintf("&nbsp;<span style='background:rgba(0,180,216,0.1);color:#00b4d8;border:1px solid rgba(0,180,216,0.3);border-radius:8px;padding:1px 8px;font-size:9px;'>w_GLM=%.0f%% w_MS=%.0f%%</span>",ew$w_glm*100,ew$w_ms*100)else""
-    ms_badge<-if(!is.null(rp$markov_prob)&&!is.na(rp$markov_prob))sprintf("&nbsp;<span style='background:rgba(0,180,216,0.08);color:#7dd8f0;border:1px solid rgba(0,180,216,0.2);border-radius:8px;padding:1px 8px;font-size:9px;'>MS: %.0f%%</span>",rp$markov_prob*100)else""
-    an_badge<-if(!is.null(rp$anomaly)&&rp$anomaly$score>0.1)sprintf("&nbsp;<span style='background:rgba(124,92,191,0.12);color:#a785e0;border:1px solid rgba(124,92,191,0.3);border-radius:8px;padding:1px 8px;font-size:9px;'>\u26a0 Anomaly %.0f%%</span>",rp$anomaly$score*100)else""
-    uh<-if(length(rp$drivers_up)>0)paste(sprintf("<li><span style='color:#e94560;'>\u25b2</span> %s</li>",htmltools::htmlEscape(rp$drivers_up)),collapse="")else""
-    dh<-if(length(rp$drivers_down)>0)paste(sprintf("<li><span style='color:#2dce89;'>\u25bc</span> %s</li>",htmltools::htmlEscape(rp$drivers_down)),collapse="")else""
-    ds<-if(nchar(uh)>0||nchar(dh)>0)sprintf("<ul style='list-style:none;padding:0;margin:6px 0 0;font-size:11px;color:#d0d0d0;'>%s%s</ul>",uh,dh)else""
-    rp_html<-sprintf("<div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;border-top:3px solid %s;padding:14px 16px;margin-top:14px;'><div style='display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;'><div><div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;'><i class=\"fa fa-%s\" style=\"color:%s;margin-right:6px;\"></i>Recession Probability \u2014 12-Month Horizon%s%s%s</div><div style='margin-top:4px;'><span style='color:%s;font-size:36px;font-weight:800;'>%s%%</span><span style='color:%s;font-size:14px;font-weight:600;margin-left:8px;background:rgba(%s,0.12);padding:2px 10px;border-radius:12px;border:1px solid rgba(%s,0.3);'>%s</span></div></div><div style='text-align:right;'><div style='font-size:10px;color:#6b7585;margin-bottom:4px;'>0%% \u00b7 50%% \u00b7 100%%</div><div style='width:160px;height:14px;background:linear-gradient(90deg,#2dce89,#f4a261,#e94560);border-radius:7px;position:relative;'><div style='position:absolute;top:-3px;left:calc(%s%% - 8px);width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:8px solid #fff;'></div></div><div style='font-size:10px;color:#6b7585;margin-top:3px;'>\u25b2 Current</div></div></div><div style='color:#9aa3b2;font-size:12px;line-height:1.6;background:#0f1117;border-radius:6px;padding:8px 12px;border-left:3px solid %s;'>%s</div>%s<div style='color:#555;font-size:10px;margin-top:8px;'>Tier 3: rolling GLM + 3-state Markov + anomaly detection. Data-driven Brier weights. NBER-calibrated. Not a point forecast.</div></div>",bc,tier$icon,bc,ew_badge,ms_badge,an_badge,bc,sprintf("%.0f",prob),bc,bc,bc,tier$label,sprintf("%.0f",min(prob,98)),bc,htmltools::htmlEscape(tier$desc),ds)
+    prob <- rp$prob
+    tier <- rp$tier
+    bc <- tier$color
+    ew <- rp$ensemble_weights
+    # Build badges with paste0 — avoids % signs in strings being re-parsed by outer sprintf
+    ew_badge <- if (!is.null(ew) && !is.null(ew$glm_brier)) {
+      paste0(
+        "&nbsp;<span style='background:rgba(0,180,216,0.1);color:#00b4d8;border:1px solid rgba(0,180,216,0.3);border-radius:8px;padding:1px 8px;font-size:9px;'>",
+        "w_GLM=",
+        round(ew$w_glm * 100),
+        "% w_MS=",
+        round(ew$w_ms * 100),
+        "%</span>"
+      )
+    } else {
+      ""
+    }
+    ms_badge <- if (!is.null(rp$markov_prob) && !is.na(rp$markov_prob)) {
+      paste0(
+        "&nbsp;<span style='background:rgba(0,180,216,0.08);color:#7dd8f0;border:1px solid rgba(0,180,216,0.2);border-radius:8px;padding:1px 8px;font-size:9px;'>",
+        "MS: ",
+        round(rp$markov_prob * 100),
+        "%</span>"
+      )
+    } else {
+      ""
+    }
+    an_badge <- if (!is.null(rp$anomaly) && rp$anomaly$score > 0.1) {
+      paste0(
+        "&nbsp;<span style='background:rgba(124,92,191,0.12);color:#a785e0;border:1px solid rgba(124,92,191,0.3);border-radius:8px;padding:1px 8px;font-size:9px;'>",
+        "\u26a0 Anomaly ",
+        round(rp$anomaly$score * 100),
+        "%</span>"
+      )
+    } else {
+      ""
+    }
+    uh <- if (length(rp$drivers_up) > 0) {
+      paste(
+        paste0(
+          "<li><span style='color:#e94560;'>\u25b2</span> ",
+          htmltools::htmlEscape(rp$drivers_up),
+          "</li>"
+        ),
+        collapse = ""
+      )
+    } else {
+      ""
+    }
+    dh <- if (length(rp$drivers_down) > 0) {
+      paste(
+        paste0(
+          "<li><span style='color:#2dce89;'>\u25bc</span> ",
+          htmltools::htmlEscape(rp$drivers_down),
+          "</li>"
+        ),
+        collapse = ""
+      )
+    } else {
+      ""
+    }
+    ds <- if (nchar(uh) > 0 || nchar(dh) > 0) {
+      paste0(
+        "<ul style='list-style:none;padding:0;margin:6px 0 0;font-size:11px;color:#d0d0d0;'>",
+        uh,
+        dh,
+        "</ul>"
+      )
+    } else {
+      ""
+    }
+    # Build rp_html entirely with paste0 — no sprintf, no % format hazard
+    rp_html <- paste0(
+      "<div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;border-top:3px solid ",
+      bc,
+      ";padding:14px 16px;margin-top:14px;'>",
+      "<div style='display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;'>",
+      "<div><div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;'>",
+      "<i class=\"fa fa-",
+      tier$icon,
+      "\" style=\"color:",
+      bc,
+      ";margin-right:6px;\"></i>",
+      "Recession Probability \u2014 12-Month Horizon",
+      ew_badge,
+      ms_badge,
+      an_badge,
+      "</div>",
+      "<div style='margin-top:4px;'>",
+      "<span style='color:",
+      bc,
+      ";font-size:36px;font-weight:800;'>",
+      round(prob),
+      "%</span>",
+      "<span style='color:",
+      bc,
+      ";font-size:14px;font-weight:600;margin-left:8px;",
+      "background:rgba(",
+      bc,
+      ",0.12);padding:2px 10px;border-radius:12px;border:1px solid rgba(",
+      bc,
+      ",0.3);'>",
+      tier$label,
+      "</span></div></div>",
+      "<div style='text-align:right;'>",
+      "<div style='font-size:10px;color:#6b7585;margin-bottom:4px;'>0% \u00b7 50% \u00b7 100%</div>",
+      "<div style='width:160px;height:14px;background:linear-gradient(90deg,#2dce89,#f4a261,#e94560);border-radius:7px;position:relative;'>",
+      "<div style='position:absolute;top:-3px;left:calc(",
+      min(round(prob), 98),
+      "% - 8px);",
+      "width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:8px solid #fff;'></div>",
+      "</div><div style='font-size:10px;color:#6b7585;margin-top:3px;'>\u25b2 Current</div></div></div>",
+      "<div style='color:#9aa3b2;font-size:12px;line-height:1.6;background:#0f1117;border-radius:6px;padding:8px 12px;border-left:3px solid ",
+      bc,
+      ";'>",
+      htmltools::htmlEscape(tier$desc),
+      "</div>",
+      ds,
+      "<div style='color:#555;font-size:10px;margin-top:8px;'>",
+      "Tier 3: rolling GLM + 3-state Markov + anomaly detection. Data-driven Brier weights. NBER-calibrated.",
+      "</div></div>"
+    )
   }
 
-  mr <- tryCatch(get(".recession_t3_cache",envir=.GlobalEnv)$markov,error=function(e)NULL)
-  ew_cache <- tryCatch(get(".recession_t3_cache",envir=.GlobalEnv)$ew,error=function(e)NULL)
+  mr <- tryCatch(
+    get(".recession_t3_cache", envir = .GlobalEnv)$markov,
+    error = function(e) NULL
+  )
+  ew_cache <- tryCatch(
+    get(".recession_t3_cache", envir = .GlobalEnv)$ew,
+    error = function(e) NULL
+  )
 
+  # Outer layout also uses paste0 to avoid any residual % issues from rp_html
   shiny::HTML(paste0(
-    sprintf("<div style='display:flex;gap:14px;'><div style='flex:1;background:#1a2035;border:1px solid #2a3042;border-radius:8px;border-top:3px solid %s;padding:16px 18px;'><div style='color:%s;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;'><i class=\"fa fa-%s\" style=\"margin-right:6px;\"></i>6\u201312 Month Growth Outlook</div><div style='color:%s;font-size:22px;font-weight:800;margin-bottom:2px;'>%s</div><div style='color:#f4a261;font-size:16px;font-weight:700;margin-bottom:10px;'>GDP Est: %s annualized</div>%s<div style='background:#0f1117;border-radius:6px;padding:10px 12px;color:#9aa3b2;font-size:12px;line-height:1.7;border-left:3px solid %s;'>%s</div><div style='color:#555;font-size:10px;margin-top:10px;'>%d indicators + 3-state Markov + rolling GLM + anomaly. As of %s.<button onclick=\"document.getElementById('recModelModal').style.display='flex'\" style='margin-left:8px;background:transparent;border:1px solid #2a3042;color:#9aa3b2;border-radius:10px;padding:1px 8px;font-size:10px;cursor:pointer;'><i class=\"fa fa-info-circle\" style=\"margin-right:4px;color:#00b4d8;\"></i>Model details</button></div>%s</div><div style='flex:1;display:flex;flex-direction:column;gap:10px;'><div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;padding:14px 16px;flex:1;'><div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;'>Component Scorecard</div>%s</div><div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;padding:14px 16px;'><div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;'>Key Swing Factors</div><ul style='list-style:none;padding:0;margin:0;font-size:12px;color:#d0d0d0;'>%s</ul></div></div></div>",
-           reg$color,reg$color,reg$icon,reg$color,reg$label,reg$gdp_est,gauge_html,reg$color,htmltools::htmlEscape(reg$summary),length(comps),format(outlook$as_of,"%b %d, %Y"),rp_html,comp_html,swing_html),
-    .build_model_modal(fc=if(!is.null(rp))rp$factor_contributions else NULL,
-                       model_type=if(!is.null(rp))rp$model_type%||%"Hand-tuned"else"Hand-tuned",
-                       anomaly=if(!is.null(rp))rp$anomaly else NULL,
-                       mr=mr, ew=ew_cache)))
+    "<div style='display:flex;gap:14px;'>",
+    "<div style='flex:1;background:#1a2035;border:1px solid #2a3042;border-radius:8px;border-top:3px solid ",
+    reg$color,
+    ";padding:16px 18px;'>",
+    "<div style='color:",
+    reg$color,
+    ";font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;'>",
+    "<i class=\"fa fa-",
+    reg$icon,
+    "\" style=\"margin-right:6px;\"></i>6\u201312 Month Growth Outlook</div>",
+    "<div style='color:",
+    reg$color,
+    ";font-size:22px;font-weight:800;margin-bottom:2px;'>",
+    reg$label,
+    "</div>",
+    "<div style='color:#f4a261;font-size:16px;font-weight:700;margin-bottom:10px;'>GDP Est: ",
+    reg$gdp_est,
+    " annualized</div>",
+    gauge_html,
+    "<div style='background:#0f1117;border-radius:6px;padding:10px 12px;color:#9aa3b2;font-size:12px;line-height:1.7;border-left:3px solid ",
+    reg$color,
+    ";'>",
+    htmltools::htmlEscape(reg$summary),
+    "</div>",
+    "<div style='color:#555;font-size:10px;margin-top:10px;'>",
+    length(comps),
+    " indicators + 3-state Markov + rolling GLM + anomaly. As of ",
+    format(outlook$as_of, "%b %d, %Y"),
+    ".",
+    "<button onclick=\"document.getElementById('recModelModal').style.display='flex'\" ",
+    "style='margin-left:8px;background:transparent;border:1px solid #2a3042;color:#9aa3b2;border-radius:10px;padding:1px 8px;font-size:10px;cursor:pointer;'>",
+    "<i class=\"fa fa-info-circle\" style=\"margin-right:4px;color:#00b4d8;\"></i>Model details</button></div>",
+    rp_html,
+    "</div>",
+    "<div style='flex:1;display:flex;flex-direction:column;gap:10px;'>",
+    "<div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;padding:14px 16px;flex:1;'>",
+    "<div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;'>Component Scorecard</div>",
+    comp_html,
+    "</div>",
+    "<div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;padding:14px 16px;'>",
+    "<div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;'>Key Swing Factors</div>",
+    "<ul style='list-style:none;padding:0;margin:0;font-size:12px;color:#d0d0d0;'>",
+    swing_html,
+    "</ul></div>",
+    "</div></div>",
+    .build_model_modal(
+      fc = if (!is.null(rp)) rp$factor_contributions else NULL,
+      model_type = if (!is.null(rp)) {
+        rp$model_type %||% "Hand-tuned"
+      } else {
+        "Hand-tuned"
+      },
+      anomaly = if (!is.null(rp)) rp$anomaly else NULL,
+      mr = mr,
+      ew = ew_cache
+    )
+  ))
 }
 
-.build_model_modal <- function(fc=NULL, model_type="Hand-tuned", anomaly=NULL, mr=NULL, ew=NULL) {
+.build_model_modal <- function(
+  fc = NULL,
+  model_type = "Hand-tuned",
+  anomaly = NULL,
+  mr = NULL,
+  ew = NULL
+) {
   bar_html <- .build_factor_bar_chart(fc, model_type, mr, ew)
 
   # Ensemble weights panel
-  ew_html <- if(!is.null(ew)&&!is.null(ew$glm_brier)) {
-    sprintf("<div style='background:#0d1f10;border-radius:8px;padding:14px 16px;margin-bottom:20px;border-left:4px solid #2dce89;'><div style='color:#2dce89;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;'><i class=\"fa fa-balance-scale\" style=\"margin-right:6px;\"></i>Data-Driven Ensemble Weights <span style='color:#555;font-size:10px;font-weight:400;'>(%s)</span></div><div style='display:flex;gap:20px;margin-bottom:10px;'><div style='flex:1;'><div style='color:#9aa3b2;font-size:10px;margin-bottom:4px;'>GLM weight <b style='color:#2dce89;'>%.0f%%</b></div><div style='background:#2a3042;border-radius:3px;height:8px;'><div style='background:#2dce89;width:%.0f%%;height:100%%;border-radius:3px;'></div></div><div style='color:#555;font-size:9px;margin-top:3px;'>Brier=%.4f | skill=%.3f</div></div><div style='flex:1;'><div style='color:#9aa3b2;font-size:10px;margin-bottom:4px;'>Markov weight <b style='color:#00b4d8;'>%.0f%%</b></div><div style='background:#2a3042;border-radius:3px;height:8px;'><div style='background:#00b4d8;width:%.0f%%;height:100%%;border-radius:3px;'></div></div><div style='color:#555;font-size:9px;margin-top:3px;'>Brier=%.4f | skill=%.3f</div></div></div><div style='color:#d0d0d0;font-size:11px;line-height:1.75;'>Weights from Brier skill scores on a <b>%d-month true out-of-sample holdout</b>. A temporary scoring GLM (trained on months 1 to n\u221236) predicts on months n\u221235 to n that it never saw. Skill = 1 \u2212 (model Brier / climatology Brier). Higher skill \u2192 higher blend weight. Recomputed every 30 days.</div></div>",
-            ew$method,ew$w_glm*100,ew$w_glm*100,ew$glm_brier,ew$glm_skill%||%0,ew$w_ms*100,ew$w_ms*100,ew$ms_brier,ew$ms_skill%||%0,ew$n_holdout%||%0)
-  } else "<div style='background:#1e2640;border-radius:6px;padding:10px 14px;margin-bottom:20px;color:#555;font-size:11px;'><i class=\"fa fa-info-circle\" style=\"color:#9aa3b2;margin-right:6px;\"></i>Ensemble weights pending \u2014 Brier scores computed on next retrain.</div>"
+  ew_html <- if (!is.null(ew) && !is.null(ew$glm_brier)) {
+    sprintf(
+      "<div style='background:#0d1f10;border-radius:8px;padding:14px 16px;margin-bottom:20px;border-left:4px solid #2dce89;'><div style='color:#2dce89;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;'><i class=\"fa fa-balance-scale\" style=\"margin-right:6px;\"></i>Data-Driven Ensemble Weights <span style='color:#555;font-size:10px;font-weight:400;'>(%s)</span></div><div style='display:flex;gap:20px;margin-bottom:10px;'><div style='flex:1;'><div style='color:#9aa3b2;font-size:10px;margin-bottom:4px;'>GLM weight <b style='color:#2dce89;'>%.0f%%</b></div><div style='background:#2a3042;border-radius:3px;height:8px;'><div style='background:#2dce89;width:%.0f%%;height:100%%;border-radius:3px;'></div></div><div style='color:#555;font-size:9px;margin-top:3px;'>Brier=%.4f | skill=%.3f</div></div><div style='flex:1;'><div style='color:#9aa3b2;font-size:10px;margin-bottom:4px;'>Markov weight <b style='color:#00b4d8;'>%.0f%%</b></div><div style='background:#2a3042;border-radius:3px;height:8px;'><div style='background:#00b4d8;width:%.0f%%;height:100%%;border-radius:3px;'></div></div><div style='color:#555;font-size:9px;margin-top:3px;'>Brier=%.4f | skill=%.3f</div></div></div><div style='color:#d0d0d0;font-size:11px;line-height:1.75;'>Weights from Brier skill scores on a <b>%d-month true out-of-sample holdout</b>. A temporary scoring GLM (trained on months 1 to n\u221236) predicts on months n\u221235 to n that it never saw. Skill = 1 \u2212 (model Brier / climatology Brier). Higher skill \u2192 higher blend weight. Recomputed every 30 days.</div></div>",
+      ew$method,
+      ew$w_glm * 100,
+      ew$w_glm * 100,
+      ew$glm_brier,
+      ew$glm_skill %||% 0,
+      ew$w_ms * 100,
+      ew$w_ms * 100,
+      ew$ms_brier,
+      ew$ms_skill %||% 0,
+      ew$n_holdout %||% 0
+    )
+  } else {
+    "<div style='background:#1e2640;border-radius:6px;padding:10px 14px;margin-bottom:20px;color:#555;font-size:11px;'><i class=\"fa fa-info-circle\" style=\"color:#9aa3b2;margin-right:6px;\"></i>Ensemble weights pending \u2014 Brier scores computed on next retrain.</div>"
+  }
 
   # Markov status panel
   markov_html <- if (!is.null(mr)) {
-    freq <- round((mr$state_freq_recession%||%0)*100)
-    ms_pct <- round(mr$current_rec_prob*100)
-    ms_col <- if(ms_pct>60)"#e94560" else if(ms_pct>35)"#f4a261" else "#2dce89"
-    rel_badge <- if(isFALSE(mr$reliable))
-      sprintf("<div style='background:#2a1010;border:1px solid rgba(233,69,96,0.4);border-radius:6px;padding:8px 12px;margin-bottom:8px;color:#e94560;font-size:11px;'><i class=\"fa fa-exclamation-triangle\" style=\"margin-right:6px;\"></i><b>Warning:</b> Recession state covers %d%% of history (max 25%%). Markov weight capped at 10%%.</div>", freq)
-      else sprintf("<div style='background:#0d1f10;border:1px solid rgba(45,206,137,0.3);border-radius:6px;padding:6px 12px;margin-bottom:8px;color:#2dce89;font-size:11px;'><i class=\"fa fa-check-circle\" style=\"margin-right:6px;\"></i>State assignment healthy: recession state = %d%% of history (target ~13%%).</div>", freq)
+    freq <- round((mr$state_freq_recession %||% 0) * 100)
+    ms_pct <- round(mr$current_rec_prob * 100)
+    ms_col <- if (ms_pct > 60) {
+      "#e94560"
+    } else if (ms_pct > 35) {
+      "#f4a261"
+    } else {
+      "#2dce89"
+    }
+    rel_badge <- if (isFALSE(mr$reliable)) {
+      sprintf(
+        "<div style='background:#2a1010;border:1px solid rgba(233,69,96,0.4);border-radius:6px;padding:8px 12px;margin-bottom:8px;color:#e94560;font-size:11px;'><i class=\"fa fa-exclamation-triangle\" style=\"margin-right:6px;\"></i><b>Warning:</b> Recession state covers %d%% of history (max 25%%). Markov weight capped at 10%%.</div>",
+        freq
+      )
+    } else {
+      sprintf(
+        "<div style='background:#0d1f10;border:1px solid rgba(45,206,137,0.3);border-radius:6px;padding:6px 12px;margin-bottom:8px;color:#2dce89;font-size:11px;'><i class=\"fa fa-check-circle\" style=\"margin-right:6px;\"></i>State assignment healthy: recession state = %d%% of history (target ~13%%).</div>",
+        freq
+      )
+    }
     sw <- mr$sw_regime_means
-    sprintf("<div style='background:#0f1a27;border-radius:8px;padding:14px 16px;margin-bottom:20px;border-left:4px solid #00b4d8;'>%s<div style='color:#00b4d8;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;'><i class=\"fa fa-random\" style=\"margin-right:6px;\"></i>Markov Regime Model <span style='color:#555;font-size:10px;font-weight:400;'>3-state pure-R EM &nbsp;|&nbsp; switching: %s</span></div><div style='display:flex;align-items:center;gap:10px;margin-bottom:8px;'><span style='color:#9aa3b2;font-size:11px;width:200px;'>Recession state probability</span><div style='flex:1;background:#2a3042;border-radius:4px;height:10px;'><div style='background:%s;width:%d%%;height:100%%;border-radius:4px;'></div></div><span style='color:%s;font-size:14px;font-weight:700;width:45px;text-align:right;'>%d%%</span></div><div style='color:#9aa3b2;font-size:11px;'>Expansion mean: <b style='color:#2dce89;'>%.2f</b> &nbsp;|&nbsp; Recession mean: <b style='color:#e94560;'>%.2f</b> &nbsp;|&nbsp; n=%d months &nbsp;|&nbsp; 3 states</div></div>",
-            rel_badge,htmltools::htmlEscape(mr$switch_name%||%"unknown"),ms_col,ms_pct,ms_col,ms_pct,sw$expansion%||%0,sw$recession%||%0,mr$n_obs%||%0)
-  } else "<div style='background:#1e2640;border-radius:6px;padding:10px 14px;margin-bottom:20px;color:#555;font-size:11px;'><i class=\"fa fa-info-circle\" style=\"color:#00b4d8;margin-right:6px;\"></i>Markov model not yet fitted. Check INDPRO / PAYEMS / UNRATE fredr access.</div>"
+    sprintf(
+      "<div style='background:#0f1a27;border-radius:8px;padding:14px 16px;margin-bottom:20px;border-left:4px solid #00b4d8;'>%s<div style='color:#00b4d8;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;'><i class=\"fa fa-random\" style=\"margin-right:6px;\"></i>Markov Regime Model <span style='color:#555;font-size:10px;font-weight:400;'>3-state pure-R EM &nbsp;|&nbsp; switching: %s</span></div><div style='display:flex;align-items:center;gap:10px;margin-bottom:8px;'><span style='color:#9aa3b2;font-size:11px;width:200px;'>Recession state probability</span><div style='flex:1;background:#2a3042;border-radius:4px;height:10px;'><div style='background:%s;width:%d%%;height:100%%;border-radius:4px;'></div></div><span style='color:%s;font-size:14px;font-weight:700;width:45px;text-align:right;'>%d%%</span></div><div style='color:#9aa3b2;font-size:11px;'>Expansion mean: <b style='color:#2dce89;'>%.2f</b> &nbsp;|&nbsp; Recession mean: <b style='color:#e94560;'>%.2f</b> &nbsp;|&nbsp; n=%d months &nbsp;|&nbsp; 3 states</div></div>",
+      rel_badge,
+      htmltools::htmlEscape(mr$switch_name %||% "unknown"),
+      ms_col,
+      ms_pct,
+      ms_col,
+      ms_pct,
+      sw$expansion %||% 0,
+      sw$recession %||% 0,
+      mr$n_obs %||% 0
+    )
+  } else {
+    "<div style='background:#1e2640;border-radius:6px;padding:10px 14px;margin-bottom:20px;color:#555;font-size:11px;'><i class=\"fa fa-info-circle\" style=\"color:#00b4d8;margin-right:6px;\"></i>Markov model not yet fitted. Check INDPRO / PAYEMS / UNRATE fredr access.</div>"
+  }
 
-  anm_html <- if(!is.null(anomaly)&&anomaly$score>0.05){bc<-if(anomaly$score>0.6)"#e94560"else if(anomaly$score>0.3)"#f4a261"else"#7c5cbf";sprintf("<div style='background:#1e1030;border-radius:8px;padding:12px 16px;margin-bottom:20px;border-left:4px solid #7c5cbf;'><div style='color:#a785e0;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'><i class=\"fa fa-exclamation-triangle\" style=\"margin-right:6px;\"></i>Anomaly Detection Active</div><div style='display:flex;align-items:center;gap:10px;margin-bottom:6px;'><span style='color:#9aa3b2;font-size:11px;width:90px;'>Score</span><div style='flex:1;background:#2a3042;border-radius:4px;height:10px;'><div style='background:%s;width:%.0f%%;height:100%%;border-radius:4px;'></div></div><span style='color:%s;font-size:13px;font-weight:700;width:40px;'>%.0f%%</span></div><div style='color:#d0d0d0;font-size:11px;'>MD=%.2f \u2014 %s. Blend: p = p_base\u00d7(1\u22120.35A) + 0.25A</div></div>",bc,anomaly$score*100,bc,anomaly$score*100,anomaly$md%||%0,anomaly$label)}else"<div style='background:#1e2640;border-radius:6px;padding:8px 14px;margin-bottom:20px;color:#555;font-size:11px;'><i class=\"fa fa-check-circle\" style=\"color:#2dce89;margin-right:6px;\"></i>Anomaly score normal. No uncertainty adjustment.</div>"
+  anm_html <- if (!is.null(anomaly) && anomaly$score > 0.05) {
+    bc <- if (anomaly$score > 0.6) {
+      "#e94560"
+    } else if (anomaly$score > 0.3) {
+      "#f4a261"
+    } else {
+      "#7c5cbf"
+    }
+    sprintf(
+      "<div style='background:#1e1030;border-radius:8px;padding:12px 16px;margin-bottom:20px;border-left:4px solid #7c5cbf;'><div style='color:#a785e0;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'><i class=\"fa fa-exclamation-triangle\" style=\"margin-right:6px;\"></i>Anomaly Detection Active</div><div style='display:flex;align-items:center;gap:10px;margin-bottom:6px;'><span style='color:#9aa3b2;font-size:11px;width:90px;'>Score</span><div style='flex:1;background:#2a3042;border-radius:4px;height:10px;'><div style='background:%s;width:%.0f%%;height:100%%;border-radius:4px;'></div></div><span style='color:%s;font-size:13px;font-weight:700;width:40px;'>%.0f%%</span></div><div style='color:#d0d0d0;font-size:11px;'>MD=%.2f \u2014 %s. Blend: p = p_base\u00d7(1\u22120.35A) + 0.25A</div></div>",
+      bc,
+      anomaly$score * 100,
+      bc,
+      anomaly$score * 100,
+      anomaly$md %||% 0,
+      anomaly$label
+    )
+  } else {
+    "<div style='background:#1e2640;border-radius:6px;padding:8px 14px;margin-bottom:20px;color:#555;font-size:11px;'><i class=\"fa fa-check-circle\" style=\"color:#2dce89;margin-right:6px;\"></i>Anomaly score normal. No uncertainty adjustment.</div>"
+  }
 
   paste0(
     "<div id='recModelModal' onclick=\"if(event.target===this)this.style.display='none'\" style='display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;align-items:center;justify-content:center;padding:20px;'>",
@@ -918,8 +2429,13 @@ render_growth_outlook_html <- function(outlook) {
     "<button onclick=\"document.getElementById('recModelModal').style.display='none'\" style='position:absolute;top:14px;right:16px;background:transparent;border:none;color:#9aa3b2;font-size:20px;cursor:pointer;'>&times;</button>",
     "<div style='color:#00b4d8;font-size:16px;font-weight:800;margin-bottom:4px;'><i class=\"fa fa-brain\" style=\"margin-right:8px;\"></i>Recession Probability Model \u2014 Technical Reference <span style='font-size:11px;font-weight:400;color:#00b4d8;margin-left:10px;border:1px solid rgba(0,180,216,0.3);border-radius:6px;padding:1px 8px;'>Tier\u00a03: Rolling GLM + 3-State Markov + Anomaly</span></div>",
     "<div style='color:#9aa3b2;font-size:12px;margin-bottom:20px;'>Three-model ensemble with data-driven Brier-weighted blend. GLM retrained on rolling 30-year window. Pure-R Hamilton (1989) 3-state EM \u2014 no external packages. Calibrated to NBER recession dates. Not a point forecast.</div>",
-    "<div style='background:#1e2640;border-radius:8px;padding:16px;margin-bottom:20px;border-left:4px solid #00b4d8;'>",bar_html,"</div>",
-    ew_html, markov_html, anm_html,
+    "<div style='background:#1e2640;border-radius:8px;padding:16px;margin-bottom:20px;border-left:4px solid #00b4d8;'>",
+    bar_html,
+    "</div>",
+    ew_html,
+    markov_html,
+    anm_html,
     "<div style='color:#555;font-size:11px;margin-top:8px;line-height:1.7;'><b style='color:#9aa3b2;'>Formula:</b> p_blend = w_GLM\u00d7p_GLM + w_MS\u00d7p_Markov &nbsp;|&nbsp; A = min(1,MD/(d95\u00d71.5)) &nbsp;|&nbsp; p_final = p_blend\u00d7(1\u22120.35A) + 0.25A &nbsp;|&nbsp; [2%, 97%].<br/><b style='color:#9aa3b2;'>Refs:</b> Estrella &amp; Mishkin (1998); Sahm (2019); Hamilton (1983,1989); Mahalanobis (1936); Brier (1950).</div>",
-    "</div></div>")
+    "</div></div>"
+  )
 }
