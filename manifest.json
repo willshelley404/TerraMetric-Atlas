@@ -194,6 +194,29 @@
         "Archs": "x64"
       }
     },
+    "MSwM": {
+      "Source": "CRAN",
+      "Repository": "https://cran.rstudio.com",
+      "description": {
+        "Package": "MSwM",
+        "Type": "Package",
+        "Title": "Fitting Markov Switching Models",
+        "Version": "1.5",
+        "Date": "2021-06-05",
+        "Author": "Josep A. Sanchez-Espigares, Alberto Lopez-Moreno",
+        "Maintainer": "Josep A. Sanchez-Espigares <josep.a.sanchez@upc.edu>",
+        "Description": "Estimation, inference and diagnostics for Univariate Autoregressive Markov Switching Models for Linear and Generalized Models. Distributions for the series include gaussian, Poisson, binomial and gamma cases. The EM algorithm is used for estimation (see Perlin (2012) <doi:10.2139/ssrn.1714016>).",
+        "License": "GPL (>= 2.0)",
+        "Depends": "methods, graphics, parallel",
+        "Imports": "nlme",
+        "NeedsCompilation": "no",
+        "Packaged": "2021-06-05 18:08:13 UTC; josep",
+        "RoxygenNote": "6.0.1",
+        "Repository": "CRAN",
+        "Date/Publication": "2021-06-06 10:20:02 UTC",
+        "Built": "R 4.5.3; ; 2026-03-28 18:49:54 UTC; windows"
+      }
+    },
     "Matrix": {
       "Source": "CRAN",
       "Repository": "https://cran.rstudio.com",
@@ -6491,12 +6514,7 @@
         "Maintainer": "Matt Dancho <mdancho@business-science.io>",
         "Repository": "CRAN",
         "Date/Publication": "2025-08-29 12:30:02 UTC",
-        "Built": "R 4.5.2; ; 2026-02-25 04:47:32 UTC; windows",
-        "RemoteType": "standard",
-        "RemotePkgRef": "timetk",
-        "RemoteRef": "timetk",
-        "RemoteRepos": "https://cran.rstudio.com",
-        "RemoteSha": "2.9.1"
+        "Built": "R 4.5.3; ; 2026-03-28 21:30:25 UTC; windows"
       }
     },
     "tinytex": {
@@ -7186,7 +7204,10 @@
   },
   "files": {
     ".Renviron.example": {
-      "checksum": "b7438f5d38da7aaf9b926fbb4862e81d"
+      "checksum": "2ac1b87328a4935bcb1c9207691523f3"
+    },
+    ".vscode/launch.json": {
+      "checksum": "8536c0b1b0a5a6da1637feed7ca91d43"
     },
     ".vscode/settings.json": {
       "checksum": "5b376c7021ee7fc3c27164de8b5d0c8b"
@@ -7194,8 +7215,53 @@
     "app.R": {
       "checksum": "eacdfd7dbec5701d4b7959aec803e894"
     },
+    "ARCHIVE/data_fred_orig.R": {
+      "checksum": "bab465654ed8667434bd2a16bf2fbaea"
+    },
+    "ARCHIVE/forecasting_original.R": {
+      "checksum": "6e622395615eb5aa206aa8722a6231a9"
+    },
+    "ARCHIVE/synopsis.R": {
+      "checksum": "76115c0ad5740c66f3e1c352d66943d4"
+    },
+    "ARCHIVE/synopsis_orginal.R": {
+      "checksum": "20d97b164ff3e31c2d6d3ffb6f29260e"
+    },
+    "ARCHIVE/synopsis_tier2.R": {
+      "checksum": "8a3bc95b187df69a4177a0c840dafcfe"
+    },
+    "ARCHIVE/synopsis_tier3.R": {
+      "checksum": "9b06d01d9e5d401b71d42589d801aa12"
+    },
+    "ARCHIVE/synopsis_tier3_patch.R": {
+      "checksum": "55dbc43c5930d8e429d60d74bc15282b"
+    },
+    "ARCHIVE/synopsis_tier3_patch2.R": {
+      "checksum": "583aa1e86f4ac82fa1f08ada6e18cf06"
+    },
+    "ARCHIVE/synopsis_tier3_patch3.R": {
+      "checksum": "7665f7b96cf76381b261f37b2c782b6a"
+    },
+    "ARCHIVE/synopsis_tier3_patch4.R": {
+      "checksum": "5fafc8016e8502064bb74f82e5748740"
+    },
+    "ARCHIVE/synopsis_tier3_patch5.R": {
+      "checksum": "b5474faf422708717a42f293f84d1215"
+    },
     "global.R": {
-      "checksum": "28746e666d9429dd3c6422969d554587"
+      "checksum": "ed2b53739a3b05247a97740006401c4a"
+    },
+    "images/main_dash.png": {
+      "checksum": "1cb4b944b86447c55ab80cffc7876dc5"
+    },
+    "images/metro.png": {
+      "checksum": "b71c381ef91f53c8db4f885c60bc37eb"
+    },
+    "images/model_details.png": {
+      "checksum": "a943276b6d43e0b6807d62b7f807d925"
+    },
+    "images/recession.png": {
+      "checksum": "5a3f06948f5383696d9236554e615870"
     },
     "install_packages.R": {
       "checksum": "8ea0e289a491e07b2d774ae02a9bd8c0"
@@ -7204,34 +7270,34 @@
       "checksum": "566e192f2f173a1c63733a8762a79924"
     },
     "R/data_census.R": {
-      "checksum": "ef65564a6fb2daf87f94e2538ecf7c46"
+      "checksum": "5a57423f03858d92063926c3b00f8d2a"
     },
     "R/data_fred.R": {
-      "checksum": "a073291f916d6a40c8c940a3d196c031"
-    },
-    "R/data_fred_orig.R": {
-      "checksum": "bab465654ed8667434bd2a16bf2fbaea"
+      "checksum": "ef8ffc7bd86e55e5f4f22abf9db5217b"
     },
     "R/data_markets.R": {
-      "checksum": "1c4f3e714129f7f83c06809b6c5d8f15"
+      "checksum": "389d6ea3309818c3be36c758c6a8ad75"
     },
     "R/data_news.R": {
-      "checksum": "7feda2ee09eaa524b61278e369f9af76"
+      "checksum": "b38603120ecf9ba9cb19115d78074d1d"
     },
     "R/forecasting.R": {
-      "checksum": "da6ad30f46d16ce8178b80dc0e5ff3c7"
+      "checksum": "6e622395615eb5aa206aa8722a6231a9"
     },
     "R/llm_insights.R": {
-      "checksum": "ab557759e2d982f0057e9eb555d36d6b"
+      "checksum": "917c920c4f31e8eb9bd97cfe2e5c188b"
+    },
+    "R/synopsis_tier1.R": {
+      "checksum": "a0b79bcff6516870232acb83b7d6a146"
     },
     "README.md": {
       "checksum": "0635dd4224252d1976d3de8373881a8e"
     },
     "server.R": {
-      "checksum": "8cf3107ed2ff24a025575c329b625c84"
+      "checksum": "acf94140af6382397ab631f5581fe753"
     },
     "ui.R": {
-      "checksum": "773b4a9849fdf3e8279992a22eb8c128"
+      "checksum": "db482d55746813607515b23500c1157e"
     },
     "www/custom.css": {
       "checksum": "5cba769ab664d1289a7f649e910b9104"

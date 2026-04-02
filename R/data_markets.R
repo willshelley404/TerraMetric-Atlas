@@ -1,6 +1,18 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # R/data_markets.R — Financial market data via tidyquant (Yahoo Finance)
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# WTI crude real-time patch
+# ─────────────────────────
+# FRED's DCOILWTICO series lags 3-5 days.  After calling fetch_all_fred() in
+# server.R, call patch_wti_realtime() (defined in data_fred.R) to splice in
+# the latest settle price from Yahoo Finance's front-month WTI futures (CL=F):
+#
+#   fred_data <- fetch_all_fred()
+#   fred_data <- patch_wti_realtime(fred_data)   # <── add this line
+#
+# Brent alternative: patch_wti_realtime(fred_data, ticker = "BZ=F")
+# ─────────────────────────────────────────────────────────────────────────────
 
 #' Fetch price history for a set of tickers
 fetch_market_data <- function(tickers = ALL_TICKERS, lookback_days = 400) {
