@@ -7222,15 +7222,12 @@
       "checksum": "6e622395615eb5aa206aa8722a6231a9"
     },
     "ARCHIVE/synopsis.R": {
-      "checksum": "76115c0ad5740c66f3e1c352d66943d4"
+      "checksum": "20d97b164ff3e31c2d6d3ffb6f29260e"
     },
     "ARCHIVE/synopsis_orginal.R": {
       "checksum": "20d97b164ff3e31c2d6d3ffb6f29260e"
     },
-    "ARCHIVE/synopsis_tier2.R": {
-      "checksum": "8a3bc95b187df69a4177a0c840dafcfe"
-    },
-    "ARCHIVE/synopsis_tier3.R": {
+    "ARCHIVE/synopsis_tier3_first.R": {
       "checksum": "9b06d01d9e5d401b71d42589d801aa12"
     },
     "ARCHIVE/synopsis_tier3_patch.R": {
@@ -7247,6 +7244,9 @@
     },
     "ARCHIVE/synopsis_tier3_patch5.R": {
       "checksum": "b5474faf422708717a42f293f84d1215"
+    },
+    "ARCHIVE/synopsis_tier3_patch6.R": {
+      "checksum": "e13d4d085f7965c4a530bcfe0f4b7a7a"
     },
     "global.R": {
       "checksum": "ed2b53739a3b05247a97740006401c4a"
@@ -7289,6 +7289,12 @@
     },
     "R/synopsis_tier1.R": {
       "checksum": "a0b79bcff6516870232acb83b7d6a146"
+    },
+    "R/synopsis_tier2.R": {
+      "checksum": "8a3bc95b187df69a4177a0c840dafcfe"
+    },
+    "R/synopsis_tier3.R": {
+      "checksum": "fabd242c972f94e6c47d265451b0f976"
     },
     "README.md": {
       "checksum": "0635dd4224252d1976d3de8373881a8e"

@@ -1,945 +1,640 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# R/synopsis_tier3.R — Tier 3: Markov-Switching + Online Rolling Retrain
-#
-# SOURCE STRATEGY: sources synopsis_tier2.R, then overrides only Tier-3
-# additions.  synopsis_tier2.R must be in the same directory (or source path).
-#
-# WHAT'S NEW vs Tier 2:
-#
-#  1. train_markov_model()       — Fits a 2-state Hamilton (1989) Markov-
-#     switching model on GDP growth using MSwM::msmFit().  State 0 = expansion,
-#     State 1 = recession.  Returns smoothed regime probabilities for the full
-#     series and regime-conditional mean / variance for each predictor.
-#     Falls back gracefully to Tier 2 path if MSwM is unavailable or fitting
-#     fails.
-#
-#  2. rolling_retrain()          — Wrapper that retrains the GLM model on a
-#     rolling 30-year window of the most recent data so the model adapts as new
-#     observations arrive, rather than being fixed at one training snapshot.
-#     Called by build_growth_outlook() on a 30-day cycle.
-#
-#  3. .compute_recession_prob()  — Tier 3 path: blends three probability
-#     estimates:
-#         p = w_glm × p_GLM  +  w_ms × p_MS  +  anomaly_blend
-#     where p_MS = current smoothed Markov recession state probability,
-#     w_glm = 0.55, w_ms = 0.45 (down-weighted when MS model unavailable).
-#     Per-factor contributions now include a "Markov Regime State" row showing
-#     the current probability from the regime model alone.
-#
-#  4. .build_factor_bar_chart()  — Tier 3 version:
-#     • Adds a fourth "regime" colour (teal #00b4d8) for the Markov state row.
-#     • When the Markov model is available, shows a secondary "Regime-conditional
-#       means" mini-table below the chart showing each variable's mean in
-#       State 0 (expansion) vs State 1 (recession) from the fitted model.
-#       This lets the user see which variables most strongly differentiate the
-#       two regimes historically.
-#
-#  5. build_growth_outlook()     — Passes markov_result to prob engine;
-#     rolling retraining logic uses .recession_t3_cache.
-#
-#  6. .build_model_modal()       — Tier 3 version:
-#     • Title: "Tier 3: Markov-Switching + Online Retraining"
-#     • New "Regime Model Status" callout showing current Markov state
-#       probability, regime-conditional means table, retrain schedule.
-#     • Bar chart shows four-colour legend (red/green/purple/teal).
-#     • Footer formula includes three-way blend equation.
-#     • Factor table row 15 added: "Markov Regime State" as a blend factor.
+# R/synopsis.R — Data-driven Overview synopsis panel
+# Computes correlations, lags, trend stats from live FRED data
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Inherit Tier 1 + Tier 2
-source(
-  file.path(dirname(sys.frame(1)$ofile %||% "."), "R/synopsis_tier2.R"),
-  local = FALSE
-)
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
-if (!exists("build_anomaly_detector")) {
-  source("R/synopsis_tier2.R", local = FALSE)
+# Rolling correlation between two numeric vectors (same length)
+roll_cor <- function(x, y, n = 36) {
+  if (length(x) < n || length(y) < n) {
+    return(NA_real_)
+  }
+  x <- tail(x, n)
+  y <- tail(y, n)
+  if (sd(x, na.rm = TRUE) == 0 || sd(y, na.rm = TRUE) == 0) {
+    return(NA_real_)
+  }
+  cor(x, y, use = "pairwise.complete.obs")
 }
 
+# Lag-correlation: correlate x with y shifted by `lag` periods
+lag_cor <- function(x, y, lag = 0) {
+  n <- length(x)
+  if (lag >= n || lag < 0) {
+    return(NA_real_)
+  }
+  cor(x[(lag + 1):n], y[1:(n - lag)], use = "pairwise.complete.obs")
+}
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# TIER 3 NEW: Markov-switching model
-# ═══════════════════════════════════════════════════════════════════════════════
+# Find lag (in months) that maximises |correlation| between two series
+best_lag <- function(x, y, max_lag = 18) {
+  cors <- vapply(0:max_lag, function(l) lag_cor(x, y, l), numeric(1))
+  best <- which.max(abs(cors))
+  list(lag = best - 1L, r = cors[best])
+}
 
-#' Fit a 2-state Markov-switching model (Hamilton 1989) using MSwM.
-#'
-#' Uses GDP / industrial production YoY growth as the switching variable.
-#' State 1 historically corresponds to recession (lower mean, higher variance).
-#'
-#' Returns list or NULL on failure.
-#'
-#' @param fred_data   Named list of FRED data frames (from data_fred.R).
-#' @param n_states    Integer, default 2.  Change to 3 for a "stall" middle regime.
-train_markov_model <- function(fred_data, n_states = 2L) {
-  if (!requireNamespace("MSwM", quietly = TRUE)) {
-    message(
-      "[synopsis_tier3] MSwM not available. install.packages('MSwM') for Markov model."
+# Simple linear trend over last n observations: positive/negative/flat
+trend_dir <- function(vals, n = 12) {
+  v <- tail(na.omit(vals), n)
+  if (length(v) < 4) {
+    return("unclear")
+  }
+  fit <- lm(v ~ seq_along(v))
+  slope <- coef(fit)[2]
+  se <- summary(fit)$coefficients[2, 2]
+  if (abs(slope) < se) {
+    return("flat")
+  }
+  if (slope > 0) {
+    return("rising")
+  }
+  return("falling")
+}
+
+# Format correlation with strength label
+fmt_cor <- function(r) {
+  if (is.na(r)) {
+    return("N/A")
+  }
+  lbl <- if (abs(r) > 0.75) {
+    "strong"
+  } else if (abs(r) > 0.5) {
+    "moderate"
+  } else {
+    "weak"
+  }
+  dir <- if (r > 0) "positive" else "negative"
+  sprintf("r \u2248 %.2f (%s %s)", r, lbl, dir)
+}
+
+# Arrow indicator
+arrow <- function(dir) {
+  switch(
+    dir,
+    "rising" = "\u2191",
+    "falling" = "\u2193",
+    "flat" = "\u2192",
+    "\u2014"
+  )
+}
+
+# color for trend direction
+trend_col <- function(dir, higher_good = TRUE) {
+  if (dir == "rising") {
+    return(if (higher_good) "#2dce89" else "#e94560")
+  }
+  if (dir == "falling") {
+    return(if (higher_good) "#e94560" else "#2dce89")
+  }
+  "#9aa3b2"
+}
+
+# Format distance from target
+pct_from_target <- function(val, target) {
+  if (is.na(val) || is.na(target)) {
+    return(NULL)
+  }
+  diff <- val - target
+  list(
+    diff = diff,
+    above = diff > 0,
+    str = sprintf(
+      "%+.1f pp %s 2%% target",
+      diff,
+      if (diff > 0) "above" else "below"
     )
+  )
+}
+
+# ── Main synopsis builder ──────────────────────────────────────────────────────
+
+build_synopsis <- function(fred_data, kpis) {
+  if (is.null(fred_data) || is.null(kpis)) {
     return(NULL)
   }
 
-  tryCatch(
-    {
-      # ── Build monthly panel ────────────────────────────────────────────────────
-      gm <- function(sid, val_name) {
-        df <- fred_data[[sid]]
-        if (is.null(df) || nrow(df) < 24) {
-          return(NULL)
+  # ── Pull aligned series ──────────────────────────────────────────────────────
+  get_vals <- function(sid) {
+    df <- fred_data[[sid]]
+    if (is.null(df) || nrow(df) < 12) {
+      return(NULL)
+    }
+    df %>% arrange(date) %>% pull(value)
+  }
+  get_df <- function(sid) {
+    df <- fred_data[[sid]]
+    if (is.null(df) || nrow(df) < 12) {
+      return(NULL)
+    }
+    df %>% arrange(date)
+  }
+
+  unemp <- get_vals("UNRATE")
+  payrolls <- get_vals("PAYEMS")
+  cpi <- get_vals("CPIAUCSL")
+  fed <- get_vals("FEDFUNDS")
+  t10 <- get_vals("DGS10")
+  t2 <- get_vals("DGS2")
+  mort <- get_vals("MORTGAGE30US")
+  houst <- get_vals("HOUST")
+  retail <- get_vals("RSAFS")
+  vix <- get_vals("VIXCLS")
+  oil <- get_vals("DCOILWTICO")
+
+  blocks <- list()
+
+  # ── 1. Labor Market ──────────────────────────────────────────────────────────
+  unemp_trend <- if (!is.null(unemp)) trend_dir(unemp, 12) else "unclear"
+  payroll_trend <- if (!is.null(payrolls)) {
+    trend_dir(diff(payrolls), 12)
+  } else {
+    "unclear"
+  }
+
+  unemp_6m_ago <- if (!is.null(unemp) && length(unemp) >= 6) {
+    unemp[length(unemp) - 6]
+  } else {
+    NA
+  }
+  unemp_chg_6m <- if (!is.na(unemp_6m_ago)) {
+    round(kpis$unemp_rate - unemp_6m_ago, 1)
+  } else {
+    NA
+  }
+
+  unemp_yr_ago <- if (!is.null(unemp) && length(unemp) >= 12) {
+    unemp[length(unemp) - 12]
+  } else {
+    NA
+  }
+  unemp_chg_yr <- if (!is.na(unemp_yr_ago)) {
+    round(kpis$unemp_rate - unemp_yr_ago, 1)
+  } else {
+    NA
+  }
+
+  avg_payrolls_3m <- if (!is.null(payrolls) && length(payrolls) >= 4) {
+    round(mean(diff(tail(payrolls, 4)), na.rm = TRUE), 0)
+  } else {
+    NA
+  }
+
+  blocks[["labor"]] <- list(
+    title = "Labor Market",
+    color = "#00b4d8",
+    icon = "users",
+    stats = list(
+      list(
+        label = "Unemployment trend (12M)",
+        value = sprintf(
+          "%s %.1f%%",
+          arrow(unemp_trend),
+          kpis$unemp_rate %||% NA
+        ),
+        col = trend_col(unemp_trend, higher_good = FALSE)
+      ),
+      list(
+        label = "Change vs. 6 months ago",
+        value = if (!is.na(unemp_chg_6m)) {
+          sprintf("%+.1f pp", unemp_chg_6m)
+        } else {
+          "N/A"
+        },
+        col = if (!is.na(unemp_chg_6m) && unemp_chg_6m > 0) {
+          "#e94560"
+        } else {
+          "#2dce89"
         }
-        df %>%
-          dplyr::arrange(date) %>%
-          dplyr::mutate(month = lubridate::floor_date(date, "month")) %>%
-          dplyr::group_by(month) %>%
-          dplyr::summarise(
-            !!val_name := mean(value, na.rm = TRUE),
-            .groups = "drop"
-          ) %>%
-          dplyr::rename(date = month)
-      }
-
-      # Industrial production YoY as proxy for GDP growth (monthly, long history)
-      indpro <- gm("INDPRO", "indpro")
-      if (is.null(indpro) || nrow(indpro) < 120) {
-        message("[synopsis_tier3] Insufficient INDPRO data for Markov model.")
-        return(NULL)
-      }
-
-      indpro <- indpro %>%
-        dplyr::arrange(date) %>%
-        dplyr::mutate(ip_yoy = (indpro / dplyr::lag(indpro, 12) - 1) * 100) %>%
-        dplyr::filter(!is.na(ip_yoy))
-
-      # Optional predictors for the switching equation (regime indicators)
-      spread_df <- gm("T10Y2Y", "yield_spread") %||%
-        {
-          t10 <- gm("DGS10", "t10")
-          t2 <- gm("DGS2", "t2")
-          if (!is.null(t10) && !is.null(t2)) {
-            dplyr::inner_join(t10, t2, by = "date") %>%
-              dplyr::mutate(yield_spread = t10 - t2) %>%
-              dplyr::select(date, yield_spread)
-          } else {
-            NULL
-          }
+      ),
+      list(
+        label = "Change vs. 1 year ago",
+        value = if (!is.na(unemp_chg_yr)) {
+          sprintf("%+.1f pp", unemp_chg_yr)
+        } else {
+          "N/A"
+        },
+        col = if (!is.na(unemp_chg_yr) && unemp_chg_yr > 0) {
+          "#e94560"
+        } else {
+          "#2dce89"
         }
-      hy_df <- gm("BAMLH0A0HYM2", "hy_spread")
-      unem_df <- gm("UNRATE", "unemp")
-
-      panel <- indpro %>% dplyr::select(date, ip_yoy)
-      for (df in list(spread_df, hy_df, unem_df)) {
-        if (!is.null(df)) panel <- dplyr::left_join(panel, df, by = "date")
-      }
-      panel <- panel %>% tidyr::drop_na()
-      if (nrow(panel) < 120) {
-        return(NULL)
-      }
-
-      # ── Fit base linear model for msmFit ──────────────────────────────────────
-      # MSwM switches coefficients + variance; we switch on the intercept + slope
-      avail_preds <- intersect(
-        c("yield_spread", "hy_spread", "unemp"),
-        names(panel)
+      ),
+      list(
+        label = "Avg. payrolls (last 3M)",
+        value = if (!is.na(avg_payrolls_3m)) {
+          sprintf("%+.0fK/mo", avg_payrolls_3m)
+        } else {
+          "N/A"
+        },
+        col = if (!is.na(avg_payrolls_3m) && avg_payrolls_3m > 0) {
+          "#2dce89"
+        } else {
+          "#e94560"
+        }
       )
-      base_fml <- if (length(avail_preds) > 0) {
-        as.formula(paste("ip_yoy ~", paste(avail_preds, collapse = " + ")))
-      } else {
-        as.formula("ip_yoy ~ 1")
+    ),
+    note = {
+      note_parts <- c()
+      if (!is.na(avg_payrolls_3m)) {
+        note_parts <- c(
+          note_parts,
+          sprintf(
+            "3-month average payroll growth of %+.0fK/mo suggests a labor market that is %s.",
+            avg_payrolls_3m,
+            if (avg_payrolls_3m > 200) {
+              "running hot"
+            } else if (avg_payrolls_3m > 100) {
+              "cooling but solid"
+            } else {
+              "slowing materially"
+            }
+          )
+        )
       }
-
-      base_lm <- lm(base_fml, data = panel)
-
-      # sw = vector of TRUE/FALSE for which parameters are allowed to switch state
-      n_coef <- length(coef(base_lm))
-      sw_vec <- rep(TRUE, n_coef) # all coefficients + variance switch
-
-      ms_model <- MSwM::msmFit(
-        base_lm,
-        k = n_states,
-        sw = sw_vec,
-        control = list(parallel = FALSE, maxiter = 500)
-      )
-
-      # ── Extract regime probabilities ─────────────────────────────────────────
-      # Smoothed state probabilities: rows = obs, cols = states
-      smooth_probs <- ms_model@Fit@smoProb # matrix [n_obs × k]
-      if (is.null(smooth_probs) || nrow(smooth_probs) == 0) {
-        return(NULL)
-      }
-
-      # Identify which state = recession (lower mean ip_yoy)
-      state_means <- sapply(seq_len(n_states), function(s) ms_model@Coef[1, s])
-      recession_state <- which.min(state_means) # typically state 1
-
-      # Current (most recent) smoothed recession probability
-      current_rec_prob <- smooth_probs[nrow(smooth_probs), recession_state]
-
-      # Regime-conditional means for each predictor (for bar chart annotation)
-      regime_means <- if (length(avail_preds) > 0) {
-        lapply(avail_preds, function(v) {
-          # Simple: group by argmax(smoothed state) and compute mean
-          state_assign <- apply(smooth_probs, 1, which.max)
-          panel_trimmed <- panel[seq_len(nrow(smooth_probs)), ]
-          list(
-            variable = v,
-            expansion = round(
-              mean(
-                panel_trimmed[[v]][state_assign != recession_state],
-                na.rm = TRUE
-              ),
-              2
-            ),
-            recession = round(
-              mean(
-                panel_trimmed[[v]][state_assign == recession_state],
-                na.rm = TRUE
-              ),
-              2
+      if (!is.null(unemp) && !is.null(payrolls)) {
+        rc <- roll_cor(
+          unemp[1:min(length(unemp), length(payrolls))],
+          diff(c(NA, payrolls))[1:min(length(unemp), length(payrolls))],
+          36
+        )
+        if (!is.na(rc)) {
+          note_parts <- c(
+            note_parts,
+            sprintf(
+              "36-month rolling correlation between unemployment level and payroll growth: %s — historically inverse as expected.",
+              fmt_cor(rc)
             )
           )
-        })
-      } else {
-        NULL
+        }
       }
+      paste(note_parts, collapse = " ")
+    }
+  )
 
-      message(sprintf(
-        "[synopsis_tier3] Markov model fitted: n=%d, recession state=%d, current p_rec=%.1f%%",
-        nrow(panel),
-        recession_state,
-        current_rec_prob * 100
-      ))
+  # ── 2. Inflation ─────────────────────────────────────────────────────────────
+  cpi_yoy_now <- kpis$cpi_yoy %||% NA
+  core_yoy_now <- kpis$core_cpi_yoy %||% NA
+  cpi_target <- 2.0
 
+  cpi_trend <- if (!is.null(cpi)) {
+    yoy_series <- (cpi / lag(cpi, 12) - 1) * 100
+    yoy_series <- yoy_series[!is.na(yoy_series)]
+    trend_dir(yoy_series, 6)
+  } else {
+    "unclear"
+  }
+
+  # CPI peak (last 3 years)
+  cpi_peak <- if (!is.null(cpi) && length(cpi) >= 36) {
+    recent_yoy <- zoo::rollapply(
+      cpi,
+      13,
+      function(x) (x[13] / x[1] - 1) * 100,
+      fill = NA,
+      align = "right"
+    )
+    recent_yoy <- recent_yoy[!is.na(recent_yoy)]
+    if (length(recent_yoy) >= 36) round(max(tail(recent_yoy, 36)), 1) else NA
+  } else {
+    NA
+  }
+
+  dist <- pct_from_target(cpi_yoy_now, cpi_target)
+
+  blocks[["inflation"]] <- list(
+    title = "Inflation",
+    color = "#e94560",
+    icon = "fire",
+    stats = list(
       list(
-        model = ms_model,
-        smooth_probs = smooth_probs,
-        recession_state = recession_state,
-        current_rec_prob = current_rec_prob,
-        state_means_ip = state_means,
-        regime_means = regime_means,
-        n_states = n_states,
-        n_obs = nrow(panel),
-        trained_at = Sys.time()
-      )
-    },
-    error = function(e) {
-      message("[synopsis_tier3] Markov model failed: ", e$message)
-      NULL
-    }
-  )
-}
-
-
-#' Rolling retrain: refit the GLM on the most recent `window` months of data.
-#'
-#' Called by build_growth_outlook() to update the model as new data arrives.
-#' @param fred_data  Current fred_data list.
-#' @param window     Integer. Rolling window in months, default 360 (30 years).
-rolling_retrain <- function(fred_data, window = 360L) {
-  message(sprintf(
-    "[synopsis_tier3] Rolling retrain (window=%d months)...",
-    window
-  ))
-  panel <- build_glm_feature_matrix(fred_data)
-  if (is.null(panel)) {
-    return(NULL)
-  }
-
-  # Keep only the most recent `window` observations
-  panel_rolling <- tail(panel, window)
-  if (nrow(panel_rolling) < 100) {
-    panel_rolling <- panel
-  } # fall back to full panel
-
-  possible <- c(
-    "yield_spread",
-    "u_rise",
-    "pay_3m",
-    "real_rate",
-    "hy_spread",
-    "oil_yoy",
-    "prime_lfpr",
-    "usd_yoy",
-    "inv_sales",
-    "cc_del",
-    "sentiment"
-  )
-  available <- intersect(possible, names(panel_rolling))
-  if (length(available) < 3) {
-    return(NULL)
-  }
-
-  panel_clean <- panel_rolling %>%
-    dplyr::select(rec_next12, dplyr::all_of(available)) %>%
-    tidyr::drop_na()
-  if (nrow(panel_clean) < 60) {
-    return(NULL)
-  }
-
-  fml <- as.formula(paste("rec_next12 ~", paste(available, collapse = " + ")))
-  tryCatch(
-    {
-      model <- glm(fml, data = panel_clean, family = binomial(link = "logit"))
-      sm <- summary(model)
-      coef_tbl <- as.data.frame(sm$coefficients)
-      coef_tbl$predictor <- rownames(coef_tbl)
-      coef_tbl <- coef_tbl %>%
-        dplyr::filter(predictor != "(Intercept)") %>%
-        dplyr::rename(
-          estimate = Estimate,
-          se = `Std. Error`,
-          z_stat = `z value`,
-          p_val = `Pr(>|z|)`
-        ) %>%
-        dplyr::select(predictor, estimate, se, z_stat, p_val)
-
-      feature_only <- panel_clean[, available, drop = FALSE]
-      ad <- build_anomaly_detector(feature_only)
-
-      message(sprintf(
-        "[synopsis_tier3] Rolling GLM: n=%d (rolling %dM), AIC=%.1f",
-        nrow(panel_clean),
-        window,
-        AIC(model)
-      ))
-
+        label = "CPI YoY trend (6M)",
+        value = sprintf("%s %.1f%%", arrow(cpi_trend), cpi_yoy_now),
+        col = trend_col(cpi_trend, higher_good = FALSE)
+      ),
       list(
-        model = model,
-        coef_table = coef_tbl,
-        n_obs = nrow(panel_clean),
-        aic = round(AIC(model), 1),
-        predictors = available,
-        trained_at = Sys.time(),
-        anomaly_detector = ad,
-        window_months = window
-      )
-    },
-    error = function(e) {
-      message("[synopsis_tier3] rolling_retrain glm failed: ", e$message)
-      NULL
-    }
-  )
-}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# TIER 3 OVERRIDE: .compute_recession_prob — 3-way blend
-# ═══════════════════════════════════════════════════════════════════════════════
-
-.compute_recession_prob <- function(
-  yield_spread,
-  inv_months,
-  unemp,
-  u,
-  pay_3m,
-  real_rate,
-  hy_v,
-  vix_v,
-  cs,
-  ip_y,
-  hs,
-  prime_age_lfpr = NA,
-  prime_age_lfpr_chg = NA,
-  jobless_claims_trend = NA,
-  quits_yoy = NA,
-  oil_yoy = NA,
-  equity_drawdown_pct = NA,
-  usd_yoy = NA,
-  inventory_sales_ratio = NA,
-  cc_delinquency = NA,
-  glm_result = NULL,
-  anomaly_detector = NULL,
-  markov_result = NULL # ← Tier 3 addition
-) {
-  # ── Weights ──────────────────────────────────────────────────────────────────
-  W_GLM <- if (!is.null(markov_result)) 0.55 else 1.00
-  W_MS <- if (!is.null(markov_result)) 0.45 else 0.00
-
-  # Anomaly blend parameters (inherited from Tier 2)
-  ANOMALY_WEIGHT <- 0.35
-  ANOMALY_FLOOR <- 0.25
-  COMPRESS_CENTER <- 0.50
-
-  contribs <- list()
-  add_contrib <- function(id, label, delta, z_stat = NA_real_) {
-    contribs[[id]] <<- list(name = label, contribution = delta, z_stat = z_stat)
-  }
-
-  u_rise_val <- if (!is.na(u) && !is.null(unemp) && length(unemp) >= 12) {
-    u - min(tail(unemp, 12), na.rm = TRUE)
-  } else {
-    NA_real_
-  }
-
-  feat_df <- build_current_feature_vector(
-    yield_spread,
-    u_rise_val,
-    pay_3m,
-    real_rate,
-    hy_v,
-    oil_yoy,
-    prime_age_lfpr,
-    usd_yoy,
-    inventory_sales_ratio,
-    cc_delinquency,
-    cs
-  )
-
-  # ── Anomaly score (Tier 2 function) ──────────────────────────────────────────
-  anomaly_result <- compute_anomaly_score(anomaly_detector, feat_df)
-  A <- anomaly_result$score
-
-  # ── GLM probability + per-factor contributions ───────────────────────────────
-  glm_prob_raw <- NA_real_
-
-  if (!is.null(glm_result) && !is.null(glm_result$model)) {
-    keep_cols <- intersect(glm_result$predictors, names(feat_df))
-    feat_sub <- feat_df[, keep_cols, drop = FALSE]
-    for (col in names(feat_sub)) {
-      if (is.na(feat_sub[[col]])) feat_sub[[col]] <- 0
-    }
-
-    glm_prob_raw <- tryCatch(
-      predict(glm_result$model, newdata = feat_sub, type = "response")[[1]],
-      error = function(e) NA_real_
-    )
-
-    if (!is.na(glm_prob_raw)) {
-      coefs <- coef(glm_result$model)
-      ct <- glm_result$coef_table
-      fv <- as.list(feat_sub[1, , drop = FALSE])
-      plabels <- c(
-        yield_spread = "Yield Curve (10Y-2Y spread)",
-        u_rise = "Sahm Rule (unemployment rise)",
-        pay_3m = "Payroll Momentum (3M avg)",
-        real_rate = "Real Fed Funds Rate",
-        hy_spread = "HY Credit Spreads",
-        oil_yoy = "Oil Price Shock (YoY)",
-        prime_lfpr = "Prime-Age LFPR (25\u201354)",
-        usd_yoy = "USD Surge (YoY)",
-        inv_sales = "Inventory-to-Sales Ratio",
-        cc_del = "CC Delinquency Rate",
-        sentiment = "Consumer Sentiment"
-      )
-      for (pred in keep_cols) {
-        b <- if (pred %in% names(coefs)) coefs[[pred]] else NA_real_
-        x <- fv[[pred]]
-        z <- if (pred %in% ct$predictor) {
-          ct$z_stat[ct$predictor == pred]
-        } else {
-          NA_real_
-        }
-        lbl <- if (pred %in% names(plabels)) plabels[[pred]] else pred
-        add_contrib(pred, lbl, if (!is.na(b) && !is.na(x)) b * x else 0, z)
-      }
-    }
-  }
-
-  # ── Hand-tuned fallback (Tier 1 logic) ───────────────────────────────────────
-  if (is.na(glm_prob_raw)) {
-    lo <- -1.73
-    yc <- 0
-    if (!is.na(yield_spread)) {
-      yc <- (-yield_spread * 0.85)
-      if (!is.na(inv_months)) {
-        yc <- yc +
-          if (inv_months >= 18) {
-            1.5
-          } else if (inv_months >= 12) {
-            1.2
-          } else if (inv_months >= 6) {
-            0.6
-          } else if (inv_months >= 3) {
-            0.3
-          } else {
-            0
-          }
-      }
-    }
-    lo <- lo + yc
-    add_contrib("yield_curve", "Yield Curve (10Y-2Y spread)", yc)
-    sh <- 0
-    if (!is.na(u) && !is.null(unemp) && length(unemp) >= 12) {
-      ur <- u - min(tail(unemp, 12), na.rm = TRUE)
-      sh <- sh +
-        if (ur >= 0.5) {
-          1.8
-        } else if (ur >= 0.3) {
-          0.9
-        } else if (ur >= 0.1) {
-          0.3
-        } else if (ur < (-0.2)) {
-          -0.4
-        } else {
-          0
-        }
-    }
-    if (!is.na(pay_3m)) {
-      sh <- sh +
-        if (pay_3m < (-50)) {
-          1.5
-        } else if (pay_3m < 0) {
-          0.6
-        } else if (pay_3m < 100) {
-          0.1
-        } else if (pay_3m > 250) {
-          -0.5
-        } else {
-          0
-        }
-    }
-    lo <- lo + sh
-    add_contrib("sahm", "Sahm Rule / Labor Momentum", sh)
-    lf <- 0
-    if (!is.na(prime_age_lfpr)) {
-      lf <- lf +
-        if (prime_age_lfpr < 80.5) {
-          0.8
-        } else if (prime_age_lfpr < 82) {
-          0.4
-        } else if (prime_age_lfpr > 83.5) {
-          -0.3
-        } else {
-          0
-        }
-    }
-    if (!is.na(prime_age_lfpr_chg)) {
-      lf <- lf +
-        if (prime_age_lfpr_chg < (-0.5)) {
-          0.9
-        } else if (prime_age_lfpr_chg < (-0.2)) {
-          0.4
-        } else if (prime_age_lfpr_chg > 0.3) {
-          -0.3
-        } else {
-          0
-        }
-    }
-    lo <- lo + lf
-    add_contrib("prime_lfpr", "Prime-Age LFPR", lf)
-    cl <- 0
-    if (!is.na(jobless_claims_trend)) {
-      cl <- if (jobless_claims_trend > 0.20) {
-        1.2
-      } else if (jobless_claims_trend > 0.10) {
-        0.6
-      } else if (jobless_claims_trend > 0.05) {
-        0.2
-      } else if (jobless_claims_trend < (-0.10)) {
-        -0.3
-      } else {
-        0
-      }
-    }
-    lo <- lo + cl
-    add_contrib("claims", "Jobless Claims Trend", cl)
-    qt <- 0
-    if (!is.na(quits_yoy)) {
-      qt <- if (quits_yoy < (-15)) {
-        0.8
-      } else if (quits_yoy < (-8)) {
-        0.4
-      } else if (quits_yoy < (-3)) {
-        0.2
-      } else if (quits_yoy > 8) {
-        -0.3
-      } else {
-        0
-      }
-    }
-    lo <- lo + qt
-    add_contrib("quits", "Quits Rate YoY", qt)
-    ol <- 0
-    if (!is.na(oil_yoy)) {
-      ol <- if (oil_yoy > 50) {
-        1.0
-      } else if (oil_yoy > 25) {
-        0.6
-      } else if (oil_yoy > 15) {
-        0.2
-      } else if (oil_yoy < (-30)) {
-        0.5
-      } else if (oil_yoy < (-15)) {
-        0.2
-      } else if (oil_yoy > 0 && oil_yoy < 10) {
-        -0.1
-      } else {
-        0
-      }
-    }
-    lo <- lo + ol
-    add_contrib("oil", "Oil Price Shock", ol)
-    eq <- 0
-    if (!is.na(equity_drawdown_pct)) {
-      dd <- abs(equity_drawdown_pct)
-      eq <- if (dd > 30) {
-        1.6
-      } else if (dd > 20) {
-        1.1
-      } else if (dd > 10) {
-        0.5
-      } else if (dd < 5) {
-        -0.2
-      } else {
-        0
-      }
-    }
-    lo <- lo + eq
-    add_contrib("equity", "Equity Bear Market", eq)
-    hy <- 0
-    if (!is.na(hy_v)) {
-      hy <- if (hy_v > 7) {
-        1.4
-      } else if (hy_v > 5.5) {
-        0.7
-      } else if (hy_v > 4.5) {
-        0.2
-      } else if (hy_v < 3.5) {
-        -0.4
-      } else {
-        0
-      }
-    }
-    lo <- lo + hy
-    add_contrib("hy_spreads", "HY Credit Spreads", hy)
-    ud <- 0
-    if (!is.na(usd_yoy)) {
-      ud <- if (usd_yoy > 12) {
-        0.8
-      } else if (usd_yoy > 8) {
-        0.4
-      } else if (usd_yoy > 4) {
-        0.1
-      } else if (usd_yoy < (-5)) {
-        -0.2
-      } else {
-        0
-      }
-    }
-    lo <- lo + ud
-    add_contrib("usd", "USD Surge", ud)
-    rr <- 0
-    if (!is.na(real_rate)) {
-      rr <- if (real_rate > 3) {
-        1.0
-      } else if (real_rate > 2) {
-        0.5
-      } else if (real_rate > 1) {
-        0.2
-      } else if (real_rate < 0) {
-        -0.3
-      } else {
-        0
-      }
-    }
-    lo <- lo + rr
-    add_contrib("real_rate", "Real Fed Funds Rate", rr)
-    se <- 0
-    if (!is.na(cs)) {
-      se <- if (cs < 60) {
-        0.7
-      } else if (cs < 70) {
-        0.3
-      } else if (cs > 90) {
-        -0.4
-      } else {
-        0
-      }
-    }
-    lo <- lo + se
-    add_contrib("sentiment", "Consumer Sentiment", se)
-    iv <- 0
-    if (!is.na(inventory_sales_ratio)) {
-      iv <- if (inventory_sales_ratio > 1.55) {
-        0.7
-      } else if (inventory_sales_ratio > 1.45) {
-        0.3
-      } else if (inventory_sales_ratio > 1.40) {
-        0.1
-      } else if (inventory_sales_ratio < 1.30) {
-        -0.2
-      } else {
-        0
-      }
-    }
-    lo <- lo + iv
-    add_contrib("inv_sales", "Inventory-to-Sales Ratio", iv)
-    cc <- 0
-    if (!is.na(cc_delinquency)) {
-      cc <- if (cc_delinquency > 4) {
-        0.9
-      } else if (cc_delinquency > 3) {
-        0.5
-      } else if (cc_delinquency > 2.5) {
-        0.2
-      } else if (cc_delinquency < 1.8) {
-        -0.3
-      } else {
-        0
-      }
-    }
-    lo <- lo + cc
-    add_contrib("cc_del", "CC Delinquency Rate", cc)
-    glm_prob_raw <- 1 / (1 + exp(-lo))
-  }
-
-  # ── Tier 3: Markov state probability ─────────────────────────────────────────
-  ms_prob_raw <- NA_real_
-  if (!is.null(markov_result) && !is.na(markov_result$current_rec_prob)) {
-    ms_prob_raw <- markov_result$current_rec_prob
-
-    # Contribution in percentage-point terms relative to GLM baseline
-    ms_delta <- (ms_prob_raw - glm_prob_raw) * 100 * W_MS
-    add_contrib(
-      "markov_regime",
-      sprintf(
-        "Markov Regime State (p_rec=%.0f%%; expansion mean IP=%.1f%%, recession=%.1f%%)",
-        ms_prob_raw * 100,
-        markov_result$state_means_ip[setdiff(
-          1:markov_result$n_states,
-          markov_result$recession_state
-        )[1]] %||%
-          NA,
-        markov_result$state_means_ip[markov_result$recession_state]
+        label = "vs. Fed 2% target",
+        value = if (!is.null(dist)) dist$str else "N/A",
+        col = if (!is.null(dist) && dist$above) "#e94560" else "#2dce89"
       ),
-      ms_delta
-    )
-  }
-
-  # ── 3-way blend ──────────────────────────────────────────────────────────────
-  blended_pre_anomaly <- if (!is.na(ms_prob_raw)) {
-    W_GLM * glm_prob_raw + W_MS * ms_prob_raw
-  } else {
-    glm_prob_raw
-  }
-
-  # Tier 2 anomaly blend on top
-  blended_raw <- if (A > 0.05) {
-    compressed <- blended_pre_anomaly +
-      ANOMALY_WEIGHT * A * (COMPRESS_CENTER - blended_pre_anomaly)
-    floor_level <- ANOMALY_FLOOR * A
-    max(compressed, floor_level)
-  } else {
-    blended_pre_anomaly
-  }
-
-  prob <- max(2, min(97, round(blended_raw * 100, 1)))
-
-  if (A > 0.05) {
-    anom_delta <- (blended_raw - blended_pre_anomaly) * 100
-    add_contrib(
-      "anomaly_signal",
-      sprintf(
-        "Anomaly Signal (MD\u2248%.1f; %s)",
-        anomaly_result$md %||% 0,
-        anomaly_result$label
-      ),
-      anom_delta
-    )
-  }
-
-  tier <- .classify_recession_tier(prob)
-
-  contrib_df <- do.call(
-    rbind,
-    lapply(names(contribs), function(id) {
-      r <- contribs[[id]]
-      data.frame(
-        name = r$name,
-        contribution = r$contribution,
-        z_stat = r$z_stat,
-        stringsAsFactors = FALSE
-      )
-    })
-  )
-  contrib_df <- contrib_df[
-    order(abs(contrib_df$contribution), decreasing = TRUE),
-  ]
-
-  du <- character(0)
-  dd2 <- character(0)
-  for (i in seq_len(min(8, nrow(contrib_df)))) {
-    r <- contrib_df[i, ]
-    if (r$contribution > 0.1) {
-      du <- c(du, r$name)
-    }
-    if (r$contribution < -0.1) dd2 <- c(dd2, r$name)
-  }
-  if (A > 0.3) {
-    du <- c(
-      sprintf(
-        "\u26a0 Anomaly: %s (MD=%.1f)",
-        anomaly_result$label,
-        anomaly_result$md %||% 0
-      ),
-      du
-    )
-  }
-  if (!is.na(ms_prob_raw) && ms_prob_raw > 0.4) {
-    du <- c(
-      sprintf(
-        "Markov regime: %.0f%% recession state probability",
-        ms_prob_raw * 100
-      ),
-      du
-    )
-  }
-
-  mt <- if (!is.null(glm_result) && !is.na(ms_prob_raw)) {
-    "GLM + Markov + Anomaly"
-  } else if (!is.null(glm_result)) {
-    "GLM + Anomaly Blend"
-  } else {
-    "Hand-tuned + Anomaly Blend"
-  }
-
-  list(
-    prob = prob,
-    tier = tier,
-    drivers_up = head(du, 4),
-    drivers_down = head(dd2, 3),
-    factor_contributions = contrib_df,
-    anomaly = anomaly_result,
-    markov_prob = ms_prob_raw,
-    model_type = mt,
-    n_obs = glm_result$n_obs %||% NULL,
-    aic = glm_result$aic %||% NULL
-  )
-}
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# TIER 3 OVERRIDE: .build_factor_bar_chart — 4-colour + regime-conditional table
-# ═══════════════════════════════════════════════════════════════════════════════
-
-.build_factor_bar_chart <- function(
-  factor_contributions,
-  model_type = "Hand-tuned log-odds",
-  markov_result = NULL
-) {
-  if (is.null(factor_contributions) || nrow(factor_contributions) == 0) {
-    return("<p style='color:#6b7585;font-size:11px;'>No contribution data.</p>")
-  }
-
-  fc <- factor_contributions[
-    order(abs(factor_contributions$contribution), decreasing = TRUE),
-  ]
-  fc <- head(fc, 15)
-  max_abs <- max(abs(fc$contribution), na.rm = TRUE)
-  if (max_abs < 0.01) {
-    max_abs <- 1
-  }
-  has_z <- any(!is.na(fc$z_stat))
-
-  subtitle <- switch(
-    model_type,
-    "GLM + Markov + Anomaly" = "<span style='color:#2dce89;font-size:10px;'>&#x2713; GLM-estimated \u03b2s + Markov regime state (teal) + Anomaly blend (purple)</span>",
-    "GLM + Anomaly Blend" = "<span style='color:#2dce89;font-size:10px;'>&#x2713; GLM-estimated \u03b2s + Anomaly blend &nbsp;|\u00a0Markov fitting pending</span>",
-    "<span style='color:#9aa3b2;font-size:10px;'>Hand-tuned fallback active.</span>"
-  )
-
-  rows <- vapply(
-    seq_len(nrow(fc)),
-    function(i) {
-      row <- fc[i, ]
-      delta <- row$contribution
-      is_anomaly <- grepl("Anomaly Signal", row$name)
-      is_markov <- grepl("Markov Regime", row$name)
-      col <- if (is_markov) {
-        "#00b4d8"
-      } else if (is_anomaly) {
-        "#7c5cbf"
-      } else if (delta > 0.02) {
-        "#e94560"
-      } else if (delta < -0.02) {
-        "#2dce89"
-      } else {
-        "#9aa3b2"
-      }
-      pct <- round(min(abs(delta) / max_abs * 44, 44))
-      bar_style <- if (delta >= 0) {
-        sprintf("left:50%%;width:%dpx;background:%s;", pct * 3, col)
-      } else {
-        sprintf("right:50%%;width:%dpx;background:%s;", pct * 3, col)
-      }
-      z_badge <- if (has_z && !is.na(row$z_stat)) {
-        zc <- if (abs(row$z_stat) > 2.5) {
-          "#d0d0d0"
-        } else if (abs(row$z_stat) > 1.5) {
-          "#9aa3b2"
+      list(
+        label = "Core CPI YoY",
+        value = if (!is.na(core_yoy_now)) {
+          sprintf("%.1f%%", core_yoy_now)
         } else {
-          "#555"
+          "N/A"
+        },
+        col = if (!is.na(core_yoy_now) && core_yoy_now > 3) {
+          "#e94560"
+        } else {
+          "#f4a261"
         }
-        sprintf(
-          "&nbsp;<span style='color:%s;font-size:9px;'>(z=%.1f)</span>",
-          zc,
-          row$z_stat
-        )
-      } else {
-        ""
-      }
-      tag <- if (is_markov) {
-        "&nbsp;<span style='color:#00b4d8;font-size:9px;'>\u25c6 REGIME</span>"
-      } else if (is_anomaly) {
-        "&nbsp;<span style='color:#a785e0;font-size:9px;'>\u26a0 ANOMALY</span>"
-      } else {
-        ""
-      }
-      nc <- if (is_markov) {
-        "#7dd8f0"
-      } else if (is_anomaly) {
-        "#c8a8f0"
-      } else {
-        "#d0d0d0"
-      }
-
-      sprintf(
-        "<div style='display:flex;align-items:center;gap:6px;margin-bottom:7px;'>
-         <div style='width:220px;text-align:right;color:%s;font-size:10.5px;flex-shrink:0;line-height:1.3;'>%s%s%s</div>
-         <div style='flex:1;position:relative;height:13px;background:#2a3042;border-radius:3px;overflow:hidden;'>
-           <div style='position:absolute;top:0;left:50%%;width:1px;height:100%%;background:#3a4052;z-index:1;'></div>
-           <div style='position:absolute;top:0;height:100%%;border-radius:2px;%s'></div>
-         </div>
-         <div style='width:48px;color:%s;font-size:10px;font-weight:600;text-align:right;'>%+.2f</div>
-       </div>",
-        nc,
-        htmltools::htmlEscape(row$name),
-        z_badge,
-        tag,
-        bar_style,
-        col,
-        delta
+      ),
+      list(
+        label = "3-yr CPI peak",
+        value = if (!is.na(cpi_peak)) sprintf("%.1f%%", cpi_peak) else "N/A",
+        col = "#9aa3b2"
       )
-    },
-    character(1)
-  )
-
-  # ── Regime-conditional means mini-table ──────────────────────────────────────
-  regime_table_html <- if (
-    !is.null(markov_result) && !is.null(markov_result$regime_means)
-  ) {
-    header_row <- "<tr style='background:#1e2640;'>
-      <th style='padding:5px 8px;color:#9aa3b2;font-size:10px;text-align:left;'>Variable</th>
-      <th style='padding:5px 8px;color:#2dce89;font-size:10px;text-align:right;'>Expansion mean</th>
-      <th style='padding:5px 8px;color:#e94560;font-size:10px;text-align:right;'>Recession mean</th>
-      <th style='padding:5px 8px;color:#9aa3b2;font-size:10px;text-align:right;'>Diff (signal strength)</th>
-    </tr>"
-    data_rows <- paste(
-      vapply(
-        markov_result$regime_means,
-        function(rm) {
-          diff_val <- rm$recession - rm$expansion
-          diff_col <- if (abs(diff_val) > 1) "#f4a261" else "#9aa3b2"
+    ),
+    note = {
+      note_parts <- c()
+      if (!is.na(cpi_yoy_now) && !is.na(core_yoy_now)) {
+        gap <- round(cpi_yoy_now - core_yoy_now, 1)
+        note_parts <- c(
+          note_parts,
           sprintf(
-            "<tr style='border-bottom:1px solid #2a3042;'>
-         <td style='padding:5px 8px;color:#d0d0d0;font-size:10px;'>%s</td>
-         <td style='padding:5px 8px;color:#2dce89;font-size:10px;text-align:right;'>%.2f</td>
-         <td style='padding:5px 8px;color:#e94560;font-size:10px;text-align:right;'>%.2f</td>
-         <td style='padding:5px 8px;color:%s;font-size:10px;text-align:right;font-weight:600;'>%+.2f</td>
-       </tr>",
-            htmltools::htmlEscape(rm$variable),
-            rm$expansion,
-            rm$recession,
-            diff_col,
-            diff_val
+            "Headline CPI runs %s pp %s core, indicating food & energy %s are %s the overall print.",
+            abs(gap),
+            if (gap > 0) "above" else "below",
+            if (gap > 0) "pressures" else "relief",
+            if (gap > 0) "elevating" else "tempering"
+          )
+        )
+      }
+      if (!is.null(fed) && !is.na(cpi_yoy_now)) {
+        real_rate <- round(tail(fed, 1) - cpi_yoy_now, 1)
+        note_parts <- c(
+          note_parts,
+          sprintf(
+            "Real Fed Funds rate (nominal \u2212 CPI): %.1f%% — %s.",
+            real_rate,
+            if (real_rate > 1.5) {
+              "restrictive territory, historically associated with demand cooling"
+            } else if (real_rate > 0) {
+              "mildly positive but below historical neutral"
+            } else {
+              "still negative in real terms, accommodative bias remains"
+            }
+          )
+        )
+      }
+      paste(note_parts, collapse = " ")
+    }
+  )
+
+  # ── 3. Rates & Yield Curve ───────────────────────────────────────────────────
+  spread_now <- kpis$t10y2y %||% NA
+  t10_now <- kpis$t10yr %||% NA
+  mort_now <- kpis$mortgage30 %||% NA
+
+  # Count months inverted in last 24
+  months_inverted <- if (!is.null(t10) && !is.null(t2)) {
+    n <- min(length(t10), length(t2), 24)
+    sum((tail(t10, n) - tail(t2, n)) < 0, na.rm = TRUE)
+  } else {
+    NA
+  }
+
+  # Mort-Housing lag correlation
+  mort_houst_lag <- if (!is.null(mort) && !is.null(houst)) {
+    # Align lengths
+    n <- min(length(mort), length(houst))
+    best_lag(tail(mort, n), tail(houst, n), max_lag = 12)
+  } else {
+    NULL
+  }
+
+  mort_trend <- if (!is.null(mort)) trend_dir(mort, 12) else "unclear"
+
+  blocks[["rates"]] <- list(
+    title = "Rates & Yield Curve",
+    color = "#f4a261",
+    icon = "percent",
+    stats = list(
+      list(
+        label = "10Y-2Y spread",
+        value = if (!is.na(spread_now)) {
+          sprintf(
+            "%.2f pp (%s)",
+            spread_now,
+            if (spread_now < 0) "INVERTED" else "normal"
+          )
+        } else {
+          "N/A"
+        },
+        col = if (!is.na(spread_now) && spread_now < 0) "#e94560" else "#2dce89"
+      ),
+      list(
+        label = "Months inverted (last 24M)",
+        value = if (!is.na(months_inverted)) {
+          sprintf("%d of 24 months", months_inverted)
+        } else {
+          "N/A"
+        },
+        col = if (!is.na(months_inverted) && months_inverted > 12) {
+          "#e94560"
+        } else if (!is.na(months_inverted) && months_inverted > 6) {
+          "#f4a261"
+        } else {
+          "#2dce89"
+        }
+      ),
+      list(
+        label = "30-yr mortgage trend",
+        value = sprintf("%s %.2f%%", arrow(mort_trend), mort_now %||% NA),
+        col = trend_col(mort_trend, higher_good = FALSE)
+      ),
+      list(
+        label = "Mortgage–Housing starts lag",
+        value = if (!is.null(mort_houst_lag)) {
+          sprintf(
+            "%d-mo lag, %s",
+            mort_houst_lag$lag,
+            fmt_cor(mort_houst_lag$r)
+          )
+        } else {
+          "N/A"
+        },
+        col = "#9aa3b2"
+      )
+    ),
+    note = {
+      note_parts <- c()
+      if (!is.na(months_inverted) && months_inverted > 0) {
+        note_parts <- c(
+          note_parts,
+          sprintf(
+            "Yield curve has been inverted for %d of the past 24 months — a historically reliable (if lagged) recession signal, though timing varies widely.",
+            months_inverted
+          )
+        )
+      }
+      if (!is.null(mort_houst_lag) && !is.na(mort_houst_lag$r)) {
+        note_parts <- c(
+          note_parts,
+          sprintf(
+            "Mortgage rate leads housing starts by ~%d months (lag-adjusted %s, R\u00B2 \u2248 %.0f%%). Rate moves today are a forward indicator for construction activity.",
+            mort_houst_lag$lag,
+            fmt_cor(mort_houst_lag$r),
+            mort_houst_lag$r^2 * 100
+          )
+        )
+      }
+      paste(note_parts, collapse = " ")
+    }
+  )
+
+  # ── 4. Markets & Risk ────────────────────────────────────────────────────────
+  vix_now <- kpis$vix %||% NA
+  oil_now <- kpis$oil_price %||% NA
+
+  vix_trend <- if (!is.null(vix)) trend_dir(vix, 12) else "unclear"
+  vix_6m_avg <- if (!is.null(vix) && length(vix) >= 6) {
+    round(mean(tail(vix, 6), na.rm = TRUE), 1)
+  } else {
+    NA
+  }
+  vix_1y_avg <- if (!is.null(vix) && length(vix) >= 12) {
+    round(mean(tail(vix, 12), na.rm = TRUE), 1)
+  } else {
+    NA
+  }
+
+  oil_trend <- if (!is.null(oil)) trend_dir(oil, 12) else "unclear"
+  oil_6m_ago <- if (!is.null(oil) && length(oil) >= 130) {
+    oil[length(oil) - 130]
+  } else {
+    NA
+  } # daily ~6 months
+  oil_chg_pct <- if (!is.na(oil_6m_ago) && oil_6m_ago > 0) {
+    round((oil_now / oil_6m_ago - 1) * 100, 1)
+  } else {
+    NA
+  }
+
+  # VIX–CPI correlation
+  vix_cpi_cor <- if (!is.null(vix) && !is.null(cpi)) {
+    n <- min(length(vix), length(cpi))
+    yoy <- (tail(cpi, n) / lag(tail(cpi, n), 12) - 1) * 100
+    roll_cor(tail(vix, n), yoy, 36)
+  } else {
+    NA
+  }
+
+  blocks[["markets"]] <- list(
+    title = "Markets & Risk",
+    color = "#7c5cbf",
+    icon = "chart-bar",
+    stats = list(
+      list(
+        label = "VIX regime",
+        value = sprintf(
+          "%.1f (%s)",
+          vix_now,
+          if (!is.na(vix_now) && vix_now > 30) {
+            "elevated fear"
+          } else if (!is.na(vix_now) && vix_now > 20) {
+            "cautious"
+          } else {
+            "complacent"
+          }
+        ),
+        col = if (!is.na(vix_now) && vix_now > 25) {
+          "#e94560"
+        } else if (!is.na(vix_now) && vix_now > 18) {
+          "#f4a261"
+        } else {
+          "#2dce89"
+        }
+      ),
+      list(
+        label = "VIX: 6M avg vs 1Y avg",
+        value = if (!is.na(vix_6m_avg) && !is.na(vix_1y_avg)) {
+          sprintf(
+            "%.1f vs %.1f (%s)",
+            vix_6m_avg,
+            vix_1y_avg,
+            if (vix_6m_avg > vix_1y_avg) "stress rising" else "stress falling"
+          )
+        } else {
+          "N/A"
+        },
+        col = if (
+          !is.na(vix_6m_avg) && !is.na(vix_1y_avg) && vix_6m_avg > vix_1y_avg
+        ) {
+          "#e94560"
+        } else {
+          "#2dce89"
+        }
+      ),
+      list(
+        label = "WTI crude trend",
+        value = sprintf("%s $%.0f/bbl", arrow(oil_trend), oil_now %||% NA),
+        col = trend_col(oil_trend, higher_good = FALSE)
+      ),
+      list(
+        label = "VIX\u2013Inflation correlation (36M)",
+        value = if (!is.na(vix_cpi_cor)) fmt_cor(vix_cpi_cor) else "N/A",
+        col = "#9aa3b2"
+      )
+    ),
+    note = {
+      note_parts <- c()
+      if (!is.na(vix_now)) {
+        note_parts <- c(
+          note_parts,
+          sprintf(
+            "VIX at %.1f places equity vol in %s — %s.",
+            vix_now,
+            if (vix_now > 30) {
+              "the upper quartile historically (>30 = stress event)"
+            } else if (vix_now > 20) {
+              "a cautious zone (20–30)"
+            } else {
+              "a low-vol regime (<20)"
+            },
+            if (vix_now > 30) {
+              "historically associated with risk-off positioning and tighter credit conditions"
+            } else if (vix_now > 20) {
+              "watch for vol regime shift"
+            } else {
+              "market is pricing low near-term risk; watch for mean-reversion"
+            }
+          )
+        )
+      }
+      if (!is.na(oil_chg_pct)) {
+        note_parts <- c(
+          note_parts,
+          sprintf(
+            "WTI crude %s%.0f%% over the past 6 months — a %s for headline CPI via energy component.",
+            if (oil_chg_pct > 0) "+" else "",
+            oil_chg_pct,
+            if (abs(oil_chg_pct) > 10) "meaningful impulse" else "modest move"
+          )
+        )
+      }
+      paste(note_parts, collapse = " ")
+    }
+  )
+
+  blocks
+}
+
+# ── HTML renderer ──────────────────────────────────────────────────────────────
+
+render_synopsis_html <- function(blocks) {
+  if (is.null(blocks) || length(blocks) == 0) {
+    return(HTML(
+      "<p style='color:#6b7585;padding:16px;'>Synopsis not yet available — data loading.</p>"
+    ))
+  }
+
+  # Render one block
+  render_block <- function(b) {
+    stats_html <- paste(
+      vapply(
+        b$stats,
+        function(s) {
+          sprintf(
+            "<div style='display:flex;justify-content:space-between;align-items:baseline;
+                     padding:4px 0;border-bottom:1px solid #2a3042;'>
+           <span style='color:#9aa3b2;font-size:11px;'>%s</span>
+           <span style='font-size:13px;font-weight:600;color:%s;'>%s</span>
+         </div>",
+            htmltools::htmlEscape(s$label),
+            s$col,
+            htmltools::htmlEscape(as.character(s$value))
           )
         },
         character(1)
@@ -947,57 +642,1063 @@ rolling_retrain <- function(fred_data, window = 360L) {
       collapse = ""
     )
 
+    note_html <- if (nchar(b$note) > 0) {
+      sprintf(
+        "<div style='margin-top:10px;padding:10px 12px;background:#0f1117;border-radius:6px;
+                   border-left:3px solid %s;'>
+         <span style='color:#9aa3b2;font-size:11px;line-height:1.7;'>%s</span>
+       </div>",
+        b$color,
+        htmltools::htmlEscape(b$note)
+      )
+    } else {
+      ""
+    }
+
     sprintf(
-      "<div style='margin-top:14px;'>
-       <div style='color:#9aa3b2;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;'>
-         Regime-Conditional Means (Markov State Assignment)
-         <span style='color:#555;font-weight:400;margin-left:8px;'>how each variable behaves in each regime historically</span>
-       </div>
-       <table style='width:100%%;border-collapse:collapse;'>%s%s</table>
+      "<div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;
+                   border-top:3px solid %s;padding:14px 16px;height:100%%;'>
+         <div style='color:%s;font-size:11px;font-weight:700;text-transform:uppercase;
+                     letter-spacing:1px;margin-bottom:10px;'>
+           <i class=\"fa fa-%s\" style=\"margin-right:6px;\"></i>%s
+         </div>
+         %s
+         %s
+       </div>",
+      b$color,
+      b$color,
+      b$icon,
+      b$title,
+      stats_html,
+      note_html
+    )
+  }
+
+  block_htmls <- vapply(
+    names(blocks),
+    function(nm) render_block(blocks[[nm]]),
+    character(1)
+  )
+
+  # Two per row
+  rows_html <- paste(
+    vapply(
+      seq(1, length(block_htmls), by = 2),
+      function(i) {
+        left <- block_htmls[i]
+        right <- if (i + 1 <= length(block_htmls)) {
+          block_htmls[i + 1]
+        } else {
+          "<div style='flex:1;'></div>"
+        }
+        sprintf(
+          "<div style='display:flex;gap:14px;margin-bottom:14px;'>
+         <div style='flex:1;'>%s</div>
+         <div style='flex:1;'>%s</div>
+       </div>",
+          left,
+          right
+        )
+      },
+      character(1)
+    ),
+    collapse = ""
+  )
+
+  ts <- format(Sys.time(), "%b %d, %Y %H:%M")
+  header <- sprintf(
+    "<div style='display:flex;justify-content:space-between;align-items:center;
+                 margin-bottom:14px;'>
+       <span style='color:#e0e0e0;font-size:13px;font-weight:700;text-transform:uppercase;
+                    letter-spacing:1px;'>
+         <i class=\"fa fa-chart-line\" style=\"color:#00b4d8;margin-right:8px;\"></i>
+         Live Data Synopsis
+       </span>
+       <span style='color:#6b7585;font-size:11px;'>Computed %s</span>
      </div>",
-      header_row,
-      data_rows
+    ts
+  )
+
+  HTML(paste0(
+    "<div style='padding:4px 2px;'>",
+    header,
+    rows_html,
+    "<div style='color:#6b7585;font-size:10px;margin-top:4px;'>",
+    "All statistics computed from live FRED data. Correlations use trailing windows as noted.",
+    "</div></div>"
+  ))
+}
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# TAB-LEVEL SYNOPSIS BUILDERS
+# Each returns an HTML string for inline display above the charts/tables
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# Shared HTML wrapper for a tab synopsis
+.tab_synopsis_html <- function(title, color, icon_name, bullets, note = NULL) {
+  bullet_html <- paste(
+    vapply(
+      bullets,
+      function(b) {
+        sprintf(
+          "<li style='margin-bottom:5px;'>
+         <span style='color:%s;font-weight:600;'>%s</span>
+         <span style='color:#d0d0d0;'>%s</span>
+       </li>",
+          b$col %||% "#9aa3b2",
+          htmltools::htmlEscape(b$label),
+          htmltools::htmlEscape(b$text)
+        )
+      },
+      character(1)
+    ),
+    collapse = ""
+  )
+
+  note_html <- if (!is.null(note) && nchar(note) > 0) {
+    sprintf(
+      "<div style='margin-top:10px;padding:10px 14px;background:#0f1117;border-radius:6px;
+                 border-left:3px solid %s;color:#9aa3b2;font-size:12px;line-height:1.75;'>
+       <i class=\"fa fa-lightbulb\" style=\"color:%s;margin-right:6px;\"></i>%s
+     </div>",
+      color,
+      color,
+      htmltools::htmlEscape(note)
     )
   } else {
     ""
   }
 
-  paste0(
-    "<div style='margin-bottom:18px;'>",
-    "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;'>",
-    "<span style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;'>",
-    "Live Factor Contributions \u2014 Tier\u00a03: GLM + Markov + Anomaly</span></div>",
-    "<div style='margin-bottom:8px;'>",
-    subtitle,
-    "</div>",
-    # Four-colour legend
-    "<div style='display:flex;flex-wrap:wrap;gap:14px;font-size:10px;color:#9aa3b2;margin-bottom:9px;'>",
-    "<span><span style='display:inline-block;width:10px;height:10px;background:#e94560;border-radius:2px;margin-right:4px;'></span>Raises recession risk</span>",
-    "<span><span style='display:inline-block;width:10px;height:10px;background:#2dce89;border-radius:2px;margin-right:4px;'></span>Lowers recession risk</span>",
-    "<span><span style='display:inline-block;width:10px;height:10px;background:#7c5cbf;border-radius:2px;margin-right:4px;'></span>Anomaly (uncertainty)</span>",
-    "<span><span style='display:inline-block;width:10px;height:10px;background:#00b4d8;border-radius:2px;margin-right:4px;'></span>Markov regime state</span>",
-    "<span style='color:#555;'>| zero |</span></div>",
-    "<div style='display:flex;justify-content:space-between;font-size:10px;color:#555;margin-bottom:6px;'>",
-    "<span>\u25c4 Protective</span><span>Recessionary \u25ba</span></div>",
-    paste(rows, collapse = ""),
-    regime_table_html,
-    "<div style='font-size:9px;color:#555;margin-top:8px;'>",
-    "Teal bar = Markov regime pull. Purple = anomaly uncertainty. Red/green = GLM factor contributions. ",
-    "Regime table shows historical mean values of each variable in expansion vs recession states as identified by the Markov model.",
-    "</div></div>"
+  sprintf(
+    "<div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;
+                 border-left:4px solid %s;padding:14px 18px;margin-bottom:14px;'>
+       <div style='color:%s;font-size:11px;font-weight:700;text-transform:uppercase;
+                   letter-spacing:1px;margin-bottom:10px;'>
+         <i class=\"fa fa-%s\" style=\"margin-right:6px;\"></i>%s — Current Landscape
+       </div>
+       <ul style='list-style:none;padding:0;margin:0;'>%s</ul>
+       %s
+     </div>",
+    color,
+    color,
+    icon_name,
+    title,
+    bullet_html,
+    note_html
   )
 }
 
+# ── Labor Market tab synopsis ──────────────────────────────────────────────────
+build_labor_synopsis <- function(fred_data, kpis) {
+  if (is.null(fred_data) || is.null(kpis)) {
+    return(NULL)
+  }
+
+  unemp <- fred_data$UNRATE %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+  payrolls <- fred_data$PAYEMS %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+  jolts <- fred_data$JTSJOL %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+  wages <- fred_data$CES0500000003 %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+
+  u_now <- kpis$unemp_rate %||% NA
+  u_prev <- if (!is.null(unemp) && length(unemp) >= 2) {
+    unemp[length(unemp) - 1]
+  } else {
+    NA
+  }
+  u_6m <- if (!is.null(unemp) && length(unemp) >= 6) {
+    unemp[length(unemp) - 6]
+  } else {
+    NA
+  }
+  u_yr <- if (!is.null(unemp) && length(unemp) >= 12) {
+    unemp[length(unemp) - 12]
+  } else {
+    NA
+  }
+
+  pay_3m_avg <- if (!is.null(payrolls) && length(payrolls) >= 4) {
+    round(mean(diff(tail(payrolls, 4)), na.rm = TRUE))
+  } else {
+    NA
+  }
+  jolts_now <- kpis$job_openings %||% NA
+  jolts_prev <- if (!is.null(jolts) && length(jolts) >= 2) {
+    jolts[length(jolts) - 1]
+  } else {
+    NA
+  }
+  wage_yoy <- kpis$wage_yoy %||% NA
+
+  beveridge_ratio <- if (!is.null(jolts) && !is.null(unemp)) {
+    n <- min(length(jolts), length(unemp))
+    round(tail(jolts, 1) / tail(unemp, 1), 2)
+  } else {
+    NA
+  }
+
+  bullets <- list(
+    list(
+      col = "#00b4d8",
+      label = "Unemployment rate: ",
+      text = sprintf(
+        "%.1f%% (prev %.1f%%; %s pp vs 6mo; %s pp vs 1yr)",
+        u_now,
+        u_prev %||% NA,
+        if (!is.na(u_6m)) sprintf("%+.1f", u_now - u_6m) else "N/A",
+        if (!is.na(u_yr)) sprintf("%+.1f", u_now - u_yr) else "N/A"
+      )
+    ),
+    list(
+      col = "#2dce89",
+      label = "3-month avg payrolls: ",
+      text = if (!is.na(pay_3m_avg)) {
+        sprintf(
+          "%+.0fK/mo — %s",
+          pay_3m_avg,
+          if (pay_3m_avg > 200) {
+            "above-trend growth"
+          } else if (pay_3m_avg > 100) {
+            "moderate"
+          } else {
+            "slowing"
+          }
+        )
+      } else {
+        "N/A"
+      }
+    ),
+    list(
+      col = "#7c5cbf",
+      label = "Job openings (JOLTS): ",
+      text = sprintf(
+        "%s vs prev %s",
+        if (!is.na(jolts_now)) sprintf("%.0fK", jolts_now) else "N/A",
+        if (!is.na(jolts_prev)) sprintf("%.0fK", jolts_prev) else "N/A"
+      )
+    ),
+    list(
+      col = "#f4a261",
+      label = "Wage growth (YoY): ",
+      text = if (!is.na(wage_yoy)) {
+        sprintf(
+          "%.1f%% — %s vs PCE/CPI, affecting real purchasing power",
+          wage_yoy,
+          if (wage_yoy > (kpis$cpi_yoy %||% 0) + 0.5) {
+            "above inflation"
+          } else {
+            "below or inline with inflation"
+          }
+        )
+      } else {
+        "N/A"
+      }
+    ),
+    list(
+      col = "#9aa3b2",
+      label = "Beveridge ratio (openings/unemployed): ",
+      text = if (!is.na(beveridge_ratio)) {
+        sprintf(
+          "%.2f — %s",
+          beveridge_ratio,
+          if (beveridge_ratio > 1.5) {
+            "tight labor market, wage pressure likely"
+          } else {
+            "loosening, employer leverage increasing"
+          }
+        )
+      } else {
+        "N/A"
+      }
+    )
+  )
+
+  udir <- trend_dir(unemp, 12)
+  note <- sprintf(
+    "Unemployment is %s%s. %s%s",
+    udir,
+    if (!is.na(u_6m)) {
+      sprintf(
+        " — %.1f pp %s over 6 months",
+        abs(u_now - u_6m),
+        if (u_now > u_6m) "higher" else "lower"
+      )
+    } else {
+      ""
+    },
+    if (!is.na(pay_3m_avg)) {
+      sprintf(
+        "Payroll momentum (%+.0fK/mo 3M avg) %s. ",
+        pay_3m_avg,
+        if (pay_3m_avg > 150) {
+          "suggests continued tightness — watch wage acceleration"
+        } else if (pay_3m_avg > 0) {
+          "remains positive but cooling"
+        } else {
+          "has turned negative — recession risk elevated"
+        }
+      )
+    } else {
+      ""
+    },
+    if (!is.na(jolts_now) && !is.na(jolts_prev)) {
+      sprintf(
+        "JOLTS openings moved %+.0fK month-on-month; labor demand %s.",
+        jolts_now - jolts_prev,
+        if (jolts_now > jolts_prev) "firming" else "softening"
+      )
+    } else {
+      ""
+    }
+  )
+
+  htmltools::HTML(.tab_synopsis_html(
+    "Labor Market",
+    "#00b4d8",
+    "users",
+    bullets,
+    note
+  ))
+}
+
+# ── Inflation tab synopsis ─────────────────────────────────────────────────────
+build_inflation_synopsis <- function(fred_data, kpis) {
+  if (is.null(fred_data) || is.null(kpis)) {
+    return(NULL)
+  }
+
+  cpi_now <- kpis$cpi_yoy %||% NA
+  core_now <- kpis$core_cpi_yoy %||% NA
+  pce_now <- kpis$core_pce %||% NA
+  ppi_yoy <- kpis$ppi_yoy %||% NA
+  fed_funds <- kpis$fed_funds %||% NA
+
+  real_rate <- if (!is.na(fed_funds) && !is.na(cpi_now)) {
+    round(fed_funds - cpi_now, 1)
+  } else {
+    NA
+  }
+  cpi_vs_target <- if (!is.na(cpi_now)) round(cpi_now - 2.0, 1) else NA
+  cpi_vs_core <- if (!is.na(cpi_now) && !is.na(core_now)) {
+    round(cpi_now - core_now, 1)
+  } else {
+    NA
+  }
+
+  cpi_df <- fred_data$CPIAUCSL
+  cpi_trend <- if (!is.null(cpi_df) && nrow(cpi_df) > 12) {
+    yoy_v <- (cpi_df$value / dplyr::lag(cpi_df$value, 12) - 1) * 100
+    trend_dir(yoy_v[!is.na(yoy_v)], 6)
+  } else {
+    "unclear"
+  }
+
+  bullets <- list(
+    list(
+      col = if (!is.na(cpi_now) && cpi_now > 3) "#e94560" else "#2dce89",
+      label = "CPI YoY: ",
+      text = sprintf(
+        "%.1f%% (%s vs 2%% target; trend: %s)",
+        cpi_now,
+        if (!is.na(cpi_vs_target)) {
+          sprintf("%+.1f pp", cpi_vs_target)
+        } else {
+          "N/A"
+        },
+        cpi_trend
+      )
+    ),
+    list(
+      col = if (!is.na(core_now) && core_now > 3) "#f4a261" else "#2dce89",
+      label = "Core CPI YoY: ",
+      text = if (!is.na(core_now)) {
+        sprintf(
+          "%.1f%% — %s",
+          core_now,
+          if (core_now > cpi_now) {
+            "above headline (energy/food providing relief)"
+          } else {
+            "below headline (energy adding to print)"
+          }
+        )
+      } else {
+        "N/A"
+      }
+    ),
+    list(
+      col = "#7c5cbf",
+      label = "Core PCE YoY (Fed target): ",
+      text = if (!is.na(pce_now)) {
+        sprintf(
+          "%.1f%% — Fed's preferred gauge; %s",
+          pce_now,
+          if (pce_now > 2.5) {
+            "above target, policy likely to remain restrictive"
+          } else {
+            "nearing target range"
+          }
+        )
+      } else {
+        "N/A"
+      }
+    ),
+    list(
+      col = "#f4a261",
+      label = "PPI YoY (input prices): ",
+      text = if (!is.na(ppi_yoy)) {
+        sprintf(
+          "%.1f%% — %s CPI by ~2-3 months",
+          ppi_yoy,
+          if (ppi_yoy > cpi_now %||% 0) {
+            "leading indicator suggests continued price pressure on"
+          } else {
+            "declining, leading"
+          }
+        )
+      } else {
+        "N/A"
+      }
+    ),
+    list(
+      col = "#00b4d8",
+      label = "Real Fed Funds rate: ",
+      text = if (!is.na(real_rate)) {
+        sprintf(
+          "%.1f%% — %s",
+          real_rate,
+          if (real_rate > 1.5) {
+            "firmly restrictive"
+          } else if (real_rate > 0) {
+            "mildly positive"
+          } else {
+            "still negative, policy not fully restrictive"
+          }
+        )
+      } else {
+        "N/A"
+      }
+    )
+  )
+
+  note <- paste(
+    if (!is.na(cpi_vs_core) && abs(cpi_vs_core) > 0.5) {
+      sprintf(
+        "Headline-core gap of %+.1f pp driven by %s. ",
+        cpi_vs_core,
+        if (cpi_vs_core > 0) {
+          "energy & food price pressure"
+        } else {
+          "energy relief in headline"
+        }
+      )
+    } else {
+      ""
+    },
+    if (!is.na(real_rate)) {
+      sprintf(
+        "Real rate of %.1f%% %s. ",
+        real_rate,
+        if (real_rate > 2) {
+          "is clearly restrictive — historically associated with falling inflation within 6-12 months"
+        } else if (real_rate > 0) {
+          "is positive but may need more time to fully transmit"
+        } else {
+          "means Fed is still not tight in real terms despite nominal hikes"
+        }
+      )
+    } else {
+      ""
+    },
+    "PPI leads CPI by ~2 months; watch PPI trend for forward read on goods inflation."
+  )
+
+  htmltools::HTML(.tab_synopsis_html(
+    "Inflation",
+    "#e94560",
+    "fire",
+    bullets,
+    note
+  ))
+}
+
+# ── Housing tab synopsis ───────────────────────────────────────────────────────
+build_housing_synopsis <- function(fred_data, kpis) {
+  if (is.null(fred_data) || is.null(kpis)) {
+    return(NULL)
+  }
+
+  mort <- fred_data$MORTGAGE30US %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+  hst <- fred_data$HOUST %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+  pmt <- fred_data$PERMIT %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+
+  mort_now <- kpis$mortgage30 %||% NA
+  mort_prev <- if (!is.null(mort) && length(mort) >= 2) {
+    mort[length(mort) - 1]
+  } else {
+    NA
+  }
+  starts_now <- kpis$housing_starts %||% NA
+  starts_prev <- if (!is.null(hst) && length(hst) >= 2) {
+    hst[length(hst) - 1]
+  } else {
+    NA
+  }
+  permits_now <- kpis$permits %||% NA
+  permits_prev <- if (!is.null(pmt) && length(pmt) >= 2) {
+    pmt[length(pmt) - 1]
+  } else {
+    NA
+  }
+
+  mort_houst <- if (!is.null(mort) && !is.null(hst)) {
+    n <- min(length(mort), length(hst))
+    best_lag(tail(mort, n), tail(hst, n), max_lag = 12)
+  } else {
+    NULL
+  }
+
+  mort_trend <- if (!is.null(mort)) trend_dir(mort, 12) else "unclear"
+
+  bullets <- list(
+    list(
+      col = if (!is.na(mort_now) && mort_now > 6) "#e94560" else "#f4a261",
+      label = "30-yr mortgage: ",
+      text = sprintf(
+        "%.2f%% (prev %.2f%%; %s); threshold ~5.5%% historically unlocks demand",
+        mort_now,
+        mort_prev %||% NA,
+        if (!is.na(mort_prev)) {
+          sprintf("%+.2f pp MoM", mort_now - mort_prev)
+        } else {
+          "N/A"
+        }
+      )
+    ),
+    list(
+      col = "#2dce89",
+      label = "Housing starts: ",
+      text = sprintf(
+        "%sK ann. (prev %sK; %s MoM)",
+        if (!is.na(starts_now)) {
+          format(round(starts_now), big.mark = ",")
+        } else {
+          "N/A"
+        },
+        if (!is.na(starts_prev)) {
+          format(round(starts_prev), big.mark = ",")
+        } else {
+          "N/A"
+        },
+        if (!is.na(starts_now) && !is.na(starts_prev)) {
+          sprintf("%+.0fK", starts_now - starts_prev)
+        } else {
+          "N/A"
+        }
+      )
+    ),
+    list(
+      col = "#00b4d8",
+      label = "Building permits: ",
+      text = sprintf(
+        "%sK ann. (prev %sK) — leading indicator for starts",
+        if (!is.na(permits_now)) {
+          format(round(permits_now), big.mark = ",")
+        } else {
+          "N/A"
+        },
+        if (!is.na(permits_prev)) {
+          format(round(permits_prev), big.mark = ",")
+        } else {
+          "N/A"
+        }
+      )
+    ),
+    list(
+      col = "#9aa3b2",
+      label = "Mortgage trend (12M): ",
+      text = sprintf(
+        "%s %s",
+        arrow(mort_trend),
+        if (mort_trend == "falling") {
+          "— affordability improving, watch starts lag"
+        } else if (mort_trend == "rising") {
+          "— affordability worsening, starts likely to follow lower"
+        } else {
+          "— stable; starts driven by supply-side factors"
+        }
+      )
+    ),
+    list(
+      col = "#7c5cbf",
+      label = "Rate→Starts lag: ",
+      text = if (!is.null(mort_houst)) {
+        sprintf(
+          "~%d months (r=%.2f, R²≈%.0f%%)",
+          mort_houst$lag,
+          mort_houst$r,
+          mort_houst$r^2 * 100
+        )
+      } else {
+        "N/A"
+      }
+    )
+  )
+
+  note <- paste(
+    if (!is.na(mort_now)) {
+      sprintf(
+        "At %.2f%%, mortgage rates are %s. ",
+        mort_now,
+        if (mort_now > 7) {
+          "historically elevated — first-time buyer affordability severely constrained"
+        } else if (mort_now > 6) {
+          "elevated but declining from 2023 peak"
+        } else {
+          "approaching the ~5.5–6%% range where historically demand re-ignites"
+        }
+      )
+    } else {
+      ""
+    },
+    if (!is.null(mort_houst)) {
+      sprintf(
+        "Mortgage rate leads housing starts by ~%d months — current rate level suggests %s for starts over the next %d months.",
+        mort_houst$lag,
+        if (mort_trend == "falling") {
+          "improving"
+        } else if (mort_trend == "rising") {
+          "further pressure"
+        } else {
+          "neutral outlook"
+        },
+        mort_houst$lag
+      )
+    } else {
+      ""
+    }
+  )
+
+  htmltools::HTML(.tab_synopsis_html(
+    "Housing",
+    "#2dce89",
+    "home",
+    bullets,
+    note
+  ))
+}
+
+# ── Consumer tab synopsis ──────────────────────────────────────────────────────
+build_consumer_synopsis <- function(fred_data, kpis) {
+  if (is.null(fred_data) || is.null(kpis)) {
+    return(NULL)
+  }
+
+  ret <- fred_data$RSAFS %>%
+    {
+      if (!is.null(.)) arrange(., date) else NULL
+    }
+  sent <- fred_data$UMCSENT %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+  ip <- fred_data$INDPRO %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+
+  retail_yoy <- kpis$retail_yoy %||% NA
+  retail_prev_yoy <- if (!is.null(ret) && nrow(ret) > 13) {
+    n <- nrow(ret)
+    round((ret$value[n - 1] / ret$value[n - 13] - 1) * 100, 1)
+  } else {
+    NA
+  }
+
+  sent_now <- kpis$cons_sent %||% NA
+  sent_prev <- if (!is.null(sent) && length(sent) >= 2) {
+    sent[length(sent) - 1]
+  } else {
+    NA
+  }
+  sent_yr <- if (!is.null(sent) && length(sent) >= 12) {
+    sent[length(sent) - 12]
+  } else {
+    NA
+  }
+
+  ip_yoy <- kpis$indpro_yoy %||% NA
+  ip_trend <- if (!is.null(ip)) trend_dir(ip, 12) else "unclear"
+
+  sent_trend <- if (!is.null(sent)) trend_dir(sent, 6) else "unclear"
+
+  bullets <- list(
+    list(
+      col = if (!is.na(retail_yoy) && retail_yoy > 0) "#2dce89" else "#e94560",
+      label = "Retail sales YoY: ",
+      text = sprintf(
+        "%.1f%% (prev print: %.1f%%; %s)",
+        retail_yoy,
+        retail_prev_yoy %||% NA,
+        if (!is.na(retail_prev_yoy)) {
+          sprintf("%+.1f pp change", retail_yoy - retail_prev_yoy)
+        } else {
+          "N/A"
+        }
+      )
+    ),
+    list(
+      col = if (!is.na(sent_now) && sent_now > 80) {
+        "#2dce89"
+      } else if (!is.na(sent_now) && sent_now > 65) {
+        "#f4a261"
+      } else {
+        "#e94560"
+      },
+      label = "Consumer sentiment: ",
+      text = sprintf(
+        "%.1f (prev %.1f; %s vs 1yr ago %.1f)",
+        sent_now,
+        sent_prev %||% NA,
+        if (!is.na(sent_prev)) {
+          sprintf("%+.1f", sent_now - sent_prev)
+        } else {
+          "N/A"
+        },
+        sent_yr %||% NA
+      )
+    ),
+    list(
+      col = if (!is.na(ip_yoy) && ip_yoy > 0) "#2dce89" else "#e94560",
+      label = "Industrial production YoY: ",
+      text = sprintf(
+        "%.1f%% — %s",
+        ip_yoy,
+        if (!is.na(ip_yoy) && ip_yoy > 1) {
+          "expansion in manufacturing activity"
+        } else if (!is.na(ip_yoy) && ip_yoy > 0) {
+          "stagnant growth"
+        } else {
+          "contraction, watch for inventory build reversal"
+        }
+      )
+    ),
+    list(
+      col = "#9aa3b2",
+      label = "Sentiment trend (6M): ",
+      text = sprintf(
+        "%s %s — leading indicator for spending 1-2 quarters ahead",
+        arrow(sent_trend),
+        if (sent_trend == "rising") {
+          "consumers growing more confident"
+        } else if (sent_trend == "falling") {
+          "confidence deteriorating; spending may follow"
+        } else {
+          "sentiment stable"
+        }
+      )
+    )
+  )
+
+  note <- paste(
+    if (!is.na(retail_yoy)) {
+      sprintf(
+        "Real retail growth (nominal YoY %.1f%% less CPI %.1f%% ≈ %.1f%% real) suggests consumer spending is %s. ",
+        retail_yoy,
+        kpis$cpi_yoy %||% 0,
+        retail_yoy - (kpis$cpi_yoy %||% 0),
+        if ((retail_yoy - (kpis$cpi_yoy %||% 0)) > 1) {
+          "growing in real terms"
+        } else {
+          "barely keeping pace with inflation"
+        }
+      )
+    } else {
+      ""
+    },
+    if (!is.na(sent_now) && !is.na(sent_yr)) {
+      sprintf(
+        "Sentiment is %s year-over-year (%+.1f pts), %s.",
+        if (sent_now > sent_yr) "higher" else "lower",
+        sent_now - sent_yr,
+        if (sent_now > sent_yr) {
+          "supporting continued discretionary spending"
+        } else {
+          "a headwind for non-essential categories"
+        }
+      )
+    } else {
+      ""
+    }
+  )
+
+  htmltools::HTML(.tab_synopsis_html(
+    "Consumer Economy",
+    "#7c5cbf",
+    "shopping-cart",
+    bullets,
+    note
+  ))
+}
+
+# ── Markets tab synopsis ───────────────────────────────────────────────────────
+build_markets_synopsis <- function(fred_data, kpis) {
+  if (is.null(fred_data) || is.null(kpis)) {
+    return(NULL)
+  }
+
+  t10 <- fred_data$DGS10 %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+  t2 <- fred_data$DGS2 %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+  vix <- fred_data$VIXCLS %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+  oil <- fred_data$DCOILWTICO %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+  gold <- fred_data$GOLDPMGBD228NLBM %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+  hy <- fred_data$BAMLH0A0HYM2 %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+
+  spread_now <- kpis$t10y2y %||% NA
+  t10_now <- kpis$t10yr %||% NA
+  t10_prev <- if (!is.null(t10) && length(t10) >= 2) {
+    t10[length(t10) - 1]
+  } else {
+    NA
+  }
+  vix_now <- kpis$vix %||% NA
+  vix_prev <- if (!is.null(vix) && length(vix) >= 2) {
+    vix[length(vix) - 1]
+  } else {
+    NA
+  }
+  oil_now <- kpis$oil_price %||% NA
+  oil_prev <- if (!is.null(oil) && length(oil) >= 2) {
+    oil[length(oil) - 1]
+  } else {
+    NA
+  }
+  gold_now <- kpis$gold_price %||% NA
+  gold_prev <- if (!is.null(gold) && length(gold) >= 2) {
+    gold[length(gold) - 1]
+  } else {
+    NA
+  }
+  hy_now <- kpis$hy_spread %||% NA
+  hy_prev <- if (!is.null(hy) && length(hy) >= 2) hy[length(hy) - 1] else NA
+
+  months_inv <- if (!is.null(t10) && !is.null(t2)) {
+    n <- min(length(t10), length(t2), 24)
+    sum((tail(t10, n) - tail(t2, n)) < 0, na.rm = TRUE)
+  } else {
+    NA
+  }
+
+  bullets <- list(
+    list(
+      col = if (!is.na(spread_now) && spread_now < 0) "#e94560" else "#2dce89",
+      label = "10Y-2Y spread: ",
+      text = sprintf(
+        "%.2f pp (%s); %s months inverted in past 24",
+        spread_now,
+        if (!is.na(spread_now) && spread_now < 0) {
+          "INVERTED — recession signal"
+        } else {
+          "normal"
+        },
+        months_inv %||% "N/A"
+      )
+    ),
+    list(
+      col = "#f4a261",
+      label = "10Y Treasury: ",
+      text = sprintf(
+        "%.2f%% (prev %.2f%%; %s bp)",
+        t10_now,
+        t10_prev %||% NA,
+        if (!is.na(t10_prev)) {
+          sprintf("%+.0f", (t10_now - t10_prev) * 100)
+        } else {
+          "N/A"
+        }
+      )
+    ),
+    list(
+      col = if (!is.na(vix_now) && vix_now > 25) {
+        "#e94560"
+      } else if (!is.na(vix_now) && vix_now > 18) {
+        "#f4a261"
+      } else {
+        "#2dce89"
+      },
+      label = "VIX: ",
+      text = sprintf(
+        "%.1f (prev %.1f; %s) — %s",
+        vix_now,
+        vix_prev %||% NA,
+        if (!is.na(vix_prev)) sprintf("%+.1f", vix_now - vix_prev) else "N/A",
+        if (!is.na(vix_now) && vix_now > 30) {
+          "risk-off: flight to safety, tighter financial conditions"
+        } else if (!is.na(vix_now) && vix_now > 20) {
+          "cautious"
+        } else {
+          "complacent; watch for vol mean-reversion"
+        }
+      )
+    ),
+    list(
+      col = "#f4a261",
+      label = "WTI crude / Gold: ",
+      text = sprintf(
+        "$%.0f/bbl (%s MoM) / $%.0f/oz (%s MoM) — gold/oil ratio: %.2f",
+        oil_now,
+        if (!is.na(oil_prev)) {
+          sprintf("%+.1f%%", (oil_now / oil_prev - 1) * 100)
+        } else {
+          "N/A"
+        },
+        gold_now %||% 0,
+        if (!is.na(gold_prev) && !is.na(gold_now)) {
+          sprintf("%+.1f%%", (gold_now / gold_prev - 1) * 100)
+        } else {
+          "N/A"
+        },
+        if (!is.na(oil_now) && !is.na(gold_now) && oil_now > 0) {
+          gold_now / oil_now
+        } else {
+          NA_real_
+        }
+      )
+    ),
+    list(
+      col = if (!is.na(hy_now) && hy_now > 5) "#e94560" else "#2dce89",
+      label = "HY credit spread: ",
+      text = sprintf(
+        "%.2f%% (prev %.2f%%; %s bp) — %s",
+        hy_now,
+        hy_prev %||% NA,
+        if (!is.na(hy_prev)) {
+          sprintf("%+.0f", (hy_now - hy_prev) * 100)
+        } else {
+          "N/A"
+        },
+        if (!is.na(hy_now) && hy_now > 6) {
+          "stress: credit markets pricing elevated default risk"
+        } else if (!is.na(hy_now) && hy_now > 4.5) {
+          "elevated but contained"
+        } else {
+          "benign credit conditions, risk appetite intact"
+        }
+      )
+    )
+  )
+
+  note <- paste(
+    if (!is.na(months_inv) && months_inv > 0) {
+      sprintf(
+        "Curve inverted for %d of 24 months. Historically a recession follows within 6-18 months of inversion onset, though timing varies. ",
+        months_inv
+      )
+    } else {
+      ""
+    },
+    if (!is.na(hy_now) && !is.na(vix_now)) {
+      sprintf(
+        "HY spreads (%.2f%%) and VIX (%.1f) are %s — %s.",
+        hy_now,
+        vix_now,
+        if (hy_now < 4.5 && vix_now < 20) {
+          "aligned in a risk-on regime"
+        } else if (hy_now > 5.5 || vix_now > 25) {
+          "diverging toward risk-off"
+        } else {
+          "in a cautious middle zone"
+        },
+        "these two together are a reliable coincident indicator of financial stress"
+      )
+    } else {
+      ""
+    }
+  )
+
+  htmltools::HTML(.tab_synopsis_html(
+    "Financial Markets",
+    "#f4a261",
+    "chart-line",
+    bullets,
+    note
+  ))
+}
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# TIER 3 OVERRIDE: build_growth_outlook — trains Markov + rolling retrain
+# "SO WHAT" GROWTH OUTLOOK PANEL
+# Synthesises all macro indicators into a 6-12 month GDP growth signal
+# Uses a simple composite scoring model — no LLM required
 # ═══════════════════════════════════════════════════════════════════════════════
 
+#' Score a single indicator: +1 (positive impulse), 0 (neutral), -1 (negative)
+.score <- function(val, good_threshold, bad_threshold, higher_good = TRUE) {
+  if (is.na(val)) {
+    return(0)
+  }
+  if (higher_good) {
+    if (val >= good_threshold) {
+      return(1)
+    }
+    if (val <= bad_threshold) {
+      return(-1)
+    }
+    return(0)
+  } else {
+    if (val <= good_threshold) {
+      return(1)
+    }
+    if (val >= bad_threshold) {
+      return(-1)
+    }
+    return(0)
+  }
+}
+
+#' Build the full growth outlook object
 build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
   if (is.null(kpis)) {
     return(NULL)
   }
 
+  # ── Pull series ──────────────────────────────────────────────────────────────
   gv <- function(sid) {
     df <- fred_data[[sid]]
     if (is.null(df) || nrow(df) < 2) {
@@ -1005,6 +1706,7 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
     }
     df %>% dplyr::arrange(date) %>% dplyr::pull(value)
   }
+
   unemp <- gv("UNRATE")
   payrolls <- gv("PAYEMS")
   cpi <- gv("CPIAUCSL")
@@ -1012,13 +1714,15 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
   t10 <- gv("DGS10")
   t2 <- gv("DGS2")
   mort <- gv("MORTGAGE30US")
+  houst <- gv("HOUST")
+  retail <- gv("RSAFS")
   sent <- gv("UMCSENT")
   indpro <- gv("INDPRO")
   vix_vals <- gv("VIXCLS")
   hy <- gv("BAMLH0A0HYM2")
   oil <- gv("DCOILWTICO")
-  retail <- gv("RSAFS")
 
+  # ── Key current values ────────────────────────────────────────────────────────
   u <- kpis$unemp_rate %||% NA
   cpi_y <- kpis$cpi_yoy %||% NA
   pce_y <- kpis$core_pce %||% NA
@@ -1032,7 +1736,9 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
   ip_y <- kpis$indpro_yoy %||% NA
   vix_v <- kpis$vix %||% NA
   hy_v <- kpis$hy_spread %||% NA
+  oil_v <- kpis$oil_price %||% NA
 
+  # ── Derived metrics ──────────────────────────────────────────────────────────
   real_rate <- if (!is.na(ff) && !is.na(cpi_y)) ff - cpi_y else NA
   yield_spread <- if (!is.na(t10v) && !is.na(t2v)) t10v - t2v else NA
   pay_3m <- if (!is.null(payrolls) && length(payrolls) >= 4) {
@@ -1041,6 +1747,8 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
     NA
   }
   ret_real <- if (!is.na(ret_y) && !is.na(cpi_y)) ret_y - cpi_y else NA
+
+  # Months of yield inversion in last 18
   inv_months <- if (!is.null(t10) && !is.null(t2)) {
     n <- min(length(t10), length(t2), 18)
     sum((tail(t10, n) - tail(t2, n)) < 0, na.rm = TRUE)
@@ -1048,51 +1756,69 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
     0
   }
 
+  # VIX 6-month average
+  vix_6m_avg <- if (!is.null(vix_vals) && length(vix_vals) >= 126) {
+    mean(tail(vix_vals, 126), na.rm = TRUE)
+  } else {
+    vix_v
+  }
+
+  # ── Composite score model ────────────────────────────────────────────────────
+  # Each component scores -1 / 0 / +1; weighted sum → composite
+  # Positive composite = growth-positive conditions; negative = recessionary
   components <- list(
+    # Labor (weight 2.5)
     labor = list(
       weight = 2.5,
-      label = "Labor Market",
       score = mean(
         c(
-          .score(u, 3.5, 5.0, FALSE),
-          .score(pay_3m, 150, 50, TRUE),
-          .score(u, 4.5, 5.5, FALSE)
+          .score(u, 3.5, 5.0, higher_good = FALSE), # unemployment
+          .score(pay_3m, 150, 50, higher_good = TRUE), # payroll momentum
+          .score(u, 4.5, 5.5, higher_good = FALSE) # secondary unemployment gauge
         ),
         na.rm = TRUE
       ),
+      label = "Labor Market",
       detail = if (!is.na(u) && !is.na(pay_3m)) {
-        sprintf("%.1f%% unemployment; %+.0fK/mo payrolls", u, pay_3m)
+        sprintf("%.1f%% unemployment; avg payrolls %+.0fK/mo (3M)", u, pay_3m)
       } else {
         "N/A"
       }
     ),
+
+    # Consumer (weight 2.0)
     consumer = list(
       weight = 2.0,
-      label = "Consumer Demand",
       score = mean(
-        c(.score(ret_real, 1, -1, TRUE), .score(cs, 85, 65, TRUE)),
+        c(
+          .score(ret_real, 1.0, -1.0, higher_good = TRUE), # real retail growth
+          .score(cs, 85, 65, higher_good = TRUE) # consumer sentiment
+        ),
         na.rm = TRUE
       ),
+      label = "Consumer Demand",
       detail = if (!is.na(ret_real) && !is.na(cs)) {
-        sprintf("Real retail %.1f%%; sentiment %.0f", ret_real, cs)
+        sprintf("Real retail YoY %.1f%%; sentiment %.0f", ret_real, cs)
       } else {
         "N/A"
       }
     ),
+
+    # Monetary conditions (weight 2.0)
     monetary = list(
       weight = 2.0,
-      label = "Monetary Conditions",
       score = mean(
         c(
-          .score(real_rate, 0.5, 2.5, FALSE),
-          .score(yield_spread, 0.5, -0.25, TRUE),
-          .score(inv_months, 3, 9, FALSE)
+          .score(real_rate, 0.5, 2.5, higher_good = FALSE), # real rate (higher=tighter)
+          .score(yield_spread, 0.5, -0.25, higher_good = TRUE), # yield curve
+          .score(inv_months, 3, 9, higher_good = FALSE) # inversion duration
         ),
         na.rm = TRUE
       ),
+      label = "Monetary Conditions",
       detail = if (!is.na(real_rate) && !is.na(yield_spread)) {
         sprintf(
-          "Real rate %.1f%%; 10Y-2Y %.2f pp; %d mo inv.",
+          "Real rate %.1f%%; 10Y-2Y spread %.2f pp; %d mo inverted",
           real_rate,
           yield_spread,
           inv_months
@@ -1101,170 +1827,174 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
         "N/A"
       }
     ),
+
+    # Housing (weight 1.5)
     housing = list(
       weight = 1.5,
-      label = "Housing",
       score = mean(
-        c(.score(hs, 1400, 1000, TRUE), .score(mort_v, 6, 7.5, FALSE)),
+        c(
+          .score(hs, 1400, 1000, higher_good = TRUE), # housing starts (K)
+          .score(mort_v, 6.0, 7.5, higher_good = FALSE) # mortgage rate
+        ),
         na.rm = TRUE
       ),
+      label = "Housing",
       detail = if (!is.na(hs) && !is.na(mort_v)) {
-        sprintf("%.0fK starts; %.2f%% mortgage", hs, mort_v)
+        sprintf("%.0fK starts ann.; %.2f%% mortgage rate", hs, mort_v)
       } else {
         "N/A"
       }
     ),
+
+    # Financial conditions (weight 1.5)
     financial = list(
       weight = 1.5,
-      label = "Financial Conditions",
       score = mean(
-        c(.score(vix_v, 18, 28, FALSE), .score(hy_v, 4.5, 6, FALSE)),
+        c(
+          .score(vix_v, 18, 28, higher_good = FALSE), # VIX (lower=calmer)
+          .score(hy_v, 4.5, 6.0, higher_good = FALSE) # HY spread (lower=benign)
+        ),
         na.rm = TRUE
       ),
+      label = "Financial Conditions",
       detail = if (!is.na(vix_v) && !is.na(hy_v)) {
-        sprintf("VIX %.1f; HY %.2f%%", vix_v, hy_v)
+        sprintf("VIX %.1f; HY spread %.2f%%", vix_v, hy_v)
       } else {
         "N/A"
       }
     ),
+
+    # Inflation / pricing pressure (weight 1.5 — elevated = headwind)
     inflation = list(
       weight = 1.5,
-      label = "Inflation",
       score = mean(
-        c(.score(cpi_y, 2.5, 4.5, FALSE), .score(pce_y, 2.3, 3.5, FALSE)),
+        c(
+          .score(cpi_y, 2.5, 4.5, higher_good = FALSE), # CPI (lower=better for growth)
+          .score(pce_y, 2.3, 3.5, higher_good = FALSE) # Core PCE
+        ),
         na.rm = TRUE
       ),
+      label = "Inflation",
       detail = if (!is.na(cpi_y) && !is.na(pce_y)) {
-        sprintf("CPI %.1f%%; Core PCE %.1f%%", cpi_y, pce_y)
+        sprintf("CPI YoY %.1f%%; Core PCE %.1f%%", cpi_y, pce_y)
       } else {
         "N/A"
       }
     ),
+
+    # Industrial / production (weight 1.0)
     industrial = list(
       weight = 1.0,
+      score = .score(ip_y, 1.0, -1.0, higher_good = TRUE),
       label = "Industrial Output",
-      score = .score(ip_y, 1, -1, TRUE),
       detail = if (!is.na(ip_y)) sprintf("IP YoY %.1f%%", ip_y) else "N/A"
     )
   )
-  tw <- sum(sapply(components, `[[`, "weight"))
-  raw_score <- sum(sapply(components, function(c) c$score * c$weight)) / tw
-  score_0_10 <- max(0, min(10, round((raw_score + 1) / 2 * 10, 1)))
+
+  # ── Weighted composite ────────────────────────────────────────────────────────
+  total_weight <- sum(sapply(components, `[[`, "weight"))
+  raw_score <- sum(sapply(components, function(c) c$score * c$weight)) /
+    total_weight
+  # Scale: -1 → +1 → normalise to 0-10 for display
+  score_0_10 <- round((raw_score + 1) / 2 * 10, 1)
+  score_0_10 <- max(0, min(10, score_0_10))
+
+  # ── Regime classification ─────────────────────────────────────────────────────
   regime <- dplyr::case_when(
     score_0_10 >= 7.5 ~ list(
       label = "Expansion",
       color = "#2dce89",
       icon = "arrow-up",
       gdp_est = "+2.5% to +3.5%",
-      summary = "Broad-based growth signals."
+      summary = "Broad-based growth signals. labor market solid, consumer spending resilient, financial conditions supportive."
     ),
     score_0_10 >= 5.5 ~ list(
       label = "Moderate Growth",
       color = "#00b4d8",
       icon = "minus",
       gdp_est = "+1.0% to +2.5%",
-      summary = "Below-trend but positive."
+      summary = "Below-trend but positive growth likely. Mixed signals across sectors — watch rate transmission and consumer confidence."
     ),
     score_0_10 >= 3.5 ~ list(
       label = "Stall / Slowdown",
       color = "#f4a261",
       icon = "arrow-down",
       gdp_est = "-0.5% to +1.0%",
-      summary = "Growth at risk."
+      summary = "Growth at risk. Restrictive monetary conditions, softening demand, or financial stress beginning to bite."
     ),
     TRUE ~ list(
       label = "Contraction Risk",
       color = "#e94560",
       icon = "exclamation-triangle",
       gdp_est = "Below -0.5%",
-      summary = "Multiple negative signals."
+      summary = "Multiple negative signals. Recession probability elevated — yield curve, credit spreads, and demand indicators all deteriorating."
     )
   )
+
+  # ── Key swing factors ─────────────────────────────────────────────────────────
+  swing_factors <- list()
+
+  # Most negative drag
   drag <- names(which.min(sapply(components, `[[`, "score")))
-  supp <- names(which.max(sapply(components, `[[`, "score")))
-  swing_factors <- list(
-    biggest_drag = list(
-      name = components[[drag]]$label,
-      score = round(components[[drag]]$score, 2),
-      detail = components[[drag]]$detail
-    ),
-    biggest_support = list(
-      name = components[[supp]]$label,
-      score = round(components[[supp]]$score, 2),
-      detail = components[[supp]]$detail
-    ),
-    yield_curve_watch = if (inv_months > 6) {
-      sprintf("Inverted %d months.", inv_months)
-    } else if (!is.na(yield_spread) && yield_spread > 0) {
-      sprintf("Re-steepened to %.2f pp.", yield_spread)
-    } else {
-      NULL
-    },
-    fed_watch = if (!is.na(real_rate) && real_rate > 2) {
-      sprintf("Real rate %.1f%% — restrictive.", real_rate)
-    } else {
-      NULL
-    }
+  swing_factors$biggest_drag <- list(
+    name = components[[drag]]$label,
+    score = round(components[[drag]]$score, 2),
+    detail = components[[drag]]$detail
   )
 
+  # Most positive support
+  supp <- names(which.max(sapply(components, `[[`, "score")))
+  swing_factors$biggest_support <- list(
+    name = components[[supp]]$label,
+    score = round(components[[supp]]$score, 2),
+    detail = components[[supp]]$detail
+  )
+
+  # Key watch: inversion status
+  swing_factors$yield_curve_watch <- if (inv_months > 6) {
+    sprintf(
+      "Yield curve inverted %d months — recession historically follows within 6-18 months of onset.",
+      inv_months
+    )
+  } else if (!is.na(yield_spread) && yield_spread > 0) {
+    sprintf(
+      "Yield curve re-steepened to %.2f pp — often precedes recovery but watch for 'bear steepener' pattern.",
+      yield_spread
+    )
+  } else {
+    NULL
+  }
+
+  # Fed pivot watch
+  swing_factors$fed_watch <- if (!is.na(real_rate) && real_rate > 2.0) {
+    sprintf(
+      "Real Fed Funds rate %.1f%% — firmly restrictive. Rate cuts would provide significant growth tailwind.",
+      real_rate
+    )
+  } else if (!is.na(real_rate) && real_rate < 0.5) {
+    "Real rate near zero — limited conventional monetary stimulus remaining."
+  } else {
+    NULL
+  }
+
+  # ── Recession probability model ───────────────────────────────────────────────
+  # Equity drawdown from peak (SPY as S&P proxy)
   equity_drawdown_pct <- if (!is.null(mkt_returns)) {
     spy <- mkt_returns %>%
       dplyr::filter(symbol == "SPY") %>%
       dplyr::arrange(date)
     if (nrow(spy) >= 52) {
-      cur <- tail(spy$close, 1)
-      pk <- max(spy$close[max(1, nrow(spy) - 252):nrow(spy)], na.rm = TRUE)
-      round((cur / pk - 1) * 100, 1)
+      current <- tail(spy$close, 1)
+      peak_52wk <- max(
+        spy$close[max(1, nrow(spy) - 252):nrow(spy)],
+        na.rm = TRUE
+      )
+      round((current / peak_52wk - 1) * 100, 1)
     } else {
       NA_real_
     }
   } else {
     NA_real_
-  }
-
-  # ── Train / retrieve models — Tier 3 rolling retrain + Markov ────────────────
-  cache_name <- ".recession_t3_cache"
-  glm_result <- tryCatch(
-    {
-      cache <- if (exists(cache_name, envir = .GlobalEnv)) {
-        get(cache_name, envir = .GlobalEnv)
-      } else {
-        NULL
-      }
-      needs_train <- is.null(cache) ||
-        difftime(
-          Sys.time(),
-          cache$glm$trained_at %||% (Sys.time() - 1e6),
-          units = "days"
-        ) >
-          30
-      if (needs_train) {
-        message("[synopsis_tier3] Rolling retrain + Markov fit...")
-        glm_obj <- rolling_retrain(fred_data, window = 360L) # ← Tier 3: rolling
-        ms_obj <- train_markov_model(fred_data)
-        assign(
-          cache_name,
-          list(glm = glm_obj, markov = ms_obj),
-          envir = .GlobalEnv
-        )
-      }
-      get(cache_name, envir = .GlobalEnv)$glm
-    },
-    error = function(e) {
-      message("[synopsis_tier3] cache error: ", e$message)
-      NULL
-    }
-  )
-
-  markov_result <- tryCatch(
-    get(cache_name, envir = .GlobalEnv)$markov,
-    error = function(e) NULL
-  )
-
-  anomaly_detector <- if (!is.null(glm_result)) {
-    glm_result$anomaly_detector
-  } else {
-    NULL
   }
 
   recession_prob <- .compute_recession_prob(
@@ -1287,11 +2017,8 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
     equity_drawdown_pct = equity_drawdown_pct,
     usd_yoy = kpis$usd_yoy %||% NA,
     inventory_sales_ratio = kpis$inventory_sales_ratio %||% NA,
-    cc_delinquency = kpis$cc_delinquency %||% NA,
-    glm_result = glm_result,
-    anomaly_detector = anomaly_detector,
-    markov_result = markov_result
-  ) # ← Tier 3
+    cc_delinquency = kpis$cc_delinquency %||% NA
+  )
 
   list(
     score = score_0_10,
@@ -1304,37 +2031,498 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
   )
 }
 
+# ── Enhanced Recession Probability Engine ─────────────────────────────────────
+# Multi-factor logit model calibrated to NBER recession dates.
+# Baseline log-odds = log(0.15/0.85) ≈ -1.73 (15% unconditional 12M base rate).
+# Each factor shifts log-odds; final p = 1 / (1 + exp(-log_odds)), clamped [2,97].
+#
+# Factor selection rationale:
+#  1.  Yield curve          — Estrella & Mishkin (1998): best single predictor, 12M lead
+#  2.  Sahm / unemployment  — Real-time recession indicator, near-certain at 0.5pp rise
+#  3.  Prime-age LFPR       — Masks Sahm rule: LFPR drop = supply withdrawal, hidden slack
+#  4.  Jobless claims trend — 4wk vs 26wk MA crossover; sensitive to sudden layoffs
+#  5.  Quits rate trend     — Workers quit when confident; falling quits = fear
+#  6.  Oil price shock      — >25% 3M spike transmits into CPI → spending contraction
+#  7.  Equity bear market   — >20% S&P drawdown preceded every post-WW2 recession
+#  8.  Credit stress (HY)   — HY spreads >500bp = credit crunch; coincident/leading
+#  9.  Dollar surge         — >8% YoY tightens global conditions, hits EM, exports
+# 10.  Real rate            — Monetary drag with 6-18M lag
+# 11.  Consumer sentiment   — Conference Board LEI proxy, forward-looking
+# 12.  Inventory-sales      — Rising ratio = demand weakness ahead of employment cuts
+# 13.  CC delinquency       — Consumer stress shows here 2-3Q before unemployment rises
 
-# ═══════════════════════════════════════════════════════════════════════════════
-# TIER 3 OVERRIDE: render_growth_outlook_html — passes markov_result to modal
-# ═══════════════════════════════════════════════════════════════════════════════
-# (Minimal override: we only need to pass the right arguments to .build_model_modal)
-# The original render_growth_outlook_html calls .build_model_modal() at the end.
-# We override here to thread markov_result through.
+.compute_recession_prob <- function(
+  yield_spread,
+  inv_months,
+  unemp,
+  u,
+  pay_3m,
+  real_rate,
+  hy_v,
+  vix_v,
+  cs,
+  ip_y,
+  hs,
+  # New factors
+  prime_age_lfpr = NA,
+  prime_age_lfpr_chg = NA,
+  jobless_claims_trend = NA,
+  quits_yoy = NA,
+  oil_yoy = NA,
+  equity_drawdown_pct = NA,
+  usd_yoy = NA,
+  inventory_sales_ratio = NA,
+  cc_delinquency = NA
+) {
+  # ── Baseline ──────────────────────────────────────────────────────────────────
+  log_odds <- -1.73 # 15% unconditional base rate
 
+  # ── 1. Yield Curve (weight: highest) ─────────────────────────────────────────
+  if (!is.na(yield_spread)) {
+    log_odds <- log_odds + (-yield_spread * 0.85)
+    if (!is.na(inv_months)) {
+      if (inv_months >= 18) {
+        log_odds <- log_odds + 1.5
+      } else if (inv_months >= 12) {
+        log_odds <- log_odds + 1.2
+      } else if (inv_months >= 6) {
+        log_odds <- log_odds + 0.6
+      } else if (inv_months >= 3) {
+        log_odds <- log_odds + 0.3
+      }
+    }
+  }
+
+  # ── 2. Sahm Rule / Unemployment Rise ─────────────────────────────────────────
+  if (!is.na(u) && !is.null(unemp) && length(unemp) >= 12) {
+    u_trough_12m <- min(tail(unemp, 12), na.rm = TRUE)
+    u_rise <- u - u_trough_12m
+    if (u_rise >= 0.5) {
+      # Sahm rule triggered
+      log_odds <- log_odds + 1.8
+    } else if (u_rise >= 0.3) {
+      log_odds <- log_odds + 0.9
+    } else if (u_rise >= 0.1) {
+      log_odds <- log_odds + 0.3
+    } else if (u_rise < -0.2) {
+      log_odds <- log_odds - 0.4
+    }
+  }
+  if (!is.na(pay_3m)) {
+    if (pay_3m < -50) {
+      log_odds <- log_odds + 1.5
+    } else if (pay_3m < 0) {
+      log_odds <- log_odds + 0.6
+    } else if (pay_3m < 100) {
+      log_odds <- log_odds + 0.1
+    } else if (pay_3m > 250) {
+      log_odds <- log_odds - 0.5
+    }
+  }
+
+  # ── 3. Prime-Age LFPR (25-54) — Hidden labor Weakness ───────────────────────
+  # Declining prime-age LFPR signals real demand withdrawal even if unemployment
+  # is stable (people leave workforce rather than register as unemployed).
+  # Pre-pandemic trend ~83%; below 82% = structural weakness.
+  if (!is.na(prime_age_lfpr)) {
+    if (prime_age_lfpr < 80.5) {
+      # deep slack
+      log_odds <- log_odds + 0.8
+    } else if (prime_age_lfpr < 82.0) {
+      # below trend
+      log_odds <- log_odds + 0.4
+    } else if (prime_age_lfpr > 83.5) {
+      log_odds <- log_odds - 0.3
+    } # healthy participation
+  }
+  # 6-month direction matters more than level
+  if (!is.na(prime_age_lfpr_chg)) {
+    if (prime_age_lfpr_chg < -0.5) {
+      # sharp drop
+      log_odds <- log_odds + 0.9
+    } else if (prime_age_lfpr_chg < -0.2) {
+      log_odds <- log_odds + 0.4
+    } else if (prime_age_lfpr_chg > 0.3) {
+      log_odds <- log_odds - 0.3
+    } # rising = good
+  }
+
+  # ── 4. Initial Jobless Claims Trend ──────────────────────────────────────────
+  # 4-week MA vs 26-week MA ratio; >0 = claims trending up = leading recession signal
+  if (!is.na(jobless_claims_trend)) {
+    if (jobless_claims_trend > 0.20) {
+      # claims surging
+      log_odds <- log_odds + 1.2
+    } else if (jobless_claims_trend > 0.10) {
+      log_odds <- log_odds + 0.6
+    } else if (jobless_claims_trend > 0.05) {
+      log_odds <- log_odds + 0.2
+    } else if (jobless_claims_trend < -0.10) {
+      log_odds <- log_odds - 0.3
+    } # falling = good
+  }
+
+  # ── 5. Quits Rate YoY Change ─────────────────────────────────────────────────
+  # Workers quit voluntarily when confident about finding new jobs.
+  # Quits falling YoY = workers scared to leave = labor market cooling.
+  if (!is.na(quits_yoy)) {
+    if (quits_yoy < -15) {
+      # quits collapsed
+      log_odds <- log_odds + 0.8
+    } else if (quits_yoy < -8) {
+      log_odds <- log_odds + 0.4
+    } else if (quits_yoy < -3) {
+      log_odds <- log_odds + 0.2
+    } else if (quits_yoy > 8) {
+      log_odds <- log_odds - 0.3
+    } # workers confident
+  }
+
+  # ── 6. Oil Price Shock — Supply Chain Transmission ───────────────────────────
+  # Hamilton (1983): >25% oil price increase is a reliable recession precursor.
+  # Mechanism: oil → gas/diesel → trucking/freight → retail prices → CPI →
+  #            Fed tightens → consumer spending contracts → recession.
+  # A >20% DROP is also relevant (signals collapsing global demand).
+  if (!is.na(oil_yoy)) {
+    if (oil_yoy > 50) {
+      # severe supply shock
+      log_odds <- log_odds + 1.0
+    } else if (oil_yoy > 25) {
+      # Hamilton threshold
+      log_odds <- log_odds + 0.6
+    } else if (oil_yoy > 15) {
+      log_odds <- log_odds + 0.2
+    } else if (oil_yoy < -30) {
+      # demand collapse = bad signal
+      log_odds <- log_odds + 0.5
+    } else if (oil_yoy < -15) {
+      log_odds <- log_odds + 0.2
+    } else if (oil_yoy > 0 && oil_yoy < 10) {
+      log_odds <- log_odds - 0.1
+    } # stable/mild
+  }
+
+  # ── 7. Equity Market — Bear Market Signal ────────────────────────────────────
+  # S&P 500 >20% drawdown from 52-week high has preceded every post-WW2 recession.
+  # >10% correction = caution; >30% = recessionary environment almost certain.
+  if (!is.na(equity_drawdown_pct)) {
+    dd <- abs(equity_drawdown_pct) # pct is already negative; work with magnitude
+    if (dd > 30) {
+      # severe bear market
+      log_odds <- log_odds + 1.6
+    } else if (dd > 20) {
+      # official bear market
+      log_odds <- log_odds + 1.1
+    } else if (dd > 10) {
+      # correction
+      log_odds <- log_odds + 0.5
+    } else if (dd < 5) {
+      log_odds <- log_odds - 0.2
+    } # near all-time highs = good
+  }
+
+  # ── 8. Credit Stress (HY Spreads) ────────────────────────────────────────────
+  if (!is.na(hy_v)) {
+    if (hy_v > 7.0) {
+      log_odds <- log_odds + 1.4
+    } else if (hy_v > 5.5) {
+      log_odds <- log_odds + 0.7
+    } else if (hy_v > 4.5) {
+      log_odds <- log_odds + 0.2
+    } else if (hy_v < 3.5) {
+      log_odds <- log_odds - 0.4
+    }
+  }
+
+  # ── 9. Dollar Surge — Global Tightening ─────────────────────────────────────
+  # USD appreciation >8% YoY tightens global financial conditions: raises EM
+  # debt burdens, hurts US exporters, and signals risk-off positioning.
+  if (!is.na(usd_yoy)) {
+    if (usd_yoy > 12) {
+      # major dollar surge
+      log_odds <- log_odds + 0.8
+    } else if (usd_yoy > 8) {
+      # meaningful appreciation
+      log_odds <- log_odds + 0.4
+    } else if (usd_yoy > 4) {
+      log_odds <- log_odds + 0.1
+    } else if (usd_yoy < -5) {
+      log_odds <- log_odds - 0.2
+    } # dollar weakening = easing
+  }
+
+  # ── 10. Monetary Restrictiveness ─────────────────────────────────────────────
+  if (!is.na(real_rate)) {
+    if (real_rate > 3.0) {
+      log_odds <- log_odds + 1.0
+    } else if (real_rate > 2.0) {
+      log_odds <- log_odds + 0.5
+    } else if (real_rate > 1.0) {
+      log_odds <- log_odds + 0.2
+    } else if (real_rate < 0.0) {
+      log_odds <- log_odds - 0.3
+    }
+  }
+
+  # ── 11. Consumer Sentiment ───────────────────────────────────────────────────
+  if (!is.na(cs)) {
+    if (cs < 60) {
+      log_odds <- log_odds + 0.7
+    } else if (cs < 70) {
+      log_odds <- log_odds + 0.3
+    } else if (cs > 90) {
+      log_odds <- log_odds - 0.4
+    }
+  }
+
+  # ── 12. Inventory-to-Sales Ratio ─────────────────────────────────────────────
+  # Rising above trend (>1.40) signals businesses cutting orders → hiring slows.
+  # Spike above 1.5 historically coincides with recessionary slowdowns.
+  if (!is.na(inventory_sales_ratio)) {
+    if (inventory_sales_ratio > 1.55) {
+      log_odds <- log_odds + 0.7
+    } else if (inventory_sales_ratio > 1.45) {
+      log_odds <- log_odds + 0.3
+    } else if (inventory_sales_ratio > 1.40) {
+      log_odds <- log_odds + 0.1
+    } else if (inventory_sales_ratio < 1.30) {
+      log_odds <- log_odds - 0.2
+    }
+  }
+
+  # ── 13. Consumer Credit Card Delinquency ─────────────────────────────────────
+  # Rising delinquency rates signal over-extended consumers 2-3 quarters before
+  # it appears in unemployment data. Pre-GFC spike was a clear leading signal.
+  if (!is.na(cc_delinquency)) {
+    if (cc_delinquency > 4.0) {
+      # serious stress
+      log_odds <- log_odds + 0.9
+    } else if (cc_delinquency > 3.0) {
+      log_odds <- log_odds + 0.5
+    } else if (cc_delinquency > 2.5) {
+      log_odds <- log_odds + 0.2
+    } else if (cc_delinquency < 1.8) {
+      log_odds <- log_odds - 0.3
+    } # very low = healthy
+  }
+
+  # ── Convert → probability ─────────────────────────────────────────────────────
+  prob <- round(1 / (1 + exp(-log_odds)) * 100, 1)
+  prob <- max(2, min(97, prob))
+
+  # ── Tier classification ───────────────────────────────────────────────────────
+  tier <- if (prob >= 60) {
+    list(
+      label = "Elevated",
+      color = "#e94560",
+      icon = "exclamation-triangle",
+      desc = "Multiple leading indicators aligned in a recessionary direction. Historical hit rate at this probability level: ~65%. Defensive positioning warranted."
+    )
+  } else if (prob >= 40) {
+    list(
+      label = "Moderate",
+      color = "#f4a261",
+      icon = "exclamation-circle",
+      desc = "Mixed signals with several genuine warning signs. Late-cycle slowdown most likely; recession possible if conditions deteriorate further."
+    )
+  } else if (prob >= 20) {
+    list(
+      label = "Low–Moderate",
+      color = "#f4a261",
+      icon = "minus-circle",
+      desc = "Some headwinds present but no acute stress signal. Growth outlook cautiously positive; monitor labor and credit conditions."
+    )
+  } else {
+    list(
+      label = "Low",
+      color = "#2dce89",
+      icon = "check-circle",
+      desc = "Most leading indicators benign. Historical baseline ~15%; current conditions are at or below average 12-month recession risk."
+    )
+  }
+
+  # ── Key drivers pushing probability up or down ────────────────────────────────
+  drivers_up <- character(0)
+  drivers_down <- character(0)
+
+  if (!is.na(yield_spread) && yield_spread < -0.1) {
+    drivers_up <- c(
+      drivers_up,
+      sprintf("Inverted yield curve (%+.2f pp)", yield_spread)
+    )
+  }
+  if (!is.na(inv_months) && inv_months >= 6) {
+    drivers_up <- c(
+      drivers_up,
+      sprintf("Inversion sustained %d months", inv_months)
+    )
+  }
+  if (!is.null(unemp) && length(unemp) >= 12) {
+    u_rise <- u - min(tail(unemp, 12), na.rm = TRUE)
+    if (u_rise >= 0.3) {
+      drivers_up <- c(
+        drivers_up,
+        sprintf("Unemployment %.1f pp above 12M low (Sahm signal)", u_rise)
+      )
+    }
+  }
+  if (!is.na(prime_age_lfpr_chg) && prime_age_lfpr_chg < -0.2) {
+    drivers_up <- c(
+      drivers_up,
+      sprintf(
+        "Prime-age LFPR falling (%+.1f pp in 6M) — hidden labor slack",
+        prime_age_lfpr_chg
+      )
+    )
+  }
+  if (!is.na(jobless_claims_trend) && jobless_claims_trend > 0.10) {
+    drivers_up <- c(
+      drivers_up,
+      sprintf(
+        "Jobless claims trending up (+%.0f%% vs 6M avg)",
+        jobless_claims_trend * 100
+      )
+    )
+  }
+  if (!is.na(oil_yoy) && oil_yoy > 25) {
+    drivers_up <- c(
+      drivers_up,
+      sprintf(
+        "Oil price shock +%.0f%% YoY — supply chain inflation pressure",
+        oil_yoy
+      )
+    )
+  }
+  if (!is.na(equity_drawdown_pct) && abs(equity_drawdown_pct) > 10) {
+    drivers_up <- c(
+      drivers_up,
+      sprintf("Equity drawdown %.0f%% from 52-week high", equity_drawdown_pct)
+    )
+  }
+  if (!is.na(hy_v) && hy_v > 4.5) {
+    drivers_up <- c(drivers_up, sprintf("HY credit spread %.2f%%", hy_v))
+  }
+  if (!is.na(usd_yoy) && usd_yoy > 8) {
+    drivers_up <- c(
+      drivers_up,
+      sprintf("USD +%.0f%% YoY — global tightening", usd_yoy)
+    )
+  }
+  if (!is.na(cc_delinquency) && cc_delinquency > 2.5) {
+    drivers_up <- c(
+      drivers_up,
+      sprintf(
+        "Credit card delinquency rate %.1f%% — consumer stress",
+        cc_delinquency
+      )
+    )
+  }
+  if (!is.na(quits_yoy) && quits_yoy < -8) {
+    drivers_up <- c(
+      drivers_up,
+      sprintf(
+        "Quits rate %.0f%% YoY — workers losing labor market confidence",
+        quits_yoy
+      )
+    )
+  }
+
+  if (!is.na(yield_spread) && yield_spread > 0.5) {
+    drivers_down <- c(
+      drivers_down,
+      sprintf("Normal yield curve (+%.2f pp)", yield_spread)
+    )
+  }
+  if (!is.na(pay_3m) && pay_3m > 200) {
+    drivers_down <- c(
+      drivers_down,
+      sprintf("Strong payrolls (%+.0fK/mo 3M avg)", pay_3m)
+    )
+  }
+  if (!is.na(prime_age_lfpr) && prime_age_lfpr > 83.5) {
+    drivers_down <- c(
+      drivers_down,
+      sprintf(
+        "Prime-age LFPR %.1f%% — robust labor force attachment",
+        prime_age_lfpr
+      )
+    )
+  }
+  if (!is.na(hy_v) && hy_v < 3.5) {
+    drivers_down <- c(
+      drivers_down,
+      sprintf("Benign credit spreads (%.2f%%)", hy_v)
+    )
+  }
+  if (!is.na(equity_drawdown_pct) && abs(equity_drawdown_pct) < 5) {
+    drivers_down <- c(
+      drivers_down,
+      "Equities near 52-week highs — risk appetite intact"
+    )
+  }
+  if (!is.na(cs) && cs > 85) {
+    drivers_down <- c(
+      drivers_down,
+      sprintf("Elevated consumer sentiment (%.0f)", cs)
+    )
+  }
+  if (!is.na(cc_delinquency) && cc_delinquency < 1.8) {
+    drivers_down <- c(
+      drivers_down,
+      sprintf(
+        "Low credit card delinquency (%.1f%%) — consumers in good shape",
+        cc_delinquency
+      )
+    )
+  }
+
+  list(
+    prob = prob,
+    tier = tier,
+    drivers_up = head(drivers_up, 4),
+    drivers_down = head(drivers_down, 3)
+  )
+}
 render_growth_outlook_html <- function(outlook) {
   if (is.null(outlook)) {
     return(HTML(
-      "<p style='color:#6b7585;padding:16px;'>Growth outlook loading.</p>"
+      "<p style='color:#6b7585;padding:16px;'>Growth outlook not yet computed — data loading.</p>"
     ))
   }
 
-  rp <- outlook$recession_prob
   reg <- outlook$regime
   score <- outlook$score
   comps <- outlook$components
   swing <- outlook$swing
-  gc <- reg$color
+
+  # Score gauge bar
+  pct <- score / 10 * 100
+  gauge_col <- reg$color
 
   gauge_html <- sprintf(
-    "<div style='margin:12px 0 16px;'><div style='display:flex;justify-content:space-between;margin-bottom:5px;'><span style='color:#9aa3b2;font-size:11px;'>Contraction Risk</span><span style='color:#9aa3b2;font-size:11px;'>Expansion</span></div><div style='background:#2a3042;border-radius:6px;height:12px;overflow:hidden;'><div style='background:linear-gradient(90deg,%s,%s);width:%.0f%%;height:100%%;border-radius:6px;'></div></div><div style='margin-top:5px;display:flex;justify-content:space-between;'><span style='color:#9aa3b2;font-size:10px;'>0</span><span style='color:%s;font-size:11px;font-weight:700;'>Score: %.1f / 10</span><span style='color:#9aa3b2;font-size:10px;'>10</span></div></div>",
+    "<div style='margin:12px 0 16px;'>
+       <div style='display:flex;justify-content:space-between;margin-bottom:5px;'>
+         <span style='color:#9aa3b2;font-size:11px;'>Contraction Risk</span>
+         <span style='color:#9aa3b2;font-size:11px;'>Expansion</span>
+       </div>
+       <div style='background:#2a3042;border-radius:6px;height:12px;overflow:hidden;'>
+         <div style='background:linear-gradient(90deg,%s,%s);width:%.0f%%;height:100%%;
+                     border-radius:6px;transition:width 0.5s ease;'></div>
+       </div>
+       <div style='margin-top:5px;display:flex;justify-content:space-between;'>
+         <span style='color:#9aa3b2;font-size:10px;'>0</span>
+         <span style='color:%s;font-size:11px;font-weight:700;'>Score: %.1f / 10</span>
+         <span style='color:#9aa3b2;font-size:10px;'>10</span>
+       </div>
+     </div>",
     if (score < 5) "#e94560" else "#f4a261",
-    gc,
-    score / 10 * 100,
-    gc,
+    gauge_col,
+    pct,
+    gauge_col,
     score
   )
 
+  # Component scores
   comp_html <- paste(
     vapply(
       names(comps),
@@ -1348,9 +2536,18 @@ render_growth_outlook_html <- function(outlook) {
         } else {
           "#e94560"
         }
-        bw <- round((s + 1) / 2 * 100)
+        bar_w <- round((s + 1) / 2 * 100)
         sprintf(
-          "<div style='margin-bottom:8px;'><div style='display:flex;justify-content:space-between;margin-bottom:3px;'><span style='color:#9aa3b2;font-size:11px;'>%s</span><span style='color:%s;font-size:11px;font-weight:600;'>%s</span></div><div style='background:#2a3042;border-radius:3px;height:5px;'><div style='background:%s;width:%d%%;height:100%%;border-radius:3px;'></div></div><div style='color:#6b7585;font-size:10px;margin-top:2px;'>%s</div></div>",
+          "<div style='margin-bottom:8px;'>
+         <div style='display:flex;justify-content:space-between;margin-bottom:3px;'>
+           <span style='color:#9aa3b2;font-size:11px;'>%s</span>
+           <span style='color:%s;font-size:11px;font-weight:600;'>%s</span>
+         </div>
+         <div style='background:#2a3042;border-radius:3px;height:5px;'>
+           <div style='background:%s;width:%d%%;height:100%%;border-radius:3px;'></div>
+         </div>
+         <div style='color:#6b7585;font-size:10px;margin-top:2px;'>%s</div>
+       </div>",
           c$label,
           col,
           if (s >= 0.4) {
@@ -1361,7 +2558,7 @@ render_growth_outlook_html <- function(outlook) {
             "Negative"
           },
           col,
-          bw,
+          bar_w,
           htmltools::htmlEscape(c$detail)
         )
       },
@@ -1370,31 +2567,32 @@ render_growth_outlook_html <- function(outlook) {
     collapse = ""
   )
 
+  # Swing factors
   swing_html <- paste(
     c(
       if (!is.null(swing$biggest_drag)) {
         sprintf(
-          "<li style='margin-bottom:6px;'><span style='color:#e94560;font-weight:600;'>\u2b07 Biggest drag: %s</span> \u2014 %s</li>",
+          "<li style='margin-bottom:6px;'><span style='color:#e94560;font-weight:600;'>⬇ Biggest drag: %s</span> — %s</li>",
           swing$biggest_drag$name,
           htmltools::htmlEscape(swing$biggest_drag$detail)
         )
       },
       if (!is.null(swing$biggest_support)) {
         sprintf(
-          "<li style='margin-bottom:6px;'><span style='color:#2dce89;font-weight:600;'>\u2b06 Biggest support: %s</span> \u2014 %s</li>",
+          "<li style='margin-bottom:6px;'><span style='color:#2dce89;font-weight:600;'>⬆ Biggest support: %s</span> — %s</li>",
           swing$biggest_support$name,
           htmltools::htmlEscape(swing$biggest_support$detail)
         )
       },
       if (!is.null(swing$yield_curve_watch)) {
         sprintf(
-          "<li style='margin-bottom:6px;'><span style='color:#f4a261;font-weight:600;'>\u26a0 Yield Curve:</span> %s</li>",
+          "<li style='margin-bottom:6px;'><span style='color:#f4a261;font-weight:600;'>⚠ Yield Curve:</span> %s</li>",
           htmltools::htmlEscape(swing$yield_curve_watch)
         )
       },
       if (!is.null(swing$fed_watch)) {
         sprintf(
-          "<li style='margin-bottom:6px;'><span style='color:#00b4d8;font-weight:600;'>\u2699 Fed:</span> %s</li>",
+          "<li style='margin-bottom:6px;'><span style='color:#00b4d8;font-weight:600;'>⚙ Fed Policy:</span> %s</li>",
           htmltools::htmlEscape(swing$fed_watch)
         )
       }
@@ -1402,31 +2600,21 @@ render_growth_outlook_html <- function(outlook) {
     collapse = ""
   )
 
+  # ── Recession probability panel ───────────────────────────────────────────────
+  rp <- outlook$recession_prob
   rp_html <- ""
   if (!is.null(rp)) {
     prob <- rp$prob
     tier <- rp$tier
-    bc <- tier$color
-    markov_badge <- if (!is.null(rp$markov_prob) && !is.na(rp$markov_prob)) {
-      sprintf(
-        "&nbsp;<span style='background:rgba(0,180,216,0.12);color:#00b4d8;border:1px solid rgba(0,180,216,0.3);border-radius:8px;padding:1px 8px;font-size:9px;font-weight:600;'>MS: %.0f%%</span>",
-        rp$markov_prob * 100
-      )
-    } else {
-      ""
-    }
-    anom_badge <- if (!is.null(rp$anomaly) && rp$anomaly$score > 0.1) {
-      sprintf(
-        "&nbsp;<span style='background:rgba(124,92,191,0.12);color:#a785e0;border:1px solid rgba(124,92,191,0.3);border-radius:8px;padding:1px 8px;font-size:9px;'>\u26a0 Anomaly %.0f%%</span>",
-        rp$anomaly$score * 100
-      )
-    } else {
-      ""
-    }
-    uh <- if (length(rp$drivers_up) > 0) {
+    bar_col <- tier$color
+    # Semicircular gauge using CSS clip — simulated with a gradient bar + pointer
+    bar_pct <- prob
+
+    # Driver bullets
+    up_html <- if (length(rp$drivers_up) > 0) {
       paste(
         sprintf(
-          "<li><span style='color:#e94560;'>\u25b2</span> %s</li>",
+          "<li style='margin-bottom:4px;'><span style='color:#e94560;'>▲</span> %s</li>",
           htmltools::htmlEscape(rp$drivers_up)
         ),
         collapse = ""
@@ -1434,10 +2622,11 @@ render_growth_outlook_html <- function(outlook) {
     } else {
       ""
     }
-    dh <- if (length(rp$drivers_down) > 0) {
+
+    down_html <- if (length(rp$drivers_down) > 0) {
       paste(
         sprintf(
-          "<li><span style='color:#2dce89;'>\u25bc</span> %s</li>",
+          "<li style='margin-bottom:4px;'><span style='color:#2dce89;'>▼</span> %s</li>",
           htmltools::htmlEscape(rp$drivers_down)
         ),
         collapse = ""
@@ -1445,43 +2634,126 @@ render_growth_outlook_html <- function(outlook) {
     } else {
       ""
     }
-    ds <- if (nchar(uh) > 0 || nchar(dh) > 0) {
+
+    drivers_section <- if (nchar(up_html) > 0 || nchar(down_html) > 0) {
       sprintf(
-        "<ul style='list-style:none;padding:0;margin:6px 0 0;font-size:11px;color:#d0d0d0;'>%s%s</ul>",
-        uh,
-        dh
+        "<ul style='list-style:none;padding:0;margin:6px 0 0;font-size:11px;color:#d0d0d0;'>
+          %s%s
+         </ul>",
+        up_html,
+        down_html
       )
     } else {
       ""
     }
+
     rp_html <- sprintf(
-      "<div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;border-top:3px solid %s;padding:14px 16px;margin-top:14px;'><div style='display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;'><div><div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;'><i class=\"fa fa-%s\" style=\"color:%s;margin-right:6px;\"></i>Recession Probability \u2014 12-Month Horizon%s%s</div><div style='margin-top:4px;'><span style='color:%s;font-size:36px;font-weight:800;'>%s%%</span><span style='color:%s;font-size:14px;font-weight:600;margin-left:8px;background:rgba(%s,0.12);padding:2px 10px;border-radius:12px;border:1px solid rgba(%s,0.3);'>%s</span></div></div><div style='text-align:right;'><div style='font-size:10px;color:#6b7585;margin-bottom:4px;'>0%% \u00b7 50%% \u00b7 100%%</div><div style='width:160px;height:14px;background:linear-gradient(90deg,#2dce89,#f4a261,#e94560);border-radius:7px;position:relative;'><div style='position:absolute;top:-3px;left:calc(%s%% - 8px);width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:8px solid #fff;'></div></div><div style='font-size:10px;color:#6b7585;margin-top:3px;'>\u25b2 Current</div></div></div><div style='color:#9aa3b2;font-size:12px;line-height:1.6;background:#0f1117;border-radius:6px;padding:8px 12px;border-left:3px solid %s;'>%s</div>%s<div style='color:#555;font-size:10px;margin-top:8px;'>Tier 3: Rolling GLM (30yr window) + Hamilton Markov-switching + anomaly detection. NBER-calibrated.</div></div>",
-      bc,
+      "<div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;
+                   border-top:3px solid %s;padding:14px 16px;margin-top:14px;'>
+
+        <!-- Header row -->
+        <div style='display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;'>
+          <div>
+            <div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;
+                        letter-spacing:1px;'>
+              <i class=\"fa fa-%s\" style=\"color:%s;margin-right:6px;\"></i>
+              Recession Probability — 12-Month Horizon
+            </div>
+            <div style='margin-top:4px;'>
+              <span style='color:%s;font-size:36px;font-weight:800;'>%s%%</span>
+              <span style='color:%s;font-size:14px;font-weight:600;margin-left:8px;
+                           background:rgba(%s,0.12);padding:2px 10px;border-radius:12px;
+                           border:1px solid rgba(%s,0.3);'>
+                %s
+              </span>
+            </div>
+          </div>
+          <!-- Mini thermometer -->
+          <div style='text-align:right;'>
+            <div style='font-size:10px;color:#6b7585;margin-bottom:4px;'>0%%  ·  50%%  ·  100%%</div>
+            <div style='width:160px;height:14px;background:linear-gradient(90deg,#2dce89,#f4a261,#e94560);
+                        border-radius:7px;position:relative;'>
+              <div style='position:absolute;top:-3px;left:calc(%s%% - 8px);
+                          width:0;height:0;border-left:7px solid transparent;
+                          border-right:7px solid transparent;border-top:8px solid #ffffff;'></div>
+            </div>
+            <div style='font-size:10px;color:#6b7585;margin-top:3px;text-align:center;'>▲ Current</div>
+          </div>
+        </div>
+
+        <!-- Description -->
+        <div style='color:#9aa3b2;font-size:12px;line-height:1.6;
+                    background:#0f1117;border-radius:6px;padding:8px 12px;
+                    border-left:3px solid %s;'>
+          %s
+        </div>
+
+        %s
+
+        <div style='color:#555;font-size:10px;margin-top:8px;'>
+          Multi-factor logit model (yield curve, Sahm rule, credit spreads, leading indicators).
+          Calibrated to historical NBER recession dates. Not a point forecast — conveys relative risk level.
+        </div>
+      </div>",
+      bar_col, # border-top color
       tier$icon,
-      bc,
-      markov_badge,
-      anom_badge,
-      bc,
-      sprintf("%.0f", prob),
-      bc,
-      bc,
-      bc,
-      tier$label,
-      sprintf("%.0f", min(prob, 98)),
-      bc,
-      htmltools::htmlEscape(tier$desc),
-      ds
+      bar_col, # icon
+      bar_col, # probability number color
+      sprintf("%.0f", prob), # probability %
+      bar_col,
+      bar_col,
+      bar_col, # badge color + rgba placeholders
+      tier$label, # tier label
+      sprintf("%.0f", min(prob, 98)), # thermometer pointer position (capped)
+      bar_col, # left border of desc box
+      htmltools::htmlEscape(tier$desc), # description text
+      drivers_section
     )
   }
 
-  mr <- tryCatch(
-    get(".recession_t3_cache", envir = .GlobalEnv)$markov,
-    error = function(e) NULL
-  )
-
   HTML(paste0(
     sprintf(
-      "<div style='display:flex;gap:14px;'><div style='flex:1;background:#1a2035;border:1px solid #2a3042;border-radius:8px;border-top:3px solid %s;padding:16px 18px;'><div style='color:%s;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;'><i class=\"fa fa-%s\" style=\"margin-right:6px;\"></i>6\u201312 Month Growth Outlook</div><div style='color:%s;font-size:22px;font-weight:800;margin-bottom:2px;'>%s</div><div style='color:#f4a261;font-size:16px;font-weight:700;margin-bottom:10px;'>GDP Est: %s annualized</div>%s<div style='background:#0f1117;border-radius:6px;padding:10px 12px;color:#9aa3b2;font-size:12px;line-height:1.7;border-left:3px solid %s;'>%s</div><div style='color:#555;font-size:10px;margin-top:10px;'>%d indicators + Markov-switching + rolling GLM + anomaly detection. As of %s.<button onclick=\"document.getElementById('recModelModal').style.display='flex'\" style='margin-left:8px;background:transparent;border:1px solid #2a3042;color:#9aa3b2;border-radius:10px;padding:1px 8px;font-size:10px;cursor:pointer;'><i class=\"fa fa-info-circle\" style=\"margin-right:4px;color:#00b4d8;\"></i>Model details</button></div>%s</div><div style='flex:1;display:flex;flex-direction:column;gap:10px;'><div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;padding:14px 16px;flex:1;'><div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:12px;'>Component Scorecard</div>%s</div><div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;padding:14px 16px;'><div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;'>Key Swing Factors</div><ul style='list-style:none;padding:0;margin:0;font-size:12px;color:#d0d0d0;'>%s</ul></div></div></div>",
+      "<div style='display:flex;gap:14px;'>
+         <!-- Left: regime verdict -->
+         <div style='flex:1;background:#1a2035;border:1px solid #2a3042;border-radius:8px;
+                     border-top:3px solid %s;padding:16px 18px;'>
+           <div style='color:%s;font-size:11px;font-weight:700;text-transform:uppercase;
+                       letter-spacing:1px;margin-bottom:6px;'>
+             <i class=\"fa fa-%s\" style=\"margin-right:6px;\"></i>6\u201312 Month Growth Outlook
+           </div>
+           <div style='color:%s;font-size:22px;font-weight:800;margin-bottom:2px;'>%s</div>
+           <div style='color:#f4a261;font-size:16px;font-weight:700;margin-bottom:10px;'>
+             GDP Est: %s annualized
+           </div>
+           %s
+           <div style='background:#0f1117;border-radius:6px;padding:10px 12px;
+                       color:#9aa3b2;font-size:12px;line-height:1.7;border-left:3px solid %s;'>
+             %s
+           </div>
+           <div style='color:#555;font-size:10px;margin-top:10px;'>
+             Composite model \u2014 %d growth indicators + 13-factor recession model. As of %s.
+             <button onclick=\"document.getElementById('recModelModal').style.display='flex'\"
+               style='margin-left:8px;background:transparent;border:1px solid #2a3042;
+                      color:#9aa3b2;border-radius:10px;padding:1px 8px;font-size:10px;cursor:pointer;'>
+               <i class=\"fa fa-info-circle\" style=\"margin-right:4px;color:#00b4d8;\"></i>Model details
+             </button>
+           </div>
+           %s
+         </div>
+         <!-- Right: component breakdown + swing factors -->
+         <div style='flex:1;display:flex;flex-direction:column;gap:10px;'>
+           <div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;padding:14px 16px;flex:1;'>
+             <div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;
+                         letter-spacing:1px;margin-bottom:12px;'>Component Scorecard</div>
+             %s
+           </div>
+           <div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;padding:14px 16px;'>
+             <div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;
+                         letter-spacing:1px;margin-bottom:10px;'>Key Swing Factors</div>
+             <ul style='list-style:none;padding:0;margin:0;font-size:12px;color:#d0d0d0;'>%s</ul>
+           </div>
+         </div>
+       </div>",
       reg$color,
       reg$color,
       reg$icon,
@@ -1497,218 +2769,102 @@ render_growth_outlook_html <- function(outlook) {
       comp_html,
       swing_html
     ),
-    .build_model_modal(
-      factor_contributions = if (!is.null(rp)) {
-        rp$factor_contributions
-      } else {
-        NULL
-      },
-      model_type = if (!is.null(rp)) {
-        rp$model_type %||% "Hand-tuned"
-      } else {
-        "Hand-tuned"
-      },
-      anomaly = if (!is.null(rp)) rp$anomaly else NULL,
-      markov_result = mr
-    )
+    .build_model_modal()
   ))
 }
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# TIER 3 OVERRIDE: .build_model_modal
-# ═══════════════════════════════════════════════════════════════════════════════
-
-.build_model_modal <- function(
-  factor_contributions = NULL,
-  model_type = "Hand-tuned log-odds",
-  anomaly = NULL,
-  markov_result = NULL
-) {
-  # ← Tier 3
-
-  bar_chart_html <- .build_factor_bar_chart(
-    factor_contributions,
-    model_type,
-    markov_result
-  )
-
-  # ── Markov regime status panel ────────────────────────────────────────────────
-  markov_html <- if (!is.null(markov_result)) {
-    ms_pct <- round(markov_result$current_rec_prob * 100)
-    ms_col <- if (ms_pct > 60) {
-      "#e94560"
-    } else if (ms_pct > 35) {
-      "#f4a261"
-    } else {
-      "#2dce89"
-    }
-    wnd_lbl <- if (!is.null(markov_result$window_months)) {
-      sprintf(" (rolling %d-month window)", markov_result$window_months)
-    } else {
-      ""
-    }
-    sprintf(
-      "<div style='background:#0f1a27;border-radius:8px;padding:14px 16px;margin-bottom:20px;border-left:4px solid #00b4d8;'>
-         <div style='color:#00b4d8;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;'>
-           <i class=\"fa fa-random\" style=\"margin-right:6px;\"></i>Markov Regime Model Status%s
-         </div>
-         <div style='display:flex;align-items:center;gap:10px;margin-bottom:8px;'>
-           <span style='color:#9aa3b2;font-size:11px;width:160px;'>Recession state p (smoothed)</span>
-           <div style='flex:1;background:#2a3042;border-radius:4px;height:10px;'>
-             <div style='background:%s;width:%d%%;height:100%%;border-radius:4px;'></div>
-           </div>
-           <span style='color:%s;font-size:14px;font-weight:700;width:40px;text-align:right;'>%d%%</span>
-         </div>
-         <div style='color:#9aa3b2;font-size:11px;margin-bottom:8px;'>
-           <b style='color:#7dd8f0;'>States:</b> %d &nbsp;|\u00a0
-           <b style='color:#7dd8f0;'>Training obs:</b> %d months &nbsp;|\u00a0
-           <b style='color:#7dd8f0;'>Expansion IP mean:</b> %.1f%% YoY &nbsp;|\u00a0
-           <b style='color:#7dd8f0;'>Recession IP mean:</b> %.1f%% YoY
-         </div>
-         <div style='color:#d0d0d0;font-size:11px;line-height:1.75;'>
-           Hamilton (1989) 2-state Markov-switching model identifies expansion and recession regimes
-           directly from the data without requiring NBER dates as labels. The smoothed probability
-           is the posterior probability of being in the recession state given all available information.
-           Unlike the GLM, it can identify regime shifts even when individual factor thresholds aren\u2019t triggered,
-           because it looks at the overall pattern of mean + variance changes across multiple series simultaneously.
-         </div>
-       </div>",
-      wnd_lbl,
-      ms_col,
-      ms_pct,
-      ms_col,
-      ms_pct,
-      markov_result$n_states %||% 2L,
-      markov_result$n_obs %||% 0L,
-      markov_result$state_means_ip[setdiff(
-        1:markov_result$n_states,
-        markov_result$recession_state
-      )[1]] %||%
-        0,
-      markov_result$state_means_ip[markov_result$recession_state] %||% 0
-    )
-  } else {
-    "<div style='background:#1e2640;border-radius:6px;padding:10px 14px;margin-bottom:20px;color:#555;font-size:11px;'>
-       <i class=\"fa fa-info-circle\" style=\"color:#00b4d8;margin-right:6px;\"></i>
-       Markov regime model not yet fitted. Install <code>MSwM</code> and ensure INDPRO / T10Y2Y / BAMLH0A0HYM2 data is available.
-     </div>"
-  }
-
-  # ── Anomaly status (same as Tier 2) ──────────────────────────────────────────
-  anomaly_html <- if (!is.null(anomaly) && anomaly$score > 0.05) {
-    score_pct <- round(anomaly$score * 100)
-    bar_col <- if (anomaly$score > 0.6) {
-      "#e94560"
-    } else if (anomaly$score > 0.3) {
-      "#f4a261"
-    } else {
-      "#7c5cbf"
-    }
-    sprintf(
-      "<div style='background:#1e1030;border-radius:8px;padding:14px 16px;margin-bottom:20px;border-left:4px solid #7c5cbf;'><div style='color:#a785e0;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'><i class=\"fa fa-exclamation-triangle\" style=\"margin-right:6px;\"></i>Anomaly Detection Active</div><div style='display:flex;align-items:center;gap:10px;margin-bottom:6px;'><span style='color:#9aa3b2;font-size:11px;width:90px;'>Score</span><div style='flex:1;background:#2a3042;border-radius:4px;height:10px;'><div style='background:%s;width:%d%%;height:100%%;border-radius:4px;'></div></div><span style='color:%s;font-size:13px;font-weight:700;width:40px;'>%d%%</span></div><div style='color:#d0d0d0;font-size:11px;line-height:1.75;'><b>MD=%.2f</b> &nbsp;\u2014 %s &nbsp;|\u00a0 Blend: p_final = (0.55\u00d7p_GLM + 0.45\u00d7p_Markov)\u00d7(1\u22120.35A) + 0.25A</div></div>",
-      bar_col,
-      score_pct,
-      bar_col,
-      score_pct,
-      anomaly$md %||% 0,
-      anomaly$label
-    )
-  } else {
-    "<div style='background:#1e2640;border-radius:6px;padding:10px 14px;margin-bottom:20px;color:#555;font-size:11px;'><i class=\"fa fa-check-circle\" style=\"color:#2dce89;margin-right:6px;\"></i>Anomaly score normal. No uncertainty adjustment applied.</div>"
-  }
-
-  # ── Factor table ─────────────────────────────────────────────────────────────
+# ── Model explanation modal ───────────────────────────────────────────────────
+.build_model_modal <- function() {
   factors <- list(
     list(
       rank = 1,
       name = "Yield Curve (10Y-2Y spread)",
       weight = "High",
       col = "#e94560",
-      source = "Estrella & Mishkin (1998)",
-      mechanism = "Every 1pp narrowing: +0.85. Duration: +0.3–+1.5.",
-      interpret = "Most reliable single 12-month predictor."
+      source = "Estrella & Mishkin (1998); NY Fed model",
+      mechanism = "Every 1pp spread narrowing adds +0.85 log-odds. Inversion duration amplifies: +0.3 (3M), +0.6 (6M), +1.2 (12M), +1.5 (18M+). Historically leads recession by 6-18 months.",
+      interpret = "Negative spread = yield curve inverted = short rates above long = market pricing rate cuts ahead = recession concern. The most reliable single predictor at the 12-month horizon."
     ),
     list(
       rank = 2,
-      name = "Sahm Rule / Labor Momentum",
+      name = "Sahm Rule / labor Momentum",
       weight = "High",
       col = "#e94560",
-      source = "Sahm (2019); BLS",
-      mechanism = "\u22650.5pp rise: +1.8. Neg payrolls: +0.6–+1.5.",
-      interpret = "Perfect recession-trigger record since 1970."
+      source = "Sahm (2019); BLS UNRATE + PAYEMS",
+      mechanism = "Rise from 12-month unemployment trough: ≥0.5pp = +1.8 log-odds (official Sahm trigger). Payroll momentum: negative 3M avg = +0.6 to +1.5.",
+      interpret = "The Sahm Rule has a perfect record triggering before or at every recession since 1970. A 0.5pp rise from the recent trough is near-certain recession."
     ),
     list(
       rank = 3,
-      name = "Prime-Age LFPR (25\u201354)",
+      name = "Prime-Age LFPR (25-54)",
       weight = "Medium",
       col = "#f4a261",
       source = "BLS LNS11300060",
-      mechanism = "<82%: +0.4. 6M drop >0.2pp: +0.4–+0.9.",
-      interpret = "Captures hidden labour weakness."
+      mechanism = "Level below 82% = +0.4 log-odds; 6-month drop >0.2pp = +0.4; drop >0.5pp = +0.9. Rising LFPR above 83.5% = -0.3.",
+      interpret = "The Sahm Rule misses hidden weakness: when workers exit the labor force rather than register as unemployed, headline unemployment stays flat but real demand is contracting. Prime-age LFPR captures this."
     ),
     list(
       rank = 4,
       name = "Jobless Claims Trend",
       weight = "Medium",
       col = "#f4a261",
-      source = "BLS ICSA (weekly)",
-      mechanism = "4wk/26wk MA ratio: >10%: +0.6; >20%: +1.2.",
-      interpret = "Most real-time labour signal."
+      source = "BLS ICSA (initial claims, weekly)",
+      mechanism = "4-week MA vs 26-week MA ratio. >10% above baseline = +0.6; >20% = +1.2 log-odds.",
+      interpret = "The most real-time labor indicator available (weekly). When the short-term trend crosses above the 6-month average, layoffs are accelerating. Detects sudden deterioration weeks before monthly payrolls."
     ),
     list(
       rank = 5,
-      name = "Quits Rate YoY",
+      name = "Quits Rate YoY Change",
       weight = "Medium",
       col = "#f4a261",
-      source = "BLS JTSQUL",
-      mechanism = "YoY decline >8%: +0.4; >15%: +0.8.",
-      interpret = "Leads Sahm by 1\u20132 quarters."
+      source = "BLS JTSQUL (JOLTS quits)",
+      mechanism = "YoY decline >8% = +0.4; >15% = +0.8. Rising quits = -0.3.",
+      interpret = "Workers quit voluntarily when confident. A sustained decline in quits signals workers are afraid to leave — a forward indicator of labor market deterioration that precedes the Sahm Rule by 1-2 quarters."
     ),
     list(
       rank = 6,
-      name = "Oil Price Shock (YoY)",
+      name = "Oil Price Shock",
       weight = "Medium",
       col = "#f4a261",
-      source = "FRED DCOILWTICO",
-      mechanism = ">25%: +0.6; >50%: +1.0; <\u221230%: +0.5.",
-      interpret = "Hamilton (1983): precedes every major US recession."
+      source = "FRED DCOILWTICO (WTI crude)",
+      mechanism = ">25% YoY = +0.6 (Hamilton threshold); >50% = +1.0. >30% drop (demand collapse) = +0.5.",
+      interpret = "Hamilton (1983): every major US recession was preceded by an oil shock. Transmission: oil \u2192 diesel \u2192 trucking costs \u2192 retail prices \u2192 CPI \u2192 Fed tightens \u2192 consumer spending contracts. A demand-driven oil collapse is also recessionary."
     ),
     list(
       rank = 7,
-      name = "Equity Bear Market",
+      name = "Equity Bear Market (SPY drawdown)",
       weight = "Medium",
       col = "#f4a261",
-      source = "SPY / tidyquant",
-      mechanism = ">10%: +0.5; >20%: +1.1; >30%: +1.6.",
-      interpret = ">20% drawdown preceded every post-WW2 recession."
+      source = "Yahoo Finance / tidyquant (SPY)",
+      mechanism = ">10% drawdown = +0.5; >20% = +1.1; >30% = +1.6. <5% from 52-week high = -0.2.",
+      interpret = "An S&P 500 drawdown >20% has preceded every post-WW2 US recession. Markets price in future earnings; a bear market signals deteriorating corporate profit expectations and tightening financial conditions."
     ),
     list(
       rank = 8,
       name = "HY Credit Spreads",
       weight = "Medium",
       col = "#f4a261",
-      source = "FRED BAMLH0A0HYM2",
-      mechanism = ">4.5%: +0.2; >5.5%: +0.7; >7%: +1.4.",
-      interpret = ">500bp = credit market stress."
+      source = "FRED BAMLH0A0HYM2 (ICE BofA HY OAS)",
+      mechanism = ">4.5% = +0.2; >5.5% = +0.7; >7% = +1.4. <3.5% = -0.4.",
+      interpret = "High-yield spreads price default risk. Widening above 500bp signals credit market stress — banks tighten lending, corporates can't refinance, investment falls. Coincident with and slightly leading recession onset."
     ),
     list(
       rank = 9,
       name = "USD Surge (YoY)",
       weight = "Low",
       col = "#9aa3b2",
-      source = "FRED DTWEXBGS",
-      mechanism = ">8%: +0.4; >12%: +0.8.",
-      interpret = "Tightens global financial conditions."
+      source = "FRED DTWEXBGS (trade-weighted USD)",
+      mechanism = ">8% YoY = +0.4; >12% = +0.8. Weakening >5% = -0.2.",
+      interpret = "A surging dollar tightens global financial conditions: raises EM debt burdens (dollar-denominated), hurts US export competitiveness, and signals risk-off capital flows. Often amplifies domestic recessions into global ones."
     ),
     list(
       rank = 10,
       name = "Real Fed Funds Rate",
       weight = "Low",
       col = "#9aa3b2",
-      source = "FEDFUNDS \u2212 CPI YoY",
-      mechanism = ">1%: +0.2; >2%: +0.5; >3%: +1.0.",
-      interpret = "Monetary restrictiveness with 6\u201318M lag."
+      source = "FRED FEDFUNDS minus CPI YoY",
+      mechanism = ">1% = +0.2; >2% = +0.5; >3% = +1.0. Negative = -0.3.",
+      interpret = "Monetary policy works with long and variable lags (Friedman). A firmly positive real rate is restrictive — it discourages borrowing and investment. Historical recessions typically require 12-18 months for full transmission."
     ),
     list(
       rank = 11,
@@ -1716,44 +2872,26 @@ render_growth_outlook_html <- function(outlook) {
       weight = "Low",
       col = "#9aa3b2",
       source = "U Michigan UMCSENT",
-      mechanism = "<60: +0.7; <70: +0.3; >90: \u22120.4.",
-      interpret = "Leads spending by 1\u20132 quarters."
+      mechanism = "<60 = +0.7; <70 = +0.3. >90 = -0.4.",
+      interpret = "A Conference Board LEI component. Sentiment leads spending by 1-2 quarters. Below 70 signals consumers are worried about their financial situation and likely to pull back on discretionary purchases."
     ),
     list(
       rank = 12,
       name = "Inventory-to-Sales Ratio",
       weight = "Low",
       col = "#9aa3b2",
-      source = "FRED ISRATIO",
-      mechanism = ">1.40–>1.55: +0.1–+0.7.",
-      interpret = "Excess inventory \u2192 cut orders \u2192 hiring slows."
+      source = "FRED ISRATIO (total business)",
+      mechanism = ">1.40 = +0.1; >1.45 = +0.3; >1.55 = +0.7. <1.30 = -0.2.",
+      interpret = "When businesses accumulate excess inventory relative to sales, they cut orders, then production, then headcount. Typically leads hiring slowdowns by 1-2 quarters. Spiked sharply before both the 2001 and 2008 recessions."
     ),
     list(
       rank = 13,
-      name = "CC Delinquency Rate",
+      name = "Credit Card Delinquency Rate",
       weight = "Low",
       col = "#9aa3b2",
-      source = "FRED DRCCLACBS",
-      mechanism = ">2.5–>4%: +0.2–+0.9.",
-      interpret = "Consumer stress 2\u20133Q before unemployment rises."
-    ),
-    list(
-      rank = 14,
-      name = "Anomaly Signal (Mahalanobis)",
-      weight = "Blend",
-      col = "#7c5cbf",
-      source = "Training feature distribution",
-      mechanism = "p = p_base\u00d7(1\u22120.35A) + 0.25A.",
-      interpret = "Widens uncertainty for historically unprecedented conditions."
-    ),
-    list(
-      rank = 15,
-      name = "Markov Regime State",
-      weight = "Regime",
-      col = "#00b4d8",
-      source = "MSwM: Hamilton (1989) HMM",
-      mechanism = "p_final = 0.55\u00d7p_GLM + 0.45\u00d7p_Markov.",
-      interpret = "Identifies structural regime shifts without needing labeled data. Complements GLM which assumes constant coefficients."
+      source = "FRED DRCCLACBS (Fed / FDIC)",
+      mechanism = ">2.5% = +0.2; >3% = +0.5; >4% = +0.9. <1.8% = -0.3.",
+      interpret = "Consumer financial stress shows here 2-3 quarters before unemployment rises. The pre-GFC spike from ~1.5% to >5% was visible 18 months before peak unemployment. A leading indicator the Sahm Rule and headline data miss entirely."
     )
   )
 
@@ -1765,12 +2903,19 @@ render_growth_outlook_html <- function(outlook) {
           f$weight,
           "High" = "#e94560",
           "Medium" = "#f4a261",
-          "Blend" = "#7c5cbf",
-          "Regime" = "#00b4d8",
           "#9aa3b2"
         )
         sprintf(
-          "<tr style='border-bottom:1px solid #2a3042;'><td style='padding:10px 8px;color:%s;font-weight:700;font-size:12px;'>%d. %s</td><td style='padding:10px 8px;'><span style='background:rgba(%s,0.12);color:%s;border:1px solid rgba(%s,0.3);border-radius:8px;padding:1px 8px;font-size:10px;font-weight:600;'>%s</span></td><td style='padding:10px 8px;color:#9aa3b2;font-size:11px;'>%s</td><td style='padding:10px 8px;color:#9aa3b2;font-size:11px;line-height:1.5;'>%s</td><td style='padding:10px 8px;color:#d0d0d0;font-size:11px;line-height:1.5;'>%s</td></tr>",
+          "<tr style='border-bottom:1px solid #2a3042;'>
+         <td style='padding:10px 8px;color:%s;font-weight:700;font-size:12px;'>%d. %s</td>
+         <td style='padding:10px 8px;'>
+           <span style='background:rgba(%s,0.12);color:%s;border:1px solid rgba(%s,0.3);
+                  border-radius:8px;padding:1px 8px;font-size:10px;font-weight:600;'>%s</span>
+         </td>
+         <td style='padding:10px 8px;color:#9aa3b2;font-size:11px;'>%s</td>
+         <td style='padding:10px 8px;color:#9aa3b2;font-size:11px;line-height:1.5;'>%s</td>
+         <td style='padding:10px 8px;color:#d0d0d0;font-size:11px;line-height:1.5;'>%s</td>
+       </tr>",
           f$col,
           f$rank,
           htmltools::htmlEscape(f$name),
@@ -1789,89 +2934,86 @@ render_growth_outlook_html <- function(outlook) {
   )
 
   paste0(
+    # ── Overlay backdrop ──────────────────────────────────────────────────────
     "<div id='recModelModal' onclick=\"if(event.target===this)this.style.display='none'\"
       style='display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);
              z-index:9999;align-items:center;justify-content:center;padding:20px;'>
        <div style='background:#161b27;border:1px solid #2a3042;border-radius:10px;
                    max-width:1100px;width:100%;max-height:90vh;overflow-y:auto;
                    padding:24px;position:relative;'>
+
+         <!-- Close button -->
          <button onclick=\"document.getElementById('recModelModal').style.display='none'\"
            style='position:absolute;top:14px;right:16px;background:transparent;border:none;
-                  color:#9aa3b2;font-size:20px;cursor:pointer;'>&times;</button>
+                  color:#9aa3b2;font-size:20px;cursor:pointer;line-height:1;'>&times;</button>
 
+         <!-- Title -->
          <div style='color:#00b4d8;font-size:16px;font-weight:800;margin-bottom:4px;'>
            <i class=\"fa fa-brain\" style=\"margin-right:8px;\"></i>
            Recession Probability Model \u2014 Technical Reference
-           <span style='font-size:11px;font-weight:400;color:#00b4d8;margin-left:10px;border:1px solid rgba(0,180,216,0.3);border-radius:6px;padding:1px 8px;'>
-             Tier\u00a03: Rolling GLM + Markov-Switching + Anomaly Detection
-           </span>
          </div>
          <div style='color:#9aa3b2;font-size:12px;margin-bottom:20px;'>
-           Three-model ensemble: (1) logistic regression retrained on a rolling 30-year window,
-           (2) Hamilton (1989) 2-state Markov-switching regime model, and (3) Mahalanobis anomaly
-           detector that widens uncertainty for historically unprecedented conditions.
-           Calibrated to NBER recession dates. Not a point forecast.
+           13-factor logistic model calibrated to NBER recession dates.
+           Baseline 15% unconditional 12-month probability. Not a point forecast \u2014 conveys relative risk direction.
          </div>
 
-         <!-- Bar chart -->
-         <div style='background:#1e2640;border-radius:8px;padding:16px;margin-bottom:20px;border-left:4px solid #00b4d8;'>",
-    bar_chart_html,
-    "</div>
-
-         <!-- Markov status -->",
-    markov_html,
-
-    "<!-- Anomaly status -->",
-    anomaly_html,
-
-    "<!-- Interpretability note -->
-         <div style='background:#1e2640;border-radius:8px;padding:14px 16px;margin-bottom:20px;border-left:4px solid #7c5cbf;'>
-           <div style='color:#a785e0;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;'>
-             <i class=\"fa fa-eye\" style=\"margin-right:6px;\"></i>Interpretability, Trust &amp; Architecture
+         <!-- Interpretability note -->
+         <div style='background:#1e2640;border-radius:8px;padding:14px 16px;margin-bottom:20px;
+                     border-left:4px solid #7c5cbf;'>
+           <div style='color:#a785e0;font-size:11px;font-weight:700;text-transform:uppercase;
+                       letter-spacing:1px;margin-bottom:8px;'>
+             <i class=\"fa fa-eye\" style=\"margin-right:6px;\"></i>Interpretability &amp; Trust
            </div>
            <div style='color:#d0d0d0;font-size:12px;line-height:1.8;'>
-             <b style='color:#e0e0e0;'>Tier 3 vs Tier 2:</b> Adds a Markov-switching component that operates without pre-specified thresholds.
-             It identifies latent regimes from the joint distribution of macro variables, capturing
-             structural breaks (e.g., the 2020 shock) as regime transitions rather than
-             parameter-space extrapolation. The rolling retrain ensures the GLM\u2019s coefficient estimates
-             adapt to structural changes over time rather than being frozen to a 1960\u20132020 average.<br/>
-             <b style='color:#e0e0e0;'>Three-way blend:</b> p_final = 0.55\u00d7p_GLM + 0.45\u00d7p_Markov, then anomaly-adjusted.
-             The Markov weight (0.45) reflects genuine uncertainty about which model is better-calibrated
-             in the current data regime. When MSwM is unavailable, falls back to Tier 2 GLM-only path.
+             <b style='color:#e0e0e0;'>Model type:</b> Additive log-odds model (equivalent to logistic regression with hand-tuned coefficients).
+             Every factor contributes a named, signed, bounded adjustment to the log-odds. There are no black-box interactions.<br/>
+             <b style='color:#e0e0e0;'>Calibration:</b> The baseline log-odds of \u22121.73 corresponds to the historical US 12-month recession base rate (~15%, based on NBER dates since 1950).
+             Each factor\u2019s log-odds contribution was calibrated against historical data; the model should produce ~50\u201360% probability
+             in the 12 months immediately before a recession and ~10\u201320% in typical expansions.<br/>
+
+             <b style='color:#e0e0e0;'>Bias control:</b> News headlines fed to the LLM are filtered to exclude highly partisan sources.
+             The economic data comes from FRED, BLS, and BEA \u2014 official US government statistical agencies.
            </div>
          </div>
 
-         <div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;'>
-           Factor Detail \u2014 15 Factors (13 GLM + Anomaly Blend + Markov Regime)
-         </div>
+         <!-- Factor table -->
+         <div style='color:#9aa3b2;font-size:11px;font-weight:700;text-transform:uppercase;
+                     letter-spacing:1px;margin-bottom:10px;'>Factor Detail \u2014 Log-Odds Contributions</div>
          <div style='overflow-x:auto;'>
          <table style='width:100%;border-collapse:collapse;font-family:Inter,sans-serif;'>
            <thead>
              <tr style='background:#1e2640;border-bottom:2px solid #2a3042;'>
-               <th style='text-align:left;padding:10px 8px;color:#9aa3b2;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;min-width:200px;'>Factor</th>
-               <th style='text-align:left;padding:10px 8px;color:#9aa3b2;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;'>Weight / Type</th>
-               <th style='text-align:left;padding:10px 8px;color:#9aa3b2;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;min-width:160px;'>Source</th>
-               <th style='text-align:left;padding:10px 8px;color:#9aa3b2;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;min-width:220px;'>Mechanism</th>
-               <th style='text-align:left;padding:10px 8px;color:#9aa3b2;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;min-width:240px;'>Why It Matters</th>
+               <th style='text-align:left;padding:10px 8px;color:#9aa3b2;font-size:11px;
+                          text-transform:uppercase;letter-spacing:0.5px;min-width:200px;'>Factor</th>
+               <th style='text-align:left;padding:10px 8px;color:#9aa3b2;font-size:11px;
+                          text-transform:uppercase;letter-spacing:0.5px;'>Weight</th>
+               <th style='text-align:left;padding:10px 8px;color:#9aa3b2;font-size:11px;
+                          text-transform:uppercase;letter-spacing:0.5px;min-width:160px;'>Data Source</th>
+               <th style='text-align:left;padding:10px 8px;color:#9aa3b2;font-size:11px;
+                          text-transform:uppercase;letter-spacing:0.5px;min-width:220px;'>How It\u2019s Scored</th>
+               <th style='text-align:left;padding:10px 8px;color:#9aa3b2;font-size:11px;
+                          text-transform:uppercase;letter-spacing:0.5px;min-width:240px;'>Why It Matters</th>
              </tr>
            </thead>
            <tbody>",
     rows,
-    "</tbody>
-         </table></div>
-
-         <div style='color:#555;font-size:11px;margin-top:16px;line-height:1.7;'>
-           <b style='color:#9aa3b2;'>Tier 3 formula:</b>
-           p_blend = 0.55\u00d7p_GLM + 0.45\u00d7p_Markov &nbsp;|\u00a0
-           A = min(1, MD/(d95\u00d71.5)) &nbsp;|\u00a0
-           p_final = p_blend\u00d7(1\u22120.35A) + 0.25A &nbsp;|\u00a0
-           Clamped [2%, 97%].<br/>
-           GLM retrained on rolling 30-year window; Markov model refitted monthly.<br/>
-           <b style='color:#9aa3b2;'>References:</b>
-           Estrella &amp; Mishkin (1998) \u2014 yield curve; Sahm (2019) \u2014 labour;
-           Hamilton (1989) \u2014 Markov-switching; Mahalanobis (1936) \u2014 distance metric.
-           MSwM package (Sanchez-Espigares &amp; Lopez-Moreno).
+    "
+           </tbody>
+         </table>
          </div>
+
+         <!-- Footer -->
+         <div style='color:#555;font-size:11px;margin-top:16px;line-height:1.7;'>
+           <b style='color:#9aa3b2;'>Formula:</b>
+           p = 1 / (1 + exp(\u2212log_odds)) &nbsp;|&nbsp;
+           Baseline log_odds = \u22121.73 (15% base rate) &nbsp;|&nbsp;
+           Each factor adjusts log_odds additively &nbsp;|&nbsp;
+           Final probability clamped [2%, 97%] to reflect model uncertainty.<br/>
+           <b style='color:#9aa3b2;'>References:</b>
+           Estrella &amp; Mishkin (1998) \u2014 yield curve; Sahm (2019) \u2014 labor rule;
+           Hamilton (1983) \u2014 oil shocks; Conference Board LEI methodology.
+         </div>
+
        </div>
      </div>"
   )
