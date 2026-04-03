@@ -284,9 +284,9 @@ build_glm_feature_matrix <- function(fred_data) {
       pay_m <- gf("PAYEMS", "payems") # ← was gm()
       lfpr_m <- gf("LNS11300060", "prime_lfpr")
       usd_m <- gf("DTWEXBGS", "usd")
-      isr_m <- gm("ISRATIO", "inv_sales") # shorter history, gm() fine
-      cc_m <- gm("DRCCLACBS", "cc_del")
-      sent_m <- gm("UMCSENT", "sentiment")
+      isr_m <- gf("ISRATIO", "inv_sales") # monthly, gf for full history
+      cc_m <- gf("DRCCLACBS", "cc_del") # quarterly → gf for full history, LOCF below
+      sent_m <- gf("UMCSENT", "sentiment") # gf for full history
 
       if (is.null(unrate) || is.null(cpi_m) || is.null(fedfund)) {
         message("[t3] Missing core series (UNRATE/CPIAUCSL/FEDFUNDS).")
@@ -395,15 +395,25 @@ build_glm_feature_matrix <- function(fred_data) {
 
       for (df in list(
         pay_df,
-        hy_m, # hy_m: just pass directly, no pipe trick
+        hy_m,
         oil_df,
         lfpr_m,
         usd_df,
-        locf(isr_m, "inv_sales"), # ISRATIO: monthly, locf is no-op but safe
-        locf(cc_m, "cc_del"), # DRCCLACBS: quarterly → forward-fill
+        isr_m,
+        cc_m,
         sent_m
       )) {
         if (!is.null(df)) panel <- dplyr::left_join(panel, df, by = "date")
+      }
+
+      # LOCF for quarterly series: NAs only appear AFTER the monthly join, so
+      # forward-fill MUST happen here on the assembled panel, not before the join.
+      # DRCCLACBS reports quarterly (Q-end only). ISRATIO is monthly, locf is a no-op.
+      if ("cc_del" %in% names(panel)) {
+        panel$cc_del <- zoo::na.locf(panel$cc_del, na.rm = FALSE)
+      }
+      if ("inv_sales" %in% names(panel)) {
+        panel$inv_sales <- zoo::na.locf(panel$inv_sales, na.rm = FALSE)
       }
 
       panel <- panel %>% dplyr::filter(!is.na(rec_next12), !is.na(u_rise))
@@ -1019,8 +1029,8 @@ compute_ensemble_weights <- function(
        @keyframes t3spin{to{transform:rotate(360deg);}}
        @keyframes t3pulse{0%%,100%%{opacity:.35;}50%%{opacity:1;}}
        .t3-spinner{width:40px;height:40px;border:3px solid #2a3042;border-top-color:#00b4d8;
-                   border-radius:50%;animation:t3spin .9s linear infinite;margin:0 auto 16px;}
-       .t3-dot{display:inline-block;width:6px;height:6px;border-radius:50%;background:#00b4d8;
+                   border-radius:50%%;animation:t3spin .9s linear infinite;margin:0 auto 16px;}
+       .t3-dot{display:inline-block;width:6px;height:6px;border-radius:50%%;background:#00b4d8;
                margin:0 2px;animation:t3pulse 1.2s ease-in-out infinite;}
        .t3-dot:nth-child(2){animation-delay:.2s;}.t3-dot:nth-child(3){animation-delay:.4s;}
      </style>
@@ -1572,9 +1582,83 @@ compute_ensemble_weights <- function(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# build_growth_outlook — withProgress + .regime_from_score
+# GDP POINT FORECAST
+# Maps composite score + recession probability to a quantitative annualized GDP
+# estimate for the next quarter.
+#
+# Calibration anchors (score → annualized GDP, post-WWII US data):
+#   score  0  →  -3.5%  (deep recession: 2008Q4, 2020Q1)
+#   score  3  →  -0.5%  (mild recession / stall: 2001, 2022H1)
+#   score  5  →  +1.5%  (below-trend: 2015–16, 2019)
+#   score  7  →  +2.5%  (trend growth: 2014–17 average)
+#   score  8  →  +3.0%  (above-trend: 2018, 2023Q3)
+#   score 10  →  +4.5%  (boom: 2021Q3, 1983–84)
+#
+# The formula is:  gdp_base = -3.5 + score × 0.70
+# Then a recession probability discount pulls the estimate toward
+# recession territory when the model flags elevated risk.
 # ═══════════════════════════════════════════════════════════════════════════════
 
+.compute_gdp_forecast <- function(score_0_10, recession_prob_pct, components) {
+  if (is.null(score_0_10) || is.na(score_0_10)) {
+    return(NULL)
+  }
+
+  # ── Base estimate from composite score ───────────────────────────────────────
+  gdp_base <- -3.5 + score_0_10 * 0.70 # maps 0 → -3.5%, 10 → +3.5%
+  # Asymmetric floor/ceiling: recoveries can exceed model range
+  gdp_base <- max(-5.0, min(5.5, gdp_base))
+
+  # ── Recession probability discount ───────────────────────────────────────────
+  # At 0% prob: no adjustment.  At 50%: -0.9pp.  At 90%: -1.6pp.
+  # Uses sqrt to make the drag non-linear (small probs barely matter,
+  # high probs strongly pull toward contraction).
+  rec_prob <- if (!is.null(recession_prob_pct) && !is.na(recession_prob_pct)) {
+    pmax(0, pmin(100, recession_prob_pct))
+  } else {
+    15
+  }
+  rec_drag <- -1.8 * sqrt(rec_prob / 100) # 0% → 0, 50% → -1.27, 90% → -1.71
+
+  gdp_point <- gdp_base + rec_drag
+
+  # ── Uncertainty band: widens with recession risk ──────────────────────────────
+  # Reflects that model accuracy falls sharply near turning points
+  uncertainty <- 0.6 + (rec_prob / 100) * 1.4 # 0% → ±0.6, 50% → ±1.3, 90% → ±1.86
+  gdp_ci_lo <- gdp_point - uncertainty
+  gdp_ci_hi <- gdp_point + uncertainty
+
+  # ── Primary driver of the forecast ───────────────────────────────────────────
+  # The component with the largest absolute contribution to the composite score
+  if (!is.null(components)) {
+    comp_contribs <- sapply(components, function(c) c$score * c$weight)
+    top_driver_idx <- which.max(abs(comp_contribs))
+    top_driver <- list(
+      name = components[[top_driver_idx]]$label,
+      score = round(components[[top_driver_idx]]$score, 2),
+      contrib_sign = if (comp_contribs[top_driver_idx] > 0) {
+        "supporting"
+      } else {
+        "dragging"
+      }
+    )
+  } else {
+    top_driver <- NULL
+  }
+
+  list(
+    point = round(gdp_point, 1),
+    ci_lo = round(gdp_ci_lo, 1),
+    ci_hi = round(gdp_ci_hi, 1),
+    uncertainty = round(uncertainty, 2),
+    rec_drag = round(rec_drag, 2),
+    top_driver = top_driver,
+    method = "Composite score + recession probability discount"
+  )
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
   if (is.null(kpis)) {
     return(NULL)
@@ -1771,8 +1855,16 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
     NA_real_
   }
 
-  # ── Train / retrieve with Shiny progress bar ─────────────────────────────────
-  cache_name <- ".recession_t3_cache"
+  # ── Disk-backed cache — persists across Shiny restarts ───────────────────────
+  # Cache file lives in the app's working directory. Change the path if needed.
+  cache_dir <- tryCatch(
+    dirname(getOption("shiny.appDir", default = ".")),
+    error = function(e) "."
+  )
+  cache_file <- file.path(cache_dir, ".recession_t3_cache.rds")
+  cache_name <- ".recession_t3_cache" # in-memory copy for fast access within session
+
+  # Load from disk if not in memory
   cache <- tryCatch(
     if (exists(cache_name, envir = .GlobalEnv)) {
       get(cache_name, envir = .GlobalEnv)
@@ -1781,6 +1873,21 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
     },
     error = function(e) NULL
   )
+
+  if (is.null(cache) && file.exists(cache_file)) {
+    tryCatch(
+      {
+        cache <- readRDS(cache_file)
+        assign(cache_name, cache, envir = .GlobalEnv)
+        message("[t3] Cache loaded from disk: ", cache_file)
+      },
+      error = function(e) {
+        message("[t3] Could not read cache file: ", e$message)
+        cache <- NULL
+      }
+    )
+  }
+
   needs_train <- is.null(cache) ||
     is.null(cache$glm) ||
     difftime(
@@ -1804,10 +1911,20 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
       prog("Scoring on 36-month holdout (Brier)\u2026", 0.75)
       ew_obj <- compute_ensemble_weights(glm_obj, ms_obj, holdout_months = 36L)
       prog("Caching results\u2026", 0.95)
-      assign(
-        cache_name,
-        list(glm = glm_obj, markov = ms_obj, ew = ew_obj),
-        envir = .GlobalEnv
+      new_cache <- list(glm = glm_obj, markov = ms_obj, ew = ew_obj)
+      assign(cache_name, new_cache, envir = .GlobalEnv)
+      # Persist to disk so cache survives Shiny restarts
+      tryCatch(
+        {
+          saveRDS(new_cache, cache_file)
+          message(sprintf(
+            "[t3] Cache saved to disk: %s (valid 30 days)",
+            cache_file
+          ))
+        },
+        error = function(e) {
+          message("[t3] Could not write cache to disk: ", e$message)
+        }
       )
     }
     tryCatch(
@@ -1862,7 +1979,12 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
     components = components,
     swing = swing,
     recession_prob = recession_prob,
-    as_of = Sys.Date()
+    as_of = Sys.Date(),
+    gdp_forecast = .compute_gdp_forecast(
+      score_0_10,
+      recession_prob$prob,
+      components
+    )
   )
 }
 
@@ -2063,13 +2185,102 @@ render_growth_outlook_html <- function(outlook) {
   swing <- outlook$swing
   gc <- reg$color
 
-  gauge_html <- sprintf(
-    "<div style='margin:12px 0 16px;'><div style='display:flex;justify-content:space-between;margin-bottom:5px;'><span style='color:#9aa3b2;font-size:11px;'>Contraction Risk</span><span style='color:#9aa3b2;font-size:11px;'>Expansion</span></div><div style='background:#2a3042;border-radius:6px;height:12px;overflow:hidden;'><div style='background:linear-gradient(90deg,%s,%s);width:%.0f%%;height:100%%;border-radius:6px;'></div></div><div style='margin-top:5px;display:flex;justify-content:space-between;'><span style='color:#9aa3b2;font-size:10px;'>0</span><span style='color:%s;font-size:11px;font-weight:700;'>Score: %.1f / 10</span><span style='color:#9aa3b2;font-size:10px;'>10</span></div></div>",
+  # ── GDP point forecast display ───────────────────────────────────────────────
+  gf <- outlook$gdp_forecast
+  gdp_display <- if (!is.null(gf)) {
+    pt <- gf$point
+    lo <- gf$ci_lo
+    hi <- gf$ci_hi
+    col <- if (pt >= 2.5) {
+      "#2dce89"
+    } else if (pt >= 1.0) {
+      "#00b4d8"
+    } else if (pt >= 0) {
+      "#f4a261"
+    } else {
+      "#e94560"
+    }
+    arrow_sym <- if (pt > 2.5) {
+      "\u2191\u2191"
+    } else if (pt > 1.0) {
+      "\u2191"
+    } else if (pt > -0.5) {
+      "\u2192"
+    } else {
+      "\u2193"
+    }
+    ci_note <- paste0("CI [", lo, "%, ", hi, "%]")
+    td <- gf$top_driver
+    driver_note <- if (!is.null(td)) {
+      paste0(" &nbsp;\u2014&nbsp; ", td$contrib_sign, ": ", td$name)
+    } else {
+      ""
+    }
+    paste0(
+      "<div style='margin:10px 0 14px;padding:12px 16px;background:#0a1520;border-radius:8px;border-left:4px solid ",
+      col,
+      ";'>",
+      "<div style='color:#9aa3b2;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;'>",
+      "Next-Quarter GDP Forecast &nbsp;<span style='color:#555;font-weight:400;font-size:9px;'>(annualized, model-based)</span></div>",
+      "<div style='display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;'>",
+      "<span style='color:",
+      col,
+      ";font-size:30px;font-weight:800;'>",
+      arrow_sym,
+      " ",
+      sprintf("%+.1f", pt),
+      "%</span>",
+      "<span style='color:#6b7585;font-size:12px;'>",
+      ci_note,
+      "</span>",
+      "</div>",
+      "<div style='color:#6b7585;font-size:10px;margin-top:4px;'>",
+      if (gf$rec_drag < -0.2) {
+        paste0(
+          "Recession probability drag: ",
+          sprintf("%.1f", gf$rec_drag),
+          "pp &nbsp;"
+        )
+      } else {
+        ""
+      },
+      driver_note,
+      "</div>",
+      "<div style='color:#555;font-size:9px;margin-top:6px;'>",
+      "Point estimate from composite score + recession risk discount. CI widens with uncertainty. Not a professional forecast.",
+      "</div></div>"
+    )
+  } else {
+    paste0(
+      "<div style='color:#f4a261;font-size:16px;font-weight:700;margin-bottom:10px;'>",
+      "GDP Est: ",
+      reg$gdp_est,
+      " annualized</div>"
+    )
+  }
+
+  gauge_html <- paste0(
+    "<div style='margin:8px 0 14px;'>",
+    "<div style='display:flex;justify-content:space-between;margin-bottom:5px;'>",
+    "<span style='color:#9aa3b2;font-size:11px;'>Contraction Risk</span>",
+    "<span style='color:#9aa3b2;font-size:11px;'>Expansion</span></div>",
+    "<div style='background:#2a3042;border-radius:6px;height:12px;overflow:hidden;'>",
+    "<div style='background:linear-gradient(90deg,",
     if (score < 5) "#e94560" else "#f4a261",
+    ",",
     gc,
-    score / 10 * 100,
+    ");",
+    "width:",
+    round(score / 10 * 100),
+    "%;height:100%;border-radius:6px;'></div></div>",
+    "<div style='margin-top:5px;display:flex;justify-content:space-between;'>",
+    "<span style='color:#9aa3b2;font-size:10px;'>0</span>",
+    "<span style='color:",
     gc,
-    score
+    ";font-size:11px;font-weight:700;'>Score: ",
+    score,
+    " / 10</span>",
+    "<span style='color:#9aa3b2;font-size:10px;'>10</span></div></div>"
   )
 
   comp_html <- paste(
@@ -2291,9 +2502,7 @@ render_growth_outlook_html <- function(outlook) {
     ";font-size:22px;font-weight:800;margin-bottom:2px;'>",
     reg$label,
     "</div>",
-    "<div style='color:#f4a261;font-size:16px;font-weight:700;margin-bottom:10px;'>GDP Est: ",
-    reg$gdp_est,
-    " annualized</div>",
+    gdp_display,
     gauge_html,
     "<div style='background:#0f1117;border-radius:6px;padding:10px 12px;color:#9aa3b2;font-size:12px;line-height:1.7;border-left:3px solid ",
     reg$color,

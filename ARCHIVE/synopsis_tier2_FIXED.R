@@ -47,7 +47,7 @@
 
 # Inherit everything from Tier 1
 source(
-  file.path(dirname(sys.frame(1)$ofile %||% "."), "R/synopsis_tier1.R"),
+  file.path(dirname(sys.frame(1)$ofile %||% "."), "synopsis_tier1.R"),
   local = FALSE
 )
 
