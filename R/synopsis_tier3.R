@@ -25,6 +25,7 @@
 #       synopsis_original.R   (kept for reference, not sourced)
 #       data_fred.R  /  data_census.R  /  llm_insights.R
 # ─────────────────────────────────────────────────────────────────────────────
+library(glmnet)
 
 # ── Source tier 2 (which sources tier 1) ─────────────────────────────────────
 local({

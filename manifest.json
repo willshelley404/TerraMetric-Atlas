@@ -194,29 +194,6 @@
         "Archs": "x64"
       }
     },
-    "MSwM": {
-      "Source": "CRAN",
-      "Repository": "https://cran.rstudio.com",
-      "description": {
-        "Package": "MSwM",
-        "Type": "Package",
-        "Title": "Fitting Markov Switching Models",
-        "Version": "1.5",
-        "Date": "2021-06-05",
-        "Author": "Josep A. Sanchez-Espigares, Alberto Lopez-Moreno",
-        "Maintainer": "Josep A. Sanchez-Espigares <josep.a.sanchez@upc.edu>",
-        "Description": "Estimation, inference and diagnostics for Univariate Autoregressive Markov Switching Models for Linear and Generalized Models. Distributions for the series include gaussian, Poisson, binomial and gamma cases. The EM algorithm is used for estimation (see Perlin (2012) <doi:10.2139/ssrn.1714016>).",
-        "License": "GPL (>= 2.0)",
-        "Depends": "methods, graphics, parallel",
-        "Imports": "nlme",
-        "NeedsCompilation": "no",
-        "Packaged": "2021-06-05 18:08:13 UTC; josep",
-        "RoxygenNote": "6.0.1",
-        "Repository": "CRAN",
-        "Date/Publication": "2021-06-06 10:20:02 UTC",
-        "Built": "R 4.5.3; ; 2026-03-28 18:49:54 UTC; windows"
-      }
-    },
     "Matrix": {
       "Source": "CRAN",
       "Repository": "https://cran.rstudio.com",
@@ -1441,6 +1418,29 @@
         "RemoteSha": "1.2.0"
       }
     },
+    "corpcor": {
+      "Source": "CRAN",
+      "Repository": "https://cran.rstudio.com",
+      "description": {
+        "Package": "corpcor",
+        "Version": "1.6.10",
+        "Date": "2021-09-16",
+        "Title": "Efficient Estimation of Covariance and (Partial) Correlation",
+        "Author": "Juliane Schafer, Rainer Opgen-Rhein, Verena Zuber, Miika Ahdesmaki, \n A. Pedro Duarte Silva, and Korbinian Strimmer.",
+        "Maintainer": "Korbinian Strimmer <strimmerlab@gmail.com>",
+        "Depends": "R (>= 3.0.2)",
+        "Imports": "stats",
+        "Suggests": "",
+        "Description": "Implements a James-Stein-type shrinkage estimator for \n  the covariance matrix, with separate shrinkage for variances and correlations.  \n  The details of the method are explained in Schafer and Strimmer (2005) \n  <DOI:10.2202/1544-6115.1175> and Opgen-Rhein and Strimmer (2007) \n  <DOI:10.2202/1544-6115.1252>.  The approach is both computationally as well\n  as statistically very efficient, it is applicable to \"small n, large p\" data, \n  and always returns a positive definite and well-conditioned covariance matrix.  \n  In addition to inferring the covariance matrix the package also provides \n  shrinkage estimators for partial correlations and partial variances.  \n  The inverse of the covariance and correlation matrix \n  can be efficiently computed, as well as any arbitrary power of the \n  shrinkage correlation matrix.  Furthermore, functions are available for fast \n  singular value decomposition, for computing the pseudoinverse, and for \n  checking the rank and positive definiteness of a matrix.",
+        "License": "GPL (>= 3)",
+        "URL": "https://strimmerlab.github.io/software/corpcor/",
+        "NeedsCompilation": "no",
+        "Packaged": "2021-09-16 14:05:52 UTC; strimmer",
+        "Repository": "CRAN",
+        "Date/Publication": "2021-09-16 15:30:08 UTC",
+        "Built": "R 4.5.2; ; 2025-11-01 00:33:34 UTC; windows"
+      }
+    },
     "cpp11": {
       "Source": "CRAN",
       "Repository": "https://cran.rstudio.com",
@@ -2087,6 +2087,34 @@
         "RemoteSha": "1.0.1"
       }
     },
+    "foreach": {
+      "Source": "CRAN",
+      "Repository": "https://cran.rstudio.com",
+      "description": {
+        "Package": "foreach",
+        "Type": "Package",
+        "Title": "Provides Foreach Looping Construct",
+        "Version": "1.5.2",
+        "Authors@R": "c(person(\"Folashade\", \"Daniel\", role=\"cre\", email=\"fdaniel@microsoft.com\"),\n             person(\"Hong\", \"Ooi\", role=\"ctb\"),\n             person(\"Rich\", \"Calaway\", role=\"ctb\"),\n             person(\"Microsoft\", role=c(\"aut\", \"cph\")),\n             person(\"Steve\", \"Weston\", role=\"aut\"))",
+        "Description": "Support for the foreach looping construct.  Foreach is an\n        idiom that allows for iterating over elements in a collection,\n        without the use of an explicit loop counter.  This package in\n        particular is intended to be used for its return value, rather\n        than for its side effects.  In that sense, it is similar to the\n        standard lapply function, but doesn't require the evaluation\n        of a function.  Using foreach without side effects also\n        facilitates executing the loop in parallel.",
+        "License": "Apache License (== 2.0)",
+        "URL": "https://github.com/RevolutionAnalytics/foreach",
+        "BugReports": "https://github.com/RevolutionAnalytics/foreach/issues",
+        "Depends": "R (>= 2.5.0)",
+        "Imports": "codetools, utils, iterators",
+        "Suggests": "randomForest, doMC, doParallel, testthat, knitr, rmarkdown",
+        "VignetteBuilder": "knitr",
+        "RoxygenNote": "7.1.1",
+        "Collate": "'callCombine.R' 'foreach.R' 'do.R' 'foreach-ext.R'\n'foreach-pkg.R' 'getDoPar.R' 'getDoSeq.R' 'getsyms.R' 'iter.R'\n'nextElem.R' 'onLoad.R' 'setDoPar.R' 'setDoSeq.R' 'times.R'\n'utils.R'",
+        "NeedsCompilation": "no",
+        "Packaged": "2022-01-11 04:21:12 UTC; fdaniel",
+        "Author": "Folashade Daniel [cre],\n  Hong Ooi [ctb],\n  Rich Calaway [ctb],\n  Microsoft [aut, cph],\n  Steve Weston [aut]",
+        "Maintainer": "Folashade Daniel <fdaniel@microsoft.com>",
+        "Repository": "CRAN",
+        "Date/Publication": "2022-02-02 09:20:02 UTC",
+        "Built": "R 4.5.3; ; 2026-03-28 19:36:36 UTC; windows"
+      }
+    },
     "forecast": {
       "Source": "CRAN",
       "Repository": "https://cran.rstudio.com",
@@ -2430,6 +2458,37 @@
         "RemoteRef": "ggplot2",
         "RemoteRepos": "https://cran.rstudio.com",
         "RemoteSha": "4.0.2"
+      }
+    },
+    "glmnet": {
+      "Source": "CRAN",
+      "Repository": "https://cran.rstudio.com",
+      "description": {
+        "Package": "glmnet",
+        "Type": "Package",
+        "Title": "Lasso and Elastic-Net Regularized Generalized Linear Models",
+        "Version": "4.1-10",
+        "Date": "2025-07-15",
+        "Authors@R": "c(person(\"Jerome\", \"Friedman\", role=c(\"aut\")),\n\t     person(\"Trevor\", \"Hastie\", role=c(\"aut\", \"cre\"), email = \"hastie@stanford.edu\"),\n\t     person(\"Rob\", \"Tibshirani\", role=c(\"aut\")),\n\t     person(\"Balasubramanian\", \"Narasimhan\", role=c(\"aut\")),\n\t     person(\"Kenneth\",\"Tay\",role=c(\"aut\")),\n\t     person(\"Noah\", \"Simon\", role=c(\"aut\")),\n\t     person(\"Junyang\", \"Qian\", role=c(\"ctb\")),\n\t     person(\"James\", \"Yang\", role=c(\"aut\")))",
+        "Depends": "R (>= 3.6.0), Matrix (>= 1.0-6)",
+        "Imports": "methods, utils, foreach, shape, survival, Rcpp",
+        "Suggests": "knitr, lars, testthat, xfun, rmarkdown",
+        "SystemRequirements": "C++17",
+        "Description": "Extremely efficient procedures for fitting the entire lasso or elastic-net regularization path for linear regression, logistic and multinomial regression models, Poisson regression, Cox model,  multiple-response Gaussian, and the grouped multinomial regression; see <doi:10.18637/jss.v033.i01> and <doi:10.18637/jss.v039.i05>. There are two new and important additions. The family argument can be a GLM family object, which opens the door to any programmed family (<doi:10.18637/jss.v106.i01>). This comes with a modest computational cost, so when the built-in families suffice, they should be used instead.  The other novelty is the relax option, which refits each of the active sets in the path unpenalized. The algorithm uses cyclical coordinate descent in a path-wise fashion, as described in the papers cited.",
+        "License": "GPL-2",
+        "VignetteBuilder": "knitr",
+        "Encoding": "UTF-8",
+        "URL": "https://glmnet.stanford.edu",
+        "RoxygenNote": "7.3.2",
+        "LinkingTo": "RcppEigen, Rcpp",
+        "NeedsCompilation": "yes",
+        "Packaged": "2025-07-16 00:40:18 UTC; hastie",
+        "Author": "Jerome Friedman [aut],\n  Trevor Hastie [aut, cre],\n  Rob Tibshirani [aut],\n  Balasubramanian Narasimhan [aut],\n  Kenneth Tay [aut],\n  Noah Simon [aut],\n  Junyang Qian [ctb],\n  James Yang [aut]",
+        "Maintainer": "Trevor Hastie <hastie@stanford.edu>",
+        "Repository": "CRAN",
+        "Date/Publication": "2025-07-17 04:50:02 UTC",
+        "Built": "R 4.5.3; x86_64-w64-mingw32; 2026-03-28 20:12:02 UTC; windows",
+        "Archs": "x64"
       }
     },
     "globals": {
@@ -3090,6 +3149,29 @@
         "RemoteRef": "isoband",
         "RemoteRepos": "https://cran.rstudio.com",
         "RemoteSha": "0.3.0"
+      }
+    },
+    "iterators": {
+      "Source": "CRAN",
+      "Repository": "https://cran.rstudio.com",
+      "description": {
+        "Package": "iterators",
+        "Type": "Package",
+        "Title": "Provides Iterator Construct",
+        "Version": "1.0.14",
+        "Authors@R": "c(person(\"Folashade\", \"Daniel\", role=\"cre\", email=\"fdaniel@microsoft.com\"),\n             person(\"Revolution\", \"Analytics\", role=c(\"aut\", \"cph\")),\n             person(\"Steve\", \"Weston\", role=\"aut\"))",
+        "Description": "Support for iterators, which allow a programmer to traverse\n    through all the elements of a vector, list, or other collection of data.",
+        "URL": "https://github.com/RevolutionAnalytics/iterators",
+        "Depends": "R (>= 2.5.0), utils",
+        "Suggests": "RUnit, foreach",
+        "License": "Apache License (== 2.0)",
+        "NeedsCompilation": "no",
+        "Packaged": "2022-01-16 18:19:31 UTC; folashade",
+        "Author": "Folashade Daniel [cre],\n  Revolution Analytics [aut, cph],\n  Steve Weston [aut]",
+        "Maintainer": "Folashade Daniel <fdaniel@microsoft.com>",
+        "Repository": "CRAN",
+        "Date/Publication": "2022-02-05 00:50:08 UTC",
+        "Built": "R 4.5.2; ; 2026-02-25 01:54:09 UTC; windows"
       }
     },
     "jquerylib": {
@@ -7227,27 +7309,6 @@
     "ARCHIVE/synopsis_orginal.R": {
       "checksum": "20d97b164ff3e31c2d6d3ffb6f29260e"
     },
-    "ARCHIVE/synopsis_tier3_first.R": {
-      "checksum": "9b06d01d9e5d401b71d42589d801aa12"
-    },
-    "ARCHIVE/synopsis_tier3_patch.R": {
-      "checksum": "55dbc43c5930d8e429d60d74bc15282b"
-    },
-    "ARCHIVE/synopsis_tier3_patch2.R": {
-      "checksum": "583aa1e86f4ac82fa1f08ada6e18cf06"
-    },
-    "ARCHIVE/synopsis_tier3_patch3.R": {
-      "checksum": "7665f7b96cf76381b261f37b2c782b6a"
-    },
-    "ARCHIVE/synopsis_tier3_patch4.R": {
-      "checksum": "5fafc8016e8502064bb74f82e5748740"
-    },
-    "ARCHIVE/synopsis_tier3_patch5.R": {
-      "checksum": "b5474faf422708717a42f293f84d1215"
-    },
-    "ARCHIVE/synopsis_tier3_patch6.R": {
-      "checksum": "e13d4d085f7965c4a530bcfe0f4b7a7a"
-    },
     "global.R": {
       "checksum": "ed2b53739a3b05247a97740006401c4a"
     },
@@ -7276,10 +7337,10 @@
       "checksum": "ef8ffc7bd86e55e5f4f22abf9db5217b"
     },
     "R/data_markets.R": {
-      "checksum": "389d6ea3309818c3be36c758c6a8ad75"
+      "checksum": "9d3ef34ae643930415dec7071283fc60"
     },
     "R/data_news.R": {
-      "checksum": "b38603120ecf9ba9cb19115d78074d1d"
+      "checksum": "b28c118ea6eb23bb5ac848e6ddc954a7"
     },
     "R/forecasting.R": {
       "checksum": "6e622395615eb5aa206aa8722a6231a9"
@@ -7288,13 +7349,16 @@
       "checksum": "917c920c4f31e8eb9bd97cfe2e5c188b"
     },
     "R/synopsis_tier1.R": {
-      "checksum": "a0b79bcff6516870232acb83b7d6a146"
+      "checksum": "6ace7299e884de5494cae162838848e4"
     },
     "R/synopsis_tier2.R": {
-      "checksum": "8a3bc95b187df69a4177a0c840dafcfe"
+      "checksum": "c4b785ebbe0a4de09ce4de4a13b4f51f"
     },
     "R/synopsis_tier3.R": {
-      "checksum": "fabd242c972f94e6c47d265451b0f976"
+      "checksum": "f3dd88fadd5e655a15a32d524190aa35"
+    },
+    "R/synopsis_tier3_fixed.R": {
+      "checksum": "3ecfc9ae76ce974e525235f3e8a4ef92"
     },
     "README.md": {
       "checksum": "0635dd4224252d1976d3de8373881a8e"
