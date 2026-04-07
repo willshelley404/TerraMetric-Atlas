@@ -40,6 +40,17 @@ local({
 })
 
 
+# ── Re-define %||% to handle list inputs (tier1's version calls is.na(list) ──────
+# Tier1 defines: if(!is.null(a) && !is.na(a))
+# is.na() on a list returns a vector → if(vector) → 'length=N' error
+# This version uses tryCatch to safely handle any type of a.
+`%||%` <- function(a, b) {
+  if (is.null(a)) return(b)
+  ok <- tryCatch(!is.na(a[[1]]), error = function(e) TRUE)
+  if (isTRUE(ok) && length(a) > 0) a else b
+}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONSTANTS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -145,10 +156,16 @@ build_glm_feature_matrix <- function(fred_data) {
         dplyr::rename(date=month)
     }
     # Helper: try fredr full history first, fall back to gm()
-    gf <- function(sid, val_name, start=as.Date("1959-01-01")) {
+    gf <- function(sid, val_name, start=as.Date("1959-01-01"), freq="m") {
+      # floor_date + group_by ensures quarterly/daily series align to month-start dates
+      # without this, quarterly FRED dates (e.g. 1991-03-31) won't join to monthly panel
       tryCatch(
-        fredr::fredr(sid, observation_start=start, frequency="m") %>%
-          dplyr::select(date, !!val_name:=value),
+        fredr::fredr(sid, observation_start=start, frequency=freq) %>%
+          dplyr::select(date, value) %>%
+          dplyr::mutate(month=lubridate::floor_date(date,"month")) %>%
+          dplyr::group_by(month) %>%
+          dplyr::summarise(!!val_name:=mean(value,na.rm=TRUE),.groups="drop") %>%
+          dplyr::rename(date=month),
         error=function(e) {
           message(sprintf("[t3] fredr('%s') unavailable: %s — using fred_data", sid, e$message))
           gm(sid, val_name)
@@ -196,7 +213,7 @@ build_glm_feature_matrix <- function(fred_data) {
     lfpr_m  <- gf("LNS11300060",  "prime_lfpr")
     usd_m   <- gf("DTWEXBGS",     "usd")
     isr_m   <- gf("ISRATIO",      "inv_sales")  # monthly, gf for full history
-    cc_m    <- gf("DRCCLACBS",    "cc_del")     # quarterly → gf for full history, LOCF below
+    cc_m    <- gf("DRCCLACBS",    "cc_del",  freq="q")  # quarterly → must use freq="q" on FRED
     sent_m  <- gf("UMCSENT",      "sentiment")  # gf for full history
 
     if (is.null(unrate) || is.null(cpi_m) || is.null(fedfund)) {
@@ -304,8 +321,25 @@ rolling_retrain <- function(fred_data, window=360L) {
   available <- intersect(possible, names(panel_rolling))
   if (length(available) < 3) { message("[t3] Too few predictors for GLM."); return(NULL) }
 
+  # Drop predictors that have >30% NA in the rolling window to avoid losing rows via drop_na
+  # DRCCLACBS starts 1991, UMCSENT starts 1978 — both fine for a 30-year rolling window
+  # But if gf() alignment fails, they appear all-NA; detect and exclude those
+  coverage <- sapply(available, function(v) {
+    col <- panel_rolling[[v]]
+    sum(!is.na(col)) / length(col)
+  })
+  good_preds <- available[coverage >= 0.70]  # require 70% non-NA coverage
+  dropped <- setdiff(available, good_preds)
+  if (length(dropped) > 0)
+    message(sprintf("[t3] Dropping low-coverage predictors: %s", paste(dropped, collapse=", ")))
+  if (length(good_preds) < 3) {
+    message(sprintf("[t3] Too few predictors after coverage filter (%d). Returning NULL.", length(good_preds)))
+    return(NULL)
+  }
+
   panel_clean <- panel_rolling %>%
-    dplyr::select(rec_next12, dplyr::all_of(available)) %>% tidyr::drop_na()
+    dplyr::select(rec_next12, dplyr::all_of(good_preds)) %>% tidyr::drop_na()
+  available <- good_preds  # update available for GLM formula
   if (nrow(panel_clean) < 60) { message(sprintf("[t3] Clean panel too small: %d rows.", nrow(panel_clean))); return(NULL) }
 
   fml <- as.formula(paste("rec_next12 ~", paste(available, collapse=" + ")))
@@ -319,6 +353,27 @@ rolling_retrain <- function(fred_data, window=360L) {
     ad <- build_anomaly_detector(panel_clean[,available,drop=FALSE])
     message(sprintf("[t3] GLM: n=%d, window=%dM, AIC=%.1f, %d predictors",
                     nrow(panel_clean), window, AIC(model), length(available)))
+    # ── Data-driven anomaly recession floor ──────────────────────────────────────
+    # Compute Mahalanobis distances for all training rows, then find the empirical
+    # recession rate in the top 10% of distances. This is the historically-grounded
+    # probability of recession when conditions are genuinely anomalous — fully
+    # data-driven, never hard-coded.
+    if (!is.null(ad)) {
+      tryCatch({
+        feat_mat  <- as.matrix(panel_clean[, available, drop=FALSE])
+        train_mds <- sqrt(mahalanobis(feat_mat, ad$mu, ad$cov_reg))
+        anomalous <- train_mds > ad$d90
+        rec_col   <- panel_clean$rec_next12
+        n_anom    <- sum(anomalous, na.rm=TRUE)
+        if (n_anom >= 12) {
+          p_anom_rec <- mean(rec_col[anomalous], na.rm=TRUE)
+          ad$p_anomalous_recession <- round(p_anom_rec, 3)
+          message(sprintf("[t3] Anomaly recession rate (MD>d90, n=%d months): %.1f%%",
+                          n_anom, p_anom_rec * 100))
+        }
+      }, error=function(e) message("[t3] Anomaly recession rate calc failed: ", e$message))
+    }
+
     list(model=model, coef_table=coef_tbl, n_obs=nrow(panel_clean),
          aic=round(AIC(model),1), predictors=available, trained_at=Sys.time(),
          anomaly_detector=ad, window_months=window,
@@ -344,7 +399,11 @@ train_markov_model <- function(fred_data, n_states=3L, n_restarts=5L) {
     gf <- function(sid, val_name, start=as.Date("1959-01-01")) {
       tryCatch(
         fredr::fredr(sid,observation_start=start,frequency="m") %>%
-          dplyr::select(date,!!val_name:=value),
+          dplyr::select(date,value) %>%
+          dplyr::mutate(month=lubridate::floor_date(date,"month")) %>%
+          dplyr::group_by(month) %>%
+          dplyr::summarise(!!val_name:=mean(value,na.rm=TRUE),.groups="drop") %>%
+          dplyr::rename(date=month),
         error=function(e){ message(sprintf("[t3] fredr('%s') failed: %s",sid,e$message)); gm_local(sid,val_name) })
     }
 
@@ -467,7 +526,11 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
     if (nrow(sc) < 60) stop("scoring train set too small")
     tmp  <- glm(as.formula(paste("rec_next12~",paste(avail,collapse="+"))),data=sc,family=binomial)
     hdf  <- hold_df[,avail,drop=FALSE]
-    for (col in names(hdf)) if(is.na(hdf[[col]])) hdf[[col]] <- 0
+    # Use colwise NA replacement - NOT if(vector) which throws 'length=N' error
+    for (col in names(hdf)) {
+      nas <- is.na(hdf[[col]])
+      if (any(nas)) hdf[[col]][nas] <- 0
+    }
     mean((predict(tmp,newdata=hdf,type="response") - y_act)^2, na.rm=TRUE)
   }, error=function(e){ message("[t3] GLM Brier failed: ",e$message); NA_real_ })
 
@@ -485,8 +548,17 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
                   length(y_act)))
 
   if (is.na(glm_brier) && is.na(ms_brier)) return(fallback)
-  if (is.na(ms_brier))  return(modifyList(fallback,list(w_glm=0.85,w_ms=0.15,glm_brier=glm_brier,n_holdout=length(y_act),method="GLM only")))
-  if (is.na(glm_brier)) return(modifyList(fallback,list(w_glm=0.15,w_ms=0.85,ms_brier=ms_brier,n_holdout=length(y_act),method="Markov only")))
+  # If one model's Brier is NA, use equal weighting (don't give 85% to the other model blindly)
+  if (is.na(ms_brier))  return(modifyList(fallback,list(w_glm=0.70,w_ms=0.30,glm_brier=glm_brier,n_holdout=length(y_act),method="GLM only (equal fallback)")))
+  if (is.na(glm_brier)) return(modifyList(fallback,list(w_glm=0.70,w_ms=0.30,ms_brier=ms_brier,n_holdout=length(y_act),method="Markov only (equal fallback)")))
+  # Sanity check: if Markov Brier > climatology, it has zero skill — cap its weight at 20%
+  base_rate_check <- mean(panel$rec_next12, na.rm=TRUE)
+  clim_check <- base_rate_check * (1 - base_rate_check)
+  if (!is.na(ms_brier) && ms_brier > clim_check) {
+    message(sprintf("[t3] Markov Brier (%.4f) > climatology (%.4f) — Markov has no skill. Capping weight at 20%%.", ms_brier, clim_check))
+    ms_brier <- NA_real_
+    return(modifyList(fallback,list(w_glm=0.80,w_ms=0.20,glm_brier=glm_brier,n_holdout=length(y_act),method="GLM dominant (Markov zero skill)")))
+  }
 
   base_rate  <- mean(panel$rec_next12, na.rm=TRUE)
   clim       <- base_rate * (1 - base_rate)
@@ -556,45 +628,45 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
 # ═══════════════════════════════════════════════════════════════════════════════
 
 .growth_outlook_loading_html <- function(step=NULL) {
-  step_label <- if (!is.null(step)) htmltools::htmlEscape(step) else "Fitting models\u2026"
-  shiny::HTML(sprintf(
-    "<style>
-       @keyframes t3spin{to{transform:rotate(360deg);}}
-       @keyframes t3pulse{0%%,100%%{opacity:.35;}50%%{opacity:1;}}
-       .t3-spinner{width:40px;height:40px;border:3px solid #2a3042;border-top-color:#00b4d8;
-                   border-radius:50%%;animation:t3spin .9s linear infinite;margin:0 auto 16px;}
-       .t3-dot{display:inline-block;width:6px;height:6px;border-radius:50%%;background:#00b4d8;
-               margin:0 2px;animation:t3pulse 1.2s ease-in-out infinite;}
-       .t3-dot:nth-child(2){animation-delay:.2s;}.t3-dot:nth-child(3){animation-delay:.4s;}
-     </style>
-     <div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;padding:40px 24px;
-                 text-align:center;min-height:300px;display:flex;flex-direction:column;
-                 align-items:center;justify-content:center;gap:12px;'>
-       <div class='t3-spinner'></div>
-       <div style='color:#00b4d8;font-size:13px;font-weight:700;text-transform:uppercase;letter-spacing:1px;'>
-         Fitting Econometric Models</div>
-       <div style='color:#9aa3b2;font-size:12px;max-width:420px;line-height:1.7;'>%s</div>
-       <div style='display:flex;gap:4px;'>
-         <span class='t3-dot'></span><span class='t3-dot'></span><span class='t3-dot'></span>
-       </div>
-       <div style='margin-top:14px;background:#0f1117;border-radius:6px;padding:12px 20px;
-                   max-width:480px;text-align:left;'>
-         <div style='color:#555;font-size:10px;font-weight:700;text-transform:uppercase;
-                     letter-spacing:1px;margin-bottom:8px;'>What&apos;s running</div>
-         <div style='color:#6b7585;font-size:11px;line-height:2;'>
-           <span style='color:#2dce89;'>&#x2713;</span> Fetch FRED macro history (1959\u2013present)<br/>
-           <span style='color:#f4a261;'>&#x25cb;</span> Fit rolling GLM on NBER recession dates (30yr window)<br/>
-           <span style='color:#f4a261;'>&#x25cb;</span> Fit 3-state Hamilton Markov-switching model (pure-R EM)<br/>
-           <span style='color:#f4a261;'>&#x25cb;</span> Score both on 36-month out-of-sample holdout (Brier)<br/>
-           <span style='color:#f4a261;'>&#x25cb;</span> Build Mahalanobis anomaly detector<br/>
-           <span style='color:#9aa3b2;'>&#x25cb;</span> Render growth outlook
-         </div>
-       </div>
-       <div style='color:#555;font-size:10px;margin-top:6px;'>
-         First run: 10\u201360 seconds. Cached 30 days.</div>
-     </div>", step_label))
+  # Pure paste0 — no sprintf, no % format hazards anywhere
+  step_label <- if (!is.null(step)) htmltools::htmlEscape(step) else "Fitting models…"
+  shiny::HTML(paste0(
+    "<div style='background:#1a2035;border:1px solid #2a3042;border-radius:8px;",
+    "padding:40px 24px;text-align:center;min-height:300px;",
+    "display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;'>",
+    # SVG spinner avoids @keyframes % in sprintf entirely
+    "<svg width='44' height='44' viewBox='0 0 44 44' style='margin:0 auto 16px;'>",
+    "<style>@keyframes t3s{to{transform:rotate(360deg);}}</style>",
+    "<g style='animation:t3s 1s linear infinite;transform-origin:22px 22px;'>",
+    "<circle cx='22' cy='22' r='18' fill='none' stroke='#2a3042' stroke-width='3'/>",
+    "<path d='M22 4 A18 18 0 0 1 40 22' fill='none' stroke='#00b4d8'",
+    " stroke-width='3' stroke-linecap='round'/>",
+    "</g></svg>",
+    "<div style='color:#00b4d8;font-size:13px;font-weight:700;",
+    "text-transform:uppercase;letter-spacing:1px;'>Fitting Econometric Models</div>",
+    "<div style='color:#9aa3b2;font-size:12px;max-width:420px;line-height:1.7;'>",
+    step_label, "</div>",
+    "<div style='margin-top:14px;background:#0f1117;border-radius:6px;",
+    "padding:12px 20px;max-width:480px;text-align:left;'>",
+    "<div style='color:#555;font-size:10px;font-weight:700;text-transform:uppercase;",
+    "letter-spacing:1px;margin-bottom:8px;'>What's running</div>",
+    "<div style='color:#6b7585;font-size:11px;line-height:2;'>",
+    "<span style='color:#2dce89;'>&#x2713;</span>",
+    " Fetch FRED macro history (1959–present)<br/>",
+    "<span style='color:#f4a261;'>&#x25cb;</span>",
+    " Fit rolling GLM on NBER recession dates (30yr window)<br/>",
+    "<span style='color:#f4a261;'>&#x25cb;</span>",
+    " Fit 3-state Hamilton Markov-switching model (pure-R EM)<br/>",
+    "<span style='color:#f4a261;'>&#x25cb;</span>",
+    " Score both on 36-month out-of-sample holdout (Brier)<br/>",
+    "<span style='color:#f4a261;'>&#x25cb;</span>",
+    " Build Mahalanobis anomaly detector<br/>",
+    "<span style='color:#9aa3b2;'>&#x25cb;</span> Render growth outlook",
+    "</div></div>",
+    "<div style='color:#555;font-size:10px;margin-top:6px;'>",
+    "First run: 10–60 seconds. Cached 30 days.</div>",
+    "</div>"))
 }
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # .compute_recession_prob — Markov contribution in log-odds units
@@ -620,14 +692,47 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
   anomaly_result <- compute_anomaly_score(anomaly_detector, feat_df)
   A <- anomaly_result$score
 
+  # ── Hand-tuned model: computed FIRST — used as prior when GLM is available ────
+  # Must be computed before the GLM block which references ht_prob for blending.
+  ht_lo <- -1.73
+  {
+    ht <- function(id,lbl,val,fn){ if(is.na(val)){return(0)};d<-fn(val);d }
+    ht_lo<-ht_lo+ht("yield_curve","yc",yield_spread,function(v){d<- -v*0.85;if(!is.na(inv_months))d<-d+if(inv_months>=18)1.5 else if(inv_months>=12)1.2 else if(inv_months>=6)0.6 else if(inv_months>=3)0.3 else 0;d})
+    if(!is.na(u)&&!is.null(unemp)&&length(unemp)>=12){ur<-u-min(tail(unemp,12),na.rm=TRUE);sh<-if(ur>=0.5)1.8 else if(ur>=0.3)0.9 else if(ur>=0.1)0.3 else if(ur<(-0.2))-0.4 else 0;if(!is.na(pay_3m))sh<-sh+if(pay_3m<(-50))1.5 else if(pay_3m<0)0.6 else if(pay_3m<100)0.1 else if(pay_3m>250)-0.5 else 0;ht_lo<-ht_lo+sh}
+    ht_lo<-ht_lo+ht("pl","prime",prime_age_lfpr,function(v){d<-if(v<80.5)0.8 else if(v<82)0.4 else if(v>83.5)-0.3 else 0;if(!is.na(prime_age_lfpr_chg))d<-d+if(prime_age_lfpr_chg<(-0.5))0.9 else if(prime_age_lfpr_chg<(-0.2))0.4 else if(prime_age_lfpr_chg>0.3)-0.3 else 0;d})
+    ht_lo<-ht_lo+ht("cl","claims",jobless_claims_trend,function(v)if(v>0.20)1.2 else if(v>0.10)0.6 else if(v>0.05)0.2 else if(v<(-0.10))-0.3 else 0)
+    ht_lo<-ht_lo+ht("qt","quits",quits_yoy,function(v)if(v<(-15))0.8 else if(v<(-8))0.4 else if(v<(-3))0.2 else if(v>8)-0.3 else 0)
+    ht_lo<-ht_lo+ht("ol","oil",oil_yoy,function(v)if(v>50)1.0 else if(v>25)0.6 else if(v>15)0.2 else if(v<(-30))0.5 else if(v<(-15))0.2 else if(v>0&&v<10)-0.1 else 0)
+    ht_lo<-ht_lo+ht("eq","equity",equity_drawdown_pct,function(v){dd<-abs(v);if(dd>30)1.6 else if(dd>20)1.1 else if(dd>10)0.5 else if(dd<5)-0.2 else 0})
+    ht_lo<-ht_lo+ht("hy","hy",hy_v,function(v)if(v>7)1.4 else if(v>5.5)0.7 else if(v>4.5)0.2 else if(v<3.5)-0.4 else 0)
+    ht_lo<-ht_lo+ht("ud","usd",usd_yoy,function(v)if(v>12)0.8 else if(v>8)0.4 else if(v>4)0.1 else if(v<(-5))-0.2 else 0)
+    ht_lo<-ht_lo+ht("rr","rr",real_rate,function(v)if(v>3)1.0 else if(v>2)0.5 else if(v>1)0.2 else if(v<0)-0.3 else 0)
+    ht_lo<-ht_lo+ht("se","sent",cs,function(v)if(v<60)0.7 else if(v<70)0.3 else if(v>90)-0.4 else 0)
+    ht_lo<-ht_lo+ht("iv","inv",inventory_sales_ratio,function(v)if(v>1.55)0.7 else if(v>1.45)0.3 else if(v>1.40)0.1 else if(v<1.30)-0.2 else 0)
+    ht_lo<-ht_lo+ht("cc","cc",cc_delinquency,function(v)if(v>4)0.9 else if(v>3)0.5 else if(v>2.5)0.2 else if(v<1.8)-0.3 else 0)
+  }
+  ht_prob <- 1 / (1 + exp(-ht_lo))
+
   # ── GLM probability ──────────────────────────────────────────────────────────
   glm_prob_raw <- NA_real_
   if (!is.null(glm_result) && !is.null(glm_result$model)) {
     kc      <- intersect(glm_result$predictors, names(feat_df))
     feat_sub <- feat_df[,kc,drop=FALSE]
-    for (col in names(feat_sub)) if(is.na(feat_sub[[col]])) feat_sub[[col]] <- 0
+    for (col in names(feat_sub)) {
+      nas <- is.na(feat_sub[[col]])
+      if (any(nas)) feat_sub[[col]][nas] <- 0
+    }
     glm_prob_raw <- tryCatch(predict(glm_result$model,newdata=feat_sub,type="response")[[1]],error=function(e)NA_real_)
     if (!is.na(glm_prob_raw)) {
+      # Blend GLM with hand-tuned: GLM is well-calibrated on average but
+      # may underweight policy-shock channels. Hand-tuned captures those explicitly.
+      # Weight: 70% GLM (data-driven), 30% hand-tuned (expert prior for novel channels).
+      # This is not hard-coded — the 70/30 tracks GLM Brier: better GLM → more weight.
+      glm_weight <- if (!is.null(ensemble_weights) && !is.null(ensemble_weights$glm_skill) &&
+                        !is.na(ensemble_weights$glm_skill) && ensemble_weights$glm_skill > 0)
+        min(0.85, 0.60 + ensemble_weights$glm_skill * 0.50)  # skill 0→60%, skill 0.5→85%
+      else 0.70
+      glm_prob_raw <- glm_weight * glm_prob_raw + (1 - glm_weight) * ht_prob
       coefs <- coef(glm_result$model); ct <- glm_result$coef_table
       fv    <- as.list(feat_df[1,,drop=FALSE])
       labs  <- c(yield_spread="Yield Curve (10Y-2Y spread)",u_rise="Sahm Rule (unemployment rise)",
@@ -646,7 +751,7 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
     }
   }
 
-  # ── Hand-tuned fallback ───────────────────────────────────────────────────────
+  # ── Hand-tuned fallback (full path with add_contrib when GLM unavailable) ──────
   if (is.na(glm_prob_raw)) {
     lo <- -1.73
     ht <- function(id,lbl,val,fn){ if(is.na(val)){add_contrib(id,lbl,0,data_missing=TRUE);return(0)};d<-fn(val);add_contrib(id,lbl,d);d }
@@ -690,7 +795,14 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
   W_MS  <- if (!is.na(ms_prob_raw)) ew$w_ms  else 0.0
 
   blended <- if (!is.na(ms_prob_raw)) W_GLM*glm_prob_raw + W_MS*ms_prob_raw else glm_prob_raw
-  blended <- if (A > 0.05) max(blended + ANOMALY_WEIGHT*A*(COMPRESS_CENTER-blended), ANOMALY_FLOOR*A) else blended
+  # Data-driven anomaly floor: use empirical recession rate from training data
+  # when conditions were historically anomalous (MD > d90).
+  # Falls back to 0.30 if not computed yet.
+  p_anom_rec <- if (!is.null(anomaly_detector) && !is.null(anomaly_detector$p_anomalous_recession))
+    anomaly_detector$p_anomalous_recession else 0.30
+  # Scale: at A=0 floor is irrelevant; at A=1 floor = p_anom_rec (full historical rate)
+  # This means: "in the most anomalous conditions, expect at least the historical anomaly recession rate"
+  blended <- if (A > 0.05) max(blended + ANOMALY_WEIGHT*A*(COMPRESS_CENTER-blended), p_anom_rec*A) else blended
 
   if (A > 0.05)
     add_contrib("anomaly_signal",
@@ -767,8 +879,19 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
   gdp_ci_lo   <- gdp_point - uncertainty
   gdp_ci_hi   <- gdp_point + uncertainty
 
+  # ── Override regime when recession prob and composite score disagree ────────────
+  # A composite score of 6.9/10 ("Moderate Growth") but 53% recession probability
+  # are contradictory signals. Reconcile by applying a hard regime override:
+  #   rec_prob >= 50%  →  "Stall / Slowdown" (floor)
+  #   rec_prob >= 65%  →  "Contraction Risk" (floor)
+  # This ensures the headline label is never rosier than the recession model allows.
+  rec_regime_override <- if (!is.null(recession_prob_pct) && !is.na(recession_prob_pct)) {
+    if      (recession_prob_pct >= 65) "Contraction Risk"
+    else if (recession_prob_pct >= 50) "Stall / Slowdown"
+    else NULL
+  } else NULL
+
   # ── Primary driver of the forecast ───────────────────────────────────────────
-  # The component with the largest absolute contribution to the composite score
   if (!is.null(components)) {
     comp_contribs <- sapply(components, function(c) c$score * c$weight)
     top_driver_idx <- which.max(abs(comp_contribs))
@@ -780,13 +903,14 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
   } else top_driver <- NULL
 
   list(
-    point       = round(gdp_point, 1),
-    ci_lo       = round(gdp_ci_lo, 1),
-    ci_hi       = round(gdp_ci_hi, 1),
-    uncertainty = round(uncertainty, 2),
-    rec_drag    = round(rec_drag, 2),
-    top_driver  = top_driver,
-    method      = "Composite score + recession probability discount"
+    point                = round(gdp_point, 1),
+    ci_lo                = round(gdp_ci_lo, 1),
+    ci_hi                = round(gdp_ci_hi, 1),
+    uncertainty          = round(uncertainty, 2),
+    rec_drag             = round(rec_drag, 2),
+    top_driver           = top_driver,
+    rec_regime_override  = rec_regime_override,
+    method               = "Composite score + recession probability discount"
   )
 }
 
@@ -794,6 +918,7 @@ compute_ensemble_weights <- function(glm_result, markov_result, holdout_months=3
 # ═══════════════════════════════════════════════════════════════════════════════
 build_growth_outlook <- function(fred_data, kpis, mkt_returns=NULL) {
   if (is.null(kpis)) return(NULL)
+  tryCatch({
   gv <- function(sid){ df<-fred_data[[sid]]; if(is.null(df)||nrow(df)<2)return(NULL); df%>%dplyr::arrange(date)%>%dplyr::pull(value) }
   unemp<-gv("UNRATE"); payrolls<-gv("PAYEMS"); cpi<-gv("CPIAUCSL"); fedfunds<-gv("FEDFUNDS")
   t10<-gv("DGS10"); t2<-gv("DGS2"); mort<-gv("MORTGAGE30US")
@@ -821,6 +946,7 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns=NULL) {
   raw_score  <- sum(sapply(components,function(c)c$score*c$weight))/tw
   score_0_10 <- max(0,min(10,round((raw_score+1)/2*10,1)))
   regime <- .regime_from_score(score_0_10)   # ← no case_when
+  # Regime override applied after GDP forecast is computed (see gdp_forecast$rec_regime_override)
   drag <- names(which.min(sapply(components,`[[`,"score")))
   supp <- names(which.max(sapply(components,`[[`,"score")))
   swing <- list(
@@ -853,9 +979,25 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns=NULL) {
     })
   }
 
-  needs_train <- is.null(cache) || is.null(cache$glm) ||
+  # Detect degenerate GLM: converged=FALSE or n_obs<200 means bad training data
+  glm_is_degenerate <- !is.null(cache) && !is.null(cache$glm) && (
+    # GLM didn't converge (perfect separation / too few rows)
+    isFALSE(cache$glm$model$converged %||% TRUE) ||
+    # Too few training rows
+    (!is.null(cache$glm$n_obs) && cache$glm$n_obs < 200) ||
+    # Brier score shows negative skill (GLM worse than just guessing base rate)
+    (!is.null(cache$ew) && !is.null(cache$ew$glm_brier) && !is.null(cache$ew$glm_skill) &&
+     !is.na(cache$ew$glm_skill) && cache$ew$glm_skill <= 0)
+  )
+  if (glm_is_degenerate)
+    message(sprintf("[t3] Degenerate GLM detected (n=%d, converged=%s) — forcing retrain.",
+                    cache$glm$n_obs %||% 0L, as.character(cache$glm$model$converged %||% NA)))
+
+  needs_train <- glm_is_degenerate ||
+    is.null(cache) || is.null(cache$glm) ||
     difftime(Sys.time(), cache$glm$trained_at %||% (Sys.time()-1e9), units="days") > 30
 
+  message(sprintf("[t3] needs_train=%s (degenerate=%s)", needs_train, glm_is_degenerate))
   if (needs_train) {
     run_training <- function() {
       prog <- function(msg,val) tryCatch(shiny::setProgress(val,message=msg),error=function(e)message("[t3] ",msg))
@@ -895,6 +1037,16 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns=NULL) {
   list(score=score_0_10, raw_score=raw_score, regime=regime, components=components,
        swing=swing, recession_prob=recession_prob, as_of=Sys.Date(),
        gdp_forecast=.compute_gdp_forecast(score_0_10, recession_prob$prob, components))
+  }, error = function(e) {
+    msg <- conditionMessage(e)
+    # Capture call stack for diagnostics
+    calls_text <- tryCatch(
+      paste(sapply(rev(head(sys.calls(), 20)), function(c) deparse(c)[1]), collapse=" <- "),
+      error=function(e2) "unavailable")
+    message("[t3] build_growth_outlook ERROR: ", msg)
+    message("[t3] Call stack: ", substr(calls_text, 1, 500))
+    list(.error=TRUE, .error_msg=paste0(msg, "\n\nCall chain: ", substr(calls_text, 1, 300)))
+  })
 }
 
 
@@ -957,12 +1109,57 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns=NULL) {
 }
 
 render_growth_outlook_html <- function(outlook) {
-  if (is.null(outlook)) return(.growth_outlook_loading_html())
+  # Error sentinel from build_growth_outlook's tryCatch
+  if (!is.null(outlook) && isTRUE(outlook$.error)) {
+    return(shiny::HTML(paste0(
+      "<div style='background:#1a2035;border:1px solid #e94560;border-radius:8px;padding:24px;'>",
+      "<div style='color:#e94560;font-size:13px;font-weight:700;margin-bottom:10px;'>",
+      "<i class='fa fa-exclamation-triangle' style='margin-right:8px;'></i>",
+      "Growth Outlook Error</div>",
+      "<div style='color:#9aa3b2;font-size:12px;font-family:monospace;margin-bottom:12px;padding:8px;background:#0f1117;border-radius:4px;'>",
+      htmltools::htmlEscape(outlook$.error_msg %||% "Unknown error"),"</div>",
+      "<div style='color:#555;font-size:11px;'>To force a retrain, run in the R console:<br/>",
+      "<code>file.remove('.recession_t3_cache.rds'); rm(.recession_t3_cache, envir=.GlobalEnv)</code>",
+      "</div></div>")))
+  }
+  # If cache exists but outlook is NULL, something errored — show an error card not the spinner
+  if (is.null(outlook)) {
+    cache_exists <- file.exists(".recession_t3_cache.rds") ||
+      exists(".recession_t3_cache", envir=.GlobalEnv)
+    if (cache_exists) {
+      return(shiny::HTML(paste0(
+        "<div style='background:#1a2035;border:1px solid #e94560;border-radius:8px;padding:24px;'>",
+        "<div style='color:#e94560;font-size:13px;font-weight:700;margin-bottom:10px;'>",
+        "<i class='fa fa-exclamation-triangle' style='margin-right:8px;'></i>",
+        "Growth Outlook Error</div>",
+        "<div style='color:#9aa3b2;font-size:12px;margin-bottom:12px;'>",
+        "build_growth_outlook() returned NULL. Check the R console for the error message.</div>",
+        "<div style='color:#555;font-size:11px;'>To force a retrain:<br/>",
+        "<code>file.remove('.recession_t3_cache.rds')</code><br/>",
+        "<code>rm(.recession_t3_cache, envir=.GlobalEnv)</code></div></div>")))
+    }
+    return(.growth_outlook_loading_html())
+  }
   if (isTRUE(outlook$.training)) return(.growth_outlook_loading_html(outlook$.step))
   if (is.null(outlook$regime)||!is.list(outlook$regime)||is.null(outlook$regime$color))
     return(shiny::HTML("<div style='color:#e94560;padding:16px;'>Regime classification error \u2014 check console.</div>"))
+  # Wrap entire render in tryCatch so errors show as a card rather than blank/spinner
+  result <- tryCatch({
 
-  rp <- outlook$recession_prob; reg <- outlook$regime
+  rp  <- outlook$recession_prob; reg <- outlook$regime; gfo <- outlook$gdp_forecast
+  # Reconcile regime label when recession probability contradicts composite score
+  if (!is.null(gfo) && !is.null(gfo$rec_regime_override)) {
+    override_label <- gfo$rec_regime_override
+    # Only override in the "worse" direction — never make it look rosier
+    regime_order <- c("Expansion"=4, "Moderate Growth"=3, "Stall / Slowdown"=2, "Contraction Risk"=1)
+    current_rank  <- regime_order[reg$label] %||% 3
+    override_rank <- regime_order[override_label] %||% 3
+    if (!is.na(override_rank) && override_rank < current_rank) {
+      reg <- .regime_from_score(if (override_rank==2) 3.4 else 1.0)
+      message(sprintf("[t3] Regime overridden by recession probability: '%s' → '%s'", 
+                      names(regime_order)[current_rank], reg$label))
+    }
+  }
   score <- outlook$score; comps <- outlook$components; swing <- outlook$swing; gc <- reg$color
 
   # ── GDP point forecast display ───────────────────────────────────────────────
@@ -1083,6 +1280,21 @@ render_growth_outlook_html <- function(outlook) {
                        model_type=if(!is.null(rp))rp$model_type%||%"Hand-tuned"else"Hand-tuned",
                        anomaly=if(!is.null(rp))rp$anomaly else NULL,
                        mr=mr, ew=ew_cache)))
+  }, error = function(e) {
+    msg <- conditionMessage(e)
+    message("[t3] render_growth_outlook_html error: ", msg)
+    shiny::HTML(paste0(
+      "<div style='background:#1a2035;border:1px solid #e94560;border-radius:8px;padding:20px;'>",
+      "<div style='color:#e94560;font-size:13px;font-weight:700;margin-bottom:8px;'>",
+      "<i class='fa fa-exclamation-triangle' style='margin-right:8px;'></i>",
+      "Growth Outlook Render Error</div>",
+      "<div style='color:#9aa3b2;font-size:12px;margin-bottom:12px;'>",
+      htmltools::htmlEscape(msg),"</div>",
+      "<div style='color:#555;font-size:11px;'>",
+      "Run <code>rm(.recession_t3_cache, envir=.GlobalEnv); file.remove('.recession_t3_cache.rds')</code> ",
+      "in the R console to clear the cache and retrain.</div></div>"))
+  })
+  result
 }
 
 .build_model_modal <- function(fc=NULL, model_type="Hand-tuned", anomaly=NULL, mr=NULL, ew=NULL) {

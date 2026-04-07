@@ -98,6 +98,7 @@ build_anomaly_detector <- function(feature_panel) {
     sigma_inv = sigma_inv,
     feature_cols = names(mu),
     d90 = quantile(train_dists, 0.90, na.rm = TRUE),
+    p_anomalous_recession = NULL, # populated by rolling_retrain from training labels
     d95 = quantile(train_dists, 0.95, na.rm = TRUE),
     d99 = quantile(train_dists, 0.99, na.rm = TRUE)
   )
