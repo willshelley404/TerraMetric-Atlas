@@ -2339,11 +2339,11 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
           # Persist to disk so cache survives Shiny restarts
           tryCatch(
             {
-              saveRDS(new_cache, cache_file)
-              message(sprintf(
-                "[t3] Cache saved to disk: %s (valid 30 days)",
-                cache_file
-              ))
+              # saveRDS(new_cache, cache_file)
+              # message(sprintf(
+              #   "[t3] Cache saved to disk: %s (valid 30 days)",
+              #   cache_file
+              # ))
             },
             error = function(e) {
               message("[t3] Could not write cache to disk: ", e$message)
