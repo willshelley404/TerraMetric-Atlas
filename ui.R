@@ -391,7 +391,7 @@ ui <- dashboardPage(
       # FORECASTING TAB
       # ══════════════════════════════════════════════════════
       tabItem("forecasting",
-        box(title = "18-Month Economic Forecasts — Meta Prophet", status = "info",
+        box(title = "18-Month Economic Forecasts — Ensemble (Prophet · ARIMA · ETS)", status = "info",
             solidHeader = TRUE, width = 12,
           fluidRow(
             column(4,
@@ -403,11 +403,14 @@ ui <- dashboardPage(
                           min = 6, max = 24, value = 18, step = 3),
               div(style = "background:#1e2640;border-radius:6px;padding:12px;margin-top:10px;",
                 div(style = "color:#9aa3b2;font-size:11px;line-height:1.8;",
-                  icon("info-circle", style="color:#00b4d8;"), " Prophet model with:", tags$br(),
-                  "· Annual seasonality", tags$br(),
-                  "· 90% confidence intervals", tags$br(),
-                  "· Automatic changepoint detection", tags$br(),
-                  "· Historical FRED data"
+                  icon("info-circle", style="color:#00b4d8;"), " Ensemble of 3 models:", tags$br(),
+                  tags$span(style="color:#00b4d8;", "· Prophet"), " — trend & seasonality", tags$br(),
+                  tags$span(style="color:#f4a261;", "· Auto ARIMA"), " — short-run dynamics", tags$br(),
+                  tags$span(style="color:#2dce89;", "· ETS"), " — error/trend/season", tags$br(),
+                  tags$hr(style="border-color:#2a3042;margin:6px 0;"),
+                  "Weights auto-tuned by in-sample RMSE.", tags$br(),
+                  "90% confidence intervals.", tags$br(),
+                  "Historical FRED data."
                 )
               )
             ),

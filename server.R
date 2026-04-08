@@ -134,7 +134,7 @@ server <- function(input, output, session) {
         is.null(rv$forecasts) &&
         !is.null(rv$fred_data)
     ) {
-      withProgress(message = "Running Prophet forecasts…", value = 0, {
+      withProgress(message = "Running ensemble forecasts (Prophet · ARIMA · ETS)…", value = 0, {
         rv$forecasts <- run_all_forecasts(rv$fred_data, horizon_months = 18)
         incProgress(1)
       })
@@ -1559,7 +1559,7 @@ server <- function(input, output, session) {
     input$fcst_horizon,
     {
       req(rv$fred_data)
-      withProgress(message = "Re-running forecasts…", value = 0, {
+      withProgress(message = "Re-running ensemble forecasts…", value = 0, {
         rv$forecasts <- run_all_forecasts(
           rv$fred_data,
           horizon_months = input$fcst_horizon
@@ -1586,12 +1586,19 @@ server <- function(input, output, session) {
       tbl,
       options = list(dom = "t", pageLength = 20),
       rownames = FALSE,
-      class = "table-dark compact stripe"
+      class = "table-dark compact stripe",
+      colnames = c("Indicator", "Current", "6M Fcst", "6M CI", "18M Fcst", "Unit", "Weights (P/A/E)")
     ) %>%
       formatStyle(
         columns = names(tbl),
         backgroundColor = "#1e2640",
         color = "#d0d0d0"
+      ) %>%
+      formatStyle(
+        "Weights (P/A/E)",
+        color = "#7c5cbf",
+        fontFamily = "monospace",
+        fontSize = "11px"
       )
   })
 
