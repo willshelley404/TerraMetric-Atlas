@@ -122,23 +122,25 @@ LLM_PROVIDERS <- list(
   gemini = list(
     base_url      = "https://generativelanguage.googleapis.com/v1beta/openai",
     key_env       = "GEMINI_API_KEY",
-    # gemini-2.0-flash/1.5-flash were shut down/retired. Gemini 3.7 Flash (GA
-    # Aug 13, 2026) is the current stable flash model.
+    # gemini-2.0-flash/1.5-flash were shut down/retired.
+    # gemini-3.7-flash is a heavier "thinking" model — prone to exceeding our
+    # 90s timeout on slower outbound connections (e.g. Posit Connect).
+    # gemini-3.1-flash-lite is low-latency and gives good prose — default.
     # Get key: https://aistudio.google.com/apikey
-    default_model = "gemini-3.7-flash",
+    default_model = "gemini-3.1-flash-lite",
     models        = c(
-      "gemini-3.7-flash",       # best quality
-      "gemini-3.1-flash-lite"   # lower latency
+      "gemini-3.1-flash-lite",  # fast, reliable — default
+      "gemini-3.7-flash"        # higher quality, slower/heavier
     ),
-    display_name  = "Google Gemini (Flash)"
+    display_name  = "Google Gemini (Flash-Lite)"
   )
 )
 
 detect_llm_provider <- function() {
   forced <- Sys.getenv("LLM_PROVIDER")
   if (nchar(forced) > 0 && forced %in% names(LLM_PROVIDERS)) return(forced)
-  # Auto-detect: prefer groq → gemini
-  for (p in c("groq","gemini")) {
+  # Auto-detect: prefer gemini → groq
+  for (p in c("gemini","groq")) {
     if (p %in% names(LLM_PROVIDERS) &&
         nchar(Sys.getenv(LLM_PROVIDERS[[p]]$key_env)) > 0) return(p)
   }

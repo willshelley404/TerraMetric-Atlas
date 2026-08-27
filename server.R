@@ -1525,7 +1525,7 @@ server <- function(input, output, session) {
 
   # ── Settings: model selector updates with provider ────────────────────────────
   output$cfg_llm_model_ui <- renderUI({
-    prov <- input$cfg_llm_provider %||% ACTIVE_PROVIDER %||% "groq"
+    prov <- input$cfg_llm_provider %||% ACTIVE_PROVIDER %||% "gemini"
     models <- if (prov %in% names(LLM_PROVIDERS)) {
       LLM_PROVIDERS[[prov]]$models
     } else {

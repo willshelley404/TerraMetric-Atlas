@@ -455,7 +455,7 @@ ui <- dashboardPage(
                   selectInput("llm_provider", NULL,
                     choices = setNames(names(LLM_PROVIDERS),
                                        vapply(names(LLM_PROVIDERS), function(x) LLM_PROVIDERS[[x]]$display_name, character(1))),
-                    selected = ACTIVE_PROVIDER %||% "groq", width = "100%")
+                    selected = ACTIVE_PROVIDER %||% "gemini", width = "100%")
                 ),
                 column(5,
                   div(style = "color:#9aa3b2;font-size:11px;margin-bottom:4px;", "Model"),
@@ -526,7 +526,7 @@ ui <- dashboardPage(
               choices = setNames(names(LLM_PROVIDERS),
                                  vapply(names(LLM_PROVIDERS),
                                         function(x) LLM_PROVIDERS[[x]]$display_name, character(1))),
-              selected = ACTIVE_PROVIDER %||% "groq")),
+              selected = ACTIVE_PROVIDER %||% "gemini")),
             column(4, uiOutput("cfg_llm_model_ui")),
             column(4,
               div(style="margin-top:28px;",

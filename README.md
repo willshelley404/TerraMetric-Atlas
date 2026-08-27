@@ -56,8 +56,8 @@ All free to obtain:
 | **FRED** | https://fred.stlouisfed.org/docs/api/api_key.html | ✅ Yes |
 | **BLS** | https://www.bls.gov/developers/home.htm | ✅ Yes |
 | **Census** | https://api.census.gov/data/key_signup.html | For Metro Map |
-| **Groq** | https://console.groq.com | For AI (recommended) |
-| **Gemini** | https://aistudio.google.com/apikey | For AI (alternative) |
+| **Gemini** | https://aistudio.google.com/apikey | For AI (recommended) |
+| **Groq** | https://console.groq.com | For AI (alternative) |
 | **NewsAPI** | https://newsapi.org | For news feed |
 
 > **Tip:** You only need ONE LLM key. Groq is fastest and most generous on free tier.
@@ -94,8 +94,8 @@ OpenAI-compatible `/v1/chat/completions` endpoint:
 
 ```r
 # Switching providers is a one-line change in .Renviron:
-LLM_PROVIDER=groq   # fastest, best free tier
-LLM_PROVIDER=gemini # alternative, generous free tier
+LLM_PROVIDER=gemini # default — reliable, low-latency (flash-lite)
+LLM_PROVIDER=groq   # alternative, fastest free tier
 ```
 
 Auto-detection: if `LLM_PROVIDER` is not set, the app detects whichever key is present.
