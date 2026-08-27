@@ -18,7 +18,7 @@ real-time news, and free-tier LLM analysis into a single interactive platform.
 | **Markets** | Yahoo Finance (tidyquant) | Equity/sector ETFs, commodities, bonds, yield curve, correlations |
 | **Metro Map** | U.S. Census ACS | Interactive choropleth map of state-level economic variables |
 | **Forecasting** | FRED + Prophet | 18-month probabilistic forecasts with 90% CI |
-| **AI Insights** | Groq / OpenRouter / Together AI + NewsAPI | LLM synthesis of data + current events |
+| **AI Insights** | Groq / Gemini + NewsAPI | LLM synthesis of data + current events |
 
 ---
 
@@ -57,8 +57,7 @@ All free to obtain:
 | **BLS** | https://www.bls.gov/developers/home.htm | ✅ Yes |
 | **Census** | https://api.census.gov/data/key_signup.html | For Metro Map |
 | **Groq** | https://console.groq.com | For AI (recommended) |
-| **OpenRouter** | https://openrouter.ai | For AI (alternative) |
-| **Together AI** | https://api.together.xyz | For AI (alternative) |
+| **Gemini** | https://aistudio.google.com/apikey | For AI (alternative) |
 | **NewsAPI** | https://newsapi.org | For news feed |
 
 > **Tip:** You only need ONE LLM key. Groq is fastest and most generous on free tier.
@@ -95,9 +94,8 @@ OpenAI-compatible `/v1/chat/completions` endpoint:
 
 ```r
 # Switching providers is a one-line change in .Renviron:
-LLM_PROVIDER=groq       # fastest, best free tier
-LLM_PROVIDER=openrouter # access to many free models
-LLM_PROVIDER=together   # alternative free credits
+LLM_PROVIDER=groq   # fastest, best free tier
+LLM_PROVIDER=gemini # alternative, generous free tier
 ```
 
 Auto-detection: if `LLM_PROVIDER` is not set, the app detects whichever key is present.

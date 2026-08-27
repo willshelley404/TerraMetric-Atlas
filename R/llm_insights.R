@@ -10,8 +10,7 @@ call_llm <- function(messages, provider=NULL, model=NULL,
     return(paste0(
       "**LLM not configured.** Set one of these in your `.Renviron` and restart:\n\n",
       "- `GROQ_API_KEY` → https://console.groq.com (recommended, fastest free tier)\n",
-      "- `GEMINI_API_KEY` → https://aistudio.google.com/apikey (free, strong)\n",
-      "- `OPENROUTER_API_KEY` → https://openrouter.ai (free models, may be rate-limited)"
+      "- `GEMINI_API_KEY` → https://aistudio.google.com/apikey (free, strong)"
     ))
   }
 
@@ -23,9 +22,8 @@ call_llm <- function(messages, provider=NULL, model=NULL,
       "Add `{cfg$key_env}=your_key_here` to `.Renviron` and restart the app.\n",
       "Get a free key at: {
         switch(pname,
-          groq       = 'https://console.groq.com',
-          gemini     = 'https://aistudio.google.com/apikey',
-          openrouter = 'https://openrouter.ai',
+          groq   = 'https://console.groq.com',
+          gemini = 'https://aistudio.google.com/apikey',
           'see provider docs')
       }"
     ))
@@ -93,7 +91,7 @@ call_llm <- function(messages, provider=NULL, model=NULL,
       } else if (grepl("404", msg)) {
         " — **Model not found.** Select a different model from the dropdown."
       } else if (grepl("400", msg)) {
-        " — **Bad request.** Try switching to Groq Llama 3.3."
+        " — **Bad request.** Try switching to Groq GPT-OSS 120B."
       } else if (grepl("401|403", msg)) {
         " — **Auth failed.** Check your API key is correct and active."
       } else if (grepl("timeout|timed out", msg, ignore.case=TRUE)) {

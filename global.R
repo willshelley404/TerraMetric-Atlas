@@ -109,35 +109,26 @@ LLM_PROVIDERS <- list(
   groq = list(
     base_url      = "https://api.groq.com/openai/v1",
     key_env       = "GROQ_API_KEY",
-    # llama-3.3-70b-versatile: knowledge through Dec 2024, free, fast
-    default_model = "llama-3.3-70b-versatile",
+    # llama-3.3-70b-versatile and llama-3.1-8b-instant were both decommissioned
+    # by Groq on Aug 16, 2026. Replaced per Groq's own guidance.
+    default_model = "openai/gpt-oss-120b",
     models        = c(
-      "llama-3.3-70b-versatile",   # best quality
-      "llama-3.1-8b-instant"        # lower latency
+      "openai/gpt-oss-120b",       # best quality (replaces llama-3.3-70b-versatile)
+      "qwen/qwen3.6-27b",          # alt replacement, strong reasoning (preview model)
+      "openai/gpt-oss-20b"         # lower latency (replaces llama-3.1-8b-instant)
     ),
-    display_name  = "Groq (Llama 3.3)"
-  ),
-  openrouter = list(
-    base_url      = "https://openrouter.ai/api/v1",
-    key_env       = "OPENROUTER_API_KEY",
-    # DeepSeek R1 free: knowledge through Jan 2025, strong reasoning
-    # Note: free tier has strict rate limits — may return 429
-    default_model = "deepseek/deepseek-r1:free",
-    models        = c(
-      "deepseek/deepseek-r1:free",           # ~Jan 2025 knowledge
-      "deepseek/deepseek-chat-v3-0324:free"  # DeepSeek V3 March 2025
-    ),
-    display_name  = "OpenRouter (DeepSeek)"
+    display_name  = "Groq (GPT-OSS 120B)"
   ),
   gemini = list(
     base_url      = "https://generativelanguage.googleapis.com/v1beta/openai",
     key_env       = "GEMINI_API_KEY",
-    # Gemini 2.0 Flash: free via AI Studio, fast, ~early 2025 knowledge
+    # gemini-2.0-flash/1.5-flash were shut down/retired. Gemini 3.7 Flash (GA
+    # Aug 13, 2026) is the current stable flash model.
     # Get key: https://aistudio.google.com/apikey
-    default_model = "gemini-2.0-flash",
+    default_model = "gemini-3.7-flash",
     models        = c(
-      "gemini-2.0-flash",
-      "gemini-1.5-flash"
+      "gemini-3.7-flash",       # best quality
+      "gemini-3.1-flash-lite"   # lower latency
     ),
     display_name  = "Google Gemini (Flash)"
   )
@@ -146,8 +137,8 @@ LLM_PROVIDERS <- list(
 detect_llm_provider <- function() {
   forced <- Sys.getenv("LLM_PROVIDER")
   if (nchar(forced) > 0 && forced %in% names(LLM_PROVIDERS)) return(forced)
-  # Auto-detect: prefer groq → openrouter → gemini
-  for (p in c("groq","openrouter","gemini")) {
+  # Auto-detect: prefer groq → gemini
+  for (p in c("groq","gemini")) {
     if (p %in% names(LLM_PROVIDERS) &&
         nchar(Sys.getenv(LLM_PROVIDERS[[p]]$key_env)) > 0) return(p)
   }
