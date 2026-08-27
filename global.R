@@ -10,7 +10,7 @@ suppressPackageStartupMessages({
   library(glue);          library(fredr);           library(tidyquant)
   library(tidycensus);    library(prophet);         library(httr2)
   library(jsonlite);      library(sf);              library(waiter)
-  library(markdown)
+  library(markdown);      library(vars)
 })
 
 # Load leaflet AFTER tidyquant/xts to avoid .xts_chob namespace collision.
