@@ -1,13 +1,16 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # R/forecasting.R — Macro-aware forecasting (BVAR block + ensemble)
 #
-# The rates/inflation/unemployment cluster (UNRATE, CPI YoY, FEDFUNDS,
-# MORTGAGE30US) is modeled *jointly* with a Bayesian VAR (Minnesota prior) so
-# that an inflation shock propagates into the funds-rate and mortgage paths
-# automatically, and the forecast bands widen honestly with horizon.
+# The rates/inflation/labor cluster (UNRATE, CPI YoY, FEDFUNDS, MORTGAGE30US,
+# nonfarm payrolls, initial jobless claims) is modeled *jointly* with a
+# Bayesian VAR (Minnesota prior) so that a labor-market shock (e.g. a
+# payrolls miss or a claims spike) propagates into the unemployment, rate,
+# and inflation paths automatically via Okun's-law-style cross-equation
+# dynamics, instead of the labor and rates blocks being forecast in
+# isolation from each other. Forecast bands widen honestly with horizon.
 #
-# Everything else (WTI oil, payrolls, retail sales, housing starts) has no
-# strong two-way feedback with the macro block, so it stays on the original
+# Everything else (WTI oil, retail sales, housing starts) has no strong
+# two-way feedback with the macro block, so it stays on the original
 # 3-model ensemble:
 #   1. Prophet          (trend + seasonality)
 #   2. Auto ARIMA       (short-run dynamics)
@@ -70,12 +73,17 @@ FORECAST_SERIES <- list(
   ),
   HOUST = list(name = "Housing Starts", unit = "K", color = "#2dce89"),
   PAYEMS = list(name = "Nonfarm Payrolls", unit = "K", color = "#00b4d8"),
+  ICSA = list(name = "Initial Jobless Claims", unit = "K", color = "#06d6a0"),
   RSAFS = list(name = "Retail Sales", unit = "M$", color = "#f4a261"),
   DCOILWTICO = list(name = "WTI Crude Oil", unit = "$/bbl", color = "#e94560")
 )
 
-# Series modeled jointly (fed funds reaction function is endogenous to these)
-MACRO_BLOCK_IDS <- c("UNRATE", "CPIAUCSL", "FEDFUNDS", "MORTGAGE30US")
+# Series modeled jointly (fed funds reaction function is endogenous to these,
+# and PAYEMS/ICSA give the block a live read on labor-market momentum instead
+# of inferring it only from UNRATE's own — slower-moving — history)
+MACRO_BLOCK_IDS <- c(
+  "UNRATE", "CPIAUCSL", "FEDFUNDS", "MORTGAGE30US", "PAYEMS", "ICSA"
+)
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -406,7 +414,9 @@ run_ensemble <- function(
 #' @return named list keyed by MACRO_BLOCK_IDS, each element shaped like
 #'   run_ensemble()'s return value, or NULL on failure / insufficient data.
 run_macro_bvar <- function(macro_wide, horizon_months = 18, ci_level = 0.90) {
-  vars_order <- c("UNRATE", "CPIAUCSL", "FEDFUNDS", "MORTGAGE30US")
+  # Driven by the MACRO_BLOCK_IDS constant (not hardcoded here) so the two
+  # can never drift out of sync.
+  vars_order <- MACRO_BLOCK_IDS
 
   if (is.null(macro_wide) || !all(vars_order %in% names(macro_wide))) {
     return(NULL)
@@ -445,16 +455,31 @@ run_macro_bvar <- function(macro_wide, horizon_months = 18, ci_level = 0.90) {
           }
           mat_fit <- mat_fit[-1, , drop = FALSE]
 
+          # ── Standardize before fitting ------------------------------------------
+          #   The block now mixes percent-scale rates (O(1-10)) with raw
+          #   levels like payrolls/claims (O(1e5)-O(1e5)). The Minnesota
+          #   prior is scale-aware in theory, but that scale gap still leaves
+          #   the sampler numerically ill-conditioned in practice — verified
+          #   empirically (synthetic data at realistic magnitudes reproduced
+          #   exploding, sign-flipping forecasts before this fix). Z-scoring
+          #   each column removes the scale gap; draws are converted back to
+          #   each series' native scale immediately after prediction, before
+          #   the differencing reintegration below.
+          col_mean <- colMeans(mat_fit)
+          col_sd <- apply(mat_fit, 2, sd)
+          col_sd[!is.finite(col_sd) | col_sd == 0] <- 1
+          mat_fit_std <- sweep(sweep(mat_fit, 2, col_mean, "-"), 2, col_sd, "/")
+
           # ── Lag order via AIC (vars::VARselect), then Minnesota-prior BVAR -------
-          lag_max <- min(12, max(2, floor(nrow(mat_fit) / 15)))
+          lag_max <- min(12, max(2, floor(nrow(mat_fit_std) / 15)))
           p <- tryCatch(
-            unname(vars::VARselect(mat_fit, lag.max = lag_max, type = "const")$selection["AIC(n)"]),
+            unname(vars::VARselect(mat_fit_std, lag.max = lag_max, type = "const")$selection["AIC(n)"]),
             error = function(e) 4
           )
           p <- max(1, min(p, 8))
 
           fit <- BVAR::bvar(
-            mat_fit,
+            mat_fit_std,
             lags = p,
             n_draw = 5000L,
             n_burn = 1000L,
@@ -467,8 +492,14 @@ run_macro_bvar <- function(macro_wide, horizon_months = 18, ci_level = 0.90) {
           alpha <- (1 - ci_level) / 2
           fc <- predict(fit, horizon = horizon_months, conf_bands = alpha)
 
-          # fc$fcast: [draw, horizon, var] — var order matches vars_order
+          # fc$fcast: [draw, horizon, var] — var order matches vars_order,
+          # still standardized at this point. Un-standardize back to each
+          # series' native (differenced-or-level) scale first.
           draws <- fc$fcast
+          for (j in seq_along(vars_order)) {
+            draws[, , j] <- draws[, , j] * col_sd[j] + col_mean[j]
+          }
+
           level_draws <- draws
           for (j in seq_along(vars_order)) {
             v <- vars_order[j]
@@ -643,7 +674,7 @@ plot_forecast_chart <- function(fc_result, series_id) {
   is_bvar <- identical(names(w), "BVAR")
   method_lbl <- if (is_bvar) "Joint BVAR Forecast" else "Ensemble Forecast"
   w_lbl <- if (is_bvar) {
-    "Jointly modeled with unemployment, CPI, Fed funds & mortgage rate"
+    "Jointly modeled with unemployment, CPI, Fed funds, mortgage rate, payrolls & jobless claims"
   } else {
     paste(
       mapply(
