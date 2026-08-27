@@ -1,37 +1,56 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# R/forecasting.R — Ensemble time-series forecasting (modeltime.ensemble style)
+# R/forecasting.R — Macro-aware forecasting (BVAR block + ensemble)
 #
-# Models combined:
+# The rates/inflation/unemployment cluster (UNRATE, CPI YoY, FEDFUNDS,
+# MORTGAGE30US) is modeled *jointly* with a Bayesian VAR (Minnesota prior) so
+# that an inflation shock propagates into the funds-rate and mortgage paths
+# automatically, and the forecast bands widen honestly with horizon.
+#
+# Everything else (WTI oil, payrolls, retail sales, housing starts) has no
+# strong two-way feedback with the macro block, so it stays on the original
+# 3-model ensemble:
 #   1. Prophet          (trend + seasonality)
 #   2. Auto ARIMA       (short-run dynamics)
 #   3. ETS              (error/trend/season smoothing)
+# Ensemble weights are now cross-validated (time_series_cv) rather than
+# in-sample, and prediction bands come from horizon-scaled backtest residuals
+# rather than the collapsing in-sample estimate.
 #
-# Ensemble strategy: weighted mean (weights tuned by in-sample RMSE).
 # Output structure is identical to the original single-model version so all
 # Shiny UI / plotting code continues to work without changes.
 # ─────────────────────────────────────────────────────────────────────────────
 
 suppressPackageStartupMessages({
-  library(dplyr)
-  library(tidyr)
-  library(purrr)
-  library(lubridate)
-  library(glue)
-  library(plotly)
+  # macro block (joint model) — accessed via `::` throughout rather than
+  # library()'d, because `vars` Depends on MASS, whose select() generic
+  # would otherwise mask dplyr::select() for the rest of the app.
+  # requireNamespace() loads them without attaching to the search path.
+  stopifnot(
+    requireNamespace("vars", quietly = TRUE),
+    requireNamespace("BVAR", quietly = TRUE),
+    requireNamespace("tseries", quietly = TRUE)
+  )
 
-  # modeltime ecosystem
+  # underlying engines
+  library(prophet) # engine for prophet_reg
+  library(forecast) # engine for arima_reg / exp_smoothing
+
+  # modeltime ecosystem (univariate ensemble)
   library(modeltime)
   library(modeltime.ensemble)
-  library(timetk) # future_frame(), pad_by_time(), etc.
+  library(timetk) # future_frame(), time_series_cv(), etc.
   library(parsnip)
   library(workflows)
   library(recipes)
   library(rsample)
   library(rlang) # sym() for tidy eval
 
-  # underlying engines
-  library(prophet) # engine for prophet_reg
-  library(forecast) # engine for arima_reg / exp_smoothing
+  library(dplyr)
+  library(tidyr)
+  library(purrr)
+  library(lubridate)
+  library(glue)
+  library(plotly)
 })
 
 # ── Series metadata ───────────────────────────────────────────────────────────
@@ -55,6 +74,9 @@ FORECAST_SERIES <- list(
   DCOILWTICO = list(name = "WTI Crude Oil", unit = "$/bbl", color = "#e94560")
 )
 
+# Series modeled jointly (fed funds reaction function is endogenous to these)
+MACRO_BLOCK_IDS <- c("UNRATE", "CPIAUCSL", "FEDFUNDS", "MORTGAGE30US")
+
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 #' Compute RMSE for a numeric vector of residuals
@@ -66,13 +88,27 @@ FORECAST_SERIES <- list(
   w / sum(w) # normalise to sum to 1
 }
 
+#' Aggregate a raw FRED tibble (daily/weekly/monthly) to true monthly frequency
+#' so the "monthly" assumption baked into the ensemble/VAR actually holds
+#' (matters for DCOILWTICO [daily] and MORTGAGE30US [weekly]; a no-op for
+#' series that are already monthly).
+.aggregate_monthly <- function(df) {
+  df %>%
+    mutate(month = lubridate::floor_date(date, "month")) %>%
+    group_by(month) %>%
+    summarise(value = mean(value, na.rm = TRUE), .groups = "drop") %>%
+    rename(date = month) %>%
+    filter(!is.na(value)) %>%
+    arrange(date)
+}
+
 #' Build the shared recipe: date → time-series features
 .make_recipe <- function(train_tbl) {
   recipes::recipe(value ~ date, data = train_tbl) %>%
     recipes::step_mutate(date = as.Date(date))
 }
 
-# ── Model specifications ───────────────────────────────────────────────────────
+# ── Model specifications (univariate ensemble) ────────────────────────────────
 
 #' Returns a named list of parsnip/workflow model objects
 .build_models <- function(train_tbl) {
@@ -118,7 +154,102 @@ FORECAST_SERIES <- list(
   list(prophet = wf_prophet, arima = wf_arima, ets = wf_ets)
 }
 
-# ── Core ensemble runner ───────────────────────────────────────────────────────
+#' Cross-validated diagnostics for the univariate ensemble: RMSE-based weights
+#' AND horizon-scaled backtest residuals for prediction bands, from the same
+#' set of expanding-window CV folds (replaces in-sample modeltime_accuracy()).
+#'
+#' Residuals are pooled after standardising by sqrt(h) (random-walk-style
+#' error growth), which lets every fold/horizon observation contribute to one
+#' shared quantile estimate instead of splitting into per-horizon buckets too
+#' thin to be reliable with only a handful of CV folds.
+#'
+#' @return list(weights, std_resid) or NULL if there isn't enough history to
+#'   carve out CV folds (caller falls back to in-sample accuracy).
+.cv_ensemble_diagnostics <- function(train_tbl, horizon_months, min_initial = 36) {
+  n <- nrow(train_tbl)
+
+  n_slices <- 5
+  initial <- n - horizon_months * n_slices
+  while (initial < min_initial && n_slices > 1) {
+    n_slices <- n_slices - 1
+    initial <- n - horizon_months * n_slices
+  }
+  if (initial < min_initial) {
+    return(NULL)
+  }
+
+  splits <- timetk::time_series_cv(
+    train_tbl,
+    date_var = date,
+    initial = initial,
+    assess = horizon_months,
+    skip = horizon_months,
+    slice_limit = n_slices,
+    cumulative = TRUE
+  )
+
+  fold_resid <- purrr::map_dfr(seq_len(nrow(splits)), function(i) {
+    split <- splits$splits[[i]]
+    analysis_tbl <- rsample::analysis(split)
+    assessment_tbl <- rsample::assessment(split) %>% arrange(date)
+
+    tryCatch(
+      {
+        models_cv <- .build_models(analysis_tbl)
+        model_tbl_cv <- modeltime::modeltime_table(
+          models_cv$prophet,
+          models_cv$arima,
+          models_cv$ets
+        )
+
+        fc_cv <- model_tbl_cv %>%
+          modeltime::modeltime_forecast(
+            new_data = assessment_tbl %>% select(date),
+            actual_data = analysis_tbl
+          ) %>%
+          filter(.key == "prediction")
+
+        assessment_tbl %>%
+          select(date, actual = value) %>%
+          mutate(h = row_number()) %>%
+          inner_join(
+            fc_cv %>% transmute(date = as.Date(.index), .model_id, pred = .value),
+            by = "date"
+          ) %>%
+          mutate(resid = actual - pred, slice = i)
+      },
+      error = function(e) NULL
+    )
+  })
+
+  if (is.null(fold_resid) || nrow(fold_resid) == 0) {
+    return(NULL)
+  }
+
+  # ── CV-based RMSE weights (model order fixed: 1=prophet, 2=arima, 3=ets) ---
+  rmse_by_model <- fold_resid %>%
+    group_by(.model_id) %>%
+    summarise(rmse = .rmse(resid), .groups = "drop")
+
+  rmse_vec <- rmse_by_model$rmse[match(1:3, rmse_by_model$.model_id)]
+  if (any(is.na(rmse_vec)) || any(!is.finite(rmse_vec))) {
+    weights <- rep(1 / 3, 3)
+  } else {
+    weights <- .inverse_rmse_weights(rmse_vec)
+  }
+  names(weights) <- c("prophet", "arima", "ets")
+
+  # ── Horizon-scaled ensemble residual pool (for prediction bands) -----------
+  ensemble_resid <- fold_resid %>%
+    mutate(w = weights[.model_id]) %>%
+    group_by(slice, h) %>%
+    summarise(resid = sum(w * resid) / sum(w), .groups = "drop") %>%
+    mutate(std_resid = resid / sqrt(h))
+
+  list(weights = weights, std_resid = ensemble_resid$std_resid)
+}
+
+# ── Core ensemble runner (univariate series only) ─────────────────────────────
 
 #' Fit ensemble and produce forecast
 #'
@@ -157,18 +288,23 @@ run_ensemble <- function(
             models$ets
           )
 
-          # ── In-sample accuracy to compute ensemble weights ----------------------
-          accuracy_tbl <- model_tbl %>%
-            modeltime::modeltime_accuracy(new_data = train_tbl)
+          # ── Cross-validated weights + backtest residuals -------------------------
+          cv_diag <- .cv_ensemble_diagnostics(train_tbl, horizon_months)
 
-          rmse_vec <- accuracy_tbl$rmse
-          # Guard against NA/Inf (fallback: equal weights)
-          if (any(!is.finite(rmse_vec))) {
-            weights <- rep(1 / 3, 3)
+          if (!is.null(cv_diag)) {
+            weights <- cv_diag$weights
           } else {
-            weights <- .inverse_rmse_weights(rmse_vec)
+            # Not enough history to carve out CV folds — fall back to in-sample
+            accuracy_tbl <- model_tbl %>%
+              modeltime::modeltime_accuracy(new_data = train_tbl)
+            rmse_vec <- accuracy_tbl$rmse
+            weights <- if (any(!is.finite(rmse_vec))) {
+              rep(1 / 3, 3)
+            } else {
+              .inverse_rmse_weights(rmse_vec)
+            }
+            names(weights) <- c("prophet", "arima", "ets")
           }
-          names(weights) <- c("prophet", "arima", "ets")
 
           # ── Build weighted ensemble model ----------------------------------------
           ensemble_model <- model_tbl %>%
@@ -183,48 +319,56 @@ run_ensemble <- function(
             .length_out = horizon_months
           )
 
-          # ── Forecast ------------------------------------------------------------
+          # ── Forecast (point path only — bands come from CV residuals below) -----
           forecast_tbl <- ensemble_tbl %>%
             modeltime::modeltime_forecast(
               new_data = future_tbl,
-              actual_data = train_tbl,
-              conf_interval = ci_level
+              actual_data = train_tbl
             )
 
-          # ── Detect CI column names (vary across modeltime versions) -----------
-          #   Possible names: .conf_lo/.conf_hi  OR  .conf_lower/.conf_upper
-          fc_cols <- names(forecast_tbl)
-          ci_lo_col <- intersect(c(".conf_lo", ".conf_lower"), fc_cols)[1]
-          ci_hi_col <- intersect(c(".conf_hi", ".conf_upper"), fc_cols)[1]
+          # ── Prediction bands from horizon-scaled backtest residuals -------------
+          alpha <- (1 - ci_level) / 2
+          pred_dates <- sort(unique(
+            forecast_tbl$.index[forecast_tbl$.key == "prediction"]
+          ))
+          h_of <- setNames(seq_along(pred_dates), as.character(pred_dates))
 
-          if (is.na(ci_lo_col) || is.na(ci_hi_col)) {
-            # Fallback: approximate 90% CI as ±1.645 SD of forecast values
-            pred_sd <- sd(
-              forecast_tbl$.value[forecast_tbl$.key == "prediction"],
-              na.rm = TRUE
-            )
-            forecast_tbl <- forecast_tbl %>%
-              mutate(
-                .ci_lo_safe = .value - 1.645 * pred_sd,
-                .ci_hi_safe = .value + 1.645 * pred_sd
-              )
-            ci_lo_col <- ".ci_lo_safe"
-            ci_hi_col <- ".ci_hi_safe"
+          if (!is.null(cv_diag) && length(cv_diag$std_resid) >= 8) {
+            q_lo <- unname(quantile(cv_diag$std_resid, alpha, na.rm = TRUE))
+            q_hi <- unname(quantile(cv_diag$std_resid, 1 - alpha, na.rm = TRUE))
+          } else {
+            # Too little history to backtest — still widen with horizon, using
+            # the (weighted) in-sample RMSE as the one-step-ahead error scale.
+            z <- qnorm(1 - alpha)
+            fallback_rmse <- sum(weights * rmse_vec)
+            q_lo <- -z * fallback_rmse
+            q_hi <- z * fallback_rmse
           }
 
           # ── Reformat to match original output contract -------------------------
           #   Columns: ds, yhat, yhat_lower, yhat_upper, y, is_forecast
           result <- forecast_tbl %>%
             filter(.key %in% c("actual", "prediction")) %>%
-            rename(
-              .ci_lo = !!rlang::sym(ci_lo_col),
-              .ci_hi = !!rlang::sym(ci_hi_col)
+            mutate(
+              h = if_else(
+                .key == "prediction",
+                h_of[as.character(as.Date(.index))],
+                NA_integer_
+              )
             ) %>%
             transmute(
               ds = as.Date(.index),
               yhat = .value,
-              yhat_lower = if_else(.key == "prediction", .ci_lo, NA_real_),
-              yhat_upper = if_else(.key == "prediction", .ci_hi, NA_real_),
+              yhat_lower = if_else(
+                .key == "prediction",
+                .value + q_lo * sqrt(h),
+                NA_real_
+              ),
+              yhat_upper = if_else(
+                .key == "prediction",
+                .value + q_hi * sqrt(h),
+                NA_real_
+              ),
               y = if_else(.key == "actual", .value, NA_real_),
               is_forecast = (.key == "prediction")
             )
@@ -245,6 +389,143 @@ run_ensemble <- function(
   )
 }
 
+# ── Macro block runner (joint BVAR) ───────────────────────────────────────────
+
+#' Jointly forecast the rates/inflation/unemployment cluster with a Bayesian
+#' VAR (Minnesota prior). The prior shrinks each equation toward a random
+#' walk, so persistent series don't need to be differenced to be well-behaved
+#' — but a series is still differenced first when an ADF test can't reject a
+#' unit root, since a flat-out random walk in levels blows up the lag
+#' structure the BVAR estimates. Differenced series are re-integrated to
+#' levels at the *draw* level (cumsum per posterior path) before taking
+#' quantiles, so cross-horizon correlation in the forecast bands is preserved.
+#'
+#' @param macro_wide  tibble with `date` plus one column per id in
+#'   `MACRO_BLOCK_IDS` (CPIAUCSL expected already converted to YoY %),
+#'   monthly and aligned.
+#' @return named list keyed by MACRO_BLOCK_IDS, each element shaped like
+#'   run_ensemble()'s return value, or NULL on failure / insufficient data.
+run_macro_bvar <- function(macro_wide, horizon_months = 18, ci_level = 0.90) {
+  vars_order <- c("UNRATE", "CPIAUCSL", "FEDFUNDS", "MORTGAGE30US")
+
+  if (is.null(macro_wide) || !all(vars_order %in% names(macro_wide))) {
+    return(NULL)
+  }
+
+  macro_wide <- macro_wide %>%
+    arrange(date) %>%
+    filter(if_all(all_of(vars_order), ~ !is.na(.)))
+
+  if (nrow(macro_wide) < 36) {
+    return(NULL)
+  }
+
+  tryCatch(
+    {
+      suppressMessages({
+        suppressWarnings({
+          mat <- as.matrix(macro_wide[, vars_order])
+
+          # ── Unit-root check → difference only the series that need it -----------
+          needs_diff <- vapply(vars_order, function(v) {
+            p <- tryCatch(
+              tseries::adf.test(mat[, v])$p.value,
+              error = function(e) NA_real_
+            )
+            is.na(p) || p > 0.10
+          }, logical(1))
+          names(needs_diff) <- vars_order
+
+          last_level <- mat[nrow(mat), ]
+          mat_fit <- mat
+          for (v in vars_order) {
+            if (needs_diff[[v]]) {
+              mat_fit[, v] <- c(NA_real_, diff(mat[, v]))
+            }
+          }
+          mat_fit <- mat_fit[-1, , drop = FALSE]
+
+          # ── Lag order via AIC (vars::VARselect), then Minnesota-prior BVAR -------
+          lag_max <- min(12, max(2, floor(nrow(mat_fit) / 15)))
+          p <- tryCatch(
+            unname(vars::VARselect(mat_fit, lag.max = lag_max, type = "const")$selection["AIC(n)"]),
+            error = function(e) 4
+          )
+          p <- max(1, min(p, 8))
+
+          fit <- BVAR::bvar(
+            mat_fit,
+            lags = p,
+            n_draw = 5000L,
+            n_burn = 1000L,
+            priors = BVAR::bv_priors(
+              mn = BVAR::bv_mn(lambda = BVAR::bv_lambda(mode = 0.2))
+            ),
+            verbose = FALSE
+          )
+
+          alpha <- (1 - ci_level) / 2
+          fc <- predict(fit, horizon = horizon_months, conf_bands = alpha)
+
+          # fc$fcast: [draw, horizon, var] — var order matches vars_order
+          draws <- fc$fcast
+          level_draws <- draws
+          for (j in seq_along(vars_order)) {
+            v <- vars_order[j]
+            if (needs_diff[[v]]) {
+              level_draws[, , j] <- last_level[[v]] + t(apply(draws[, , j], 1, cumsum))
+            }
+          }
+
+          point <- apply(level_draws, c(2, 3), median)
+          lo <- apply(level_draws, c(2, 3), quantile, probs = alpha)
+          hi <- apply(level_draws, c(2, 3), quantile, probs = 1 - alpha)
+
+          future_dates <- seq(
+            max(macro_wide$date),
+            by = "1 month",
+            length.out = horizon_months + 1
+          )[-1]
+
+          weights <- c(BVAR = 1)
+
+          setNames(
+            lapply(seq_along(vars_order), function(j) {
+              v <- vars_order[j]
+              hist_df <- tibble::tibble(
+                ds = macro_wide$date,
+                yhat = mat[, v],
+                yhat_lower = NA_real_,
+                yhat_upper = NA_real_,
+                y = mat[, v],
+                is_forecast = FALSE
+              )
+              fc_df <- tibble::tibble(
+                ds = future_dates,
+                yhat = point[, j],
+                yhat_lower = lo[, j],
+                yhat_upper = hi[, j],
+                y = NA_real_,
+                is_forecast = TRUE
+              )
+              list(
+                data = bind_rows(hist_df, fc_df),
+                model_table = fit,
+                weights = weights,
+                horizon = horizon_months
+              )
+            }),
+            vars_order
+          )
+        }) # end suppressWarnings
+      }) # end suppressMessages
+    },
+    error = function(e) {
+      message(glue("Macro BVAR failed: {conditionMessage(e)}"))
+      NULL
+    }
+  )
+}
 
 # ── Public API (mirrors original interface) ───────────────────────────────────
 
@@ -252,21 +533,69 @@ run_ensemble <- function(
 run_all_forecasts <- function(fred_data, horizon_months = 18) {
   out <- list()
 
+  # ── Aggregate every series to true monthly frequency at ingestion ---------
+  #   (a no-op for series already monthly; fixes the frequency assumption for
+  #   DCOILWTICO [daily] and MORTGAGE30US [weekly])
+  monthly_data <- list()
   for (sid in names(FORECAST_SERIES)) {
     raw_df <- fred_data[[sid]]
     if (is.null(raw_df) || nrow(raw_df) < 24) {
       next
     }
+    monthly_data[[sid]] <- .aggregate_monthly(raw_df)
+  }
 
-    # CPI: convert to YoY % before forecasting
-    if (sid == "CPIAUCSL") {
-      raw_df <- raw_df %>%
-        arrange(date) %>%
-        mutate(value = (value / lag(value, 12) - 1) * 100) %>%
-        filter(!is.na(value))
-      FORECAST_SERIES[["CPIAUCSL"]]$unit <<- "YoY %"
+  # CPI: convert to YoY % before forecasting (unit already "YoY %" in metadata)
+  if (!is.null(monthly_data[["CPIAUCSL"]])) {
+    monthly_data[["CPIAUCSL"]] <- monthly_data[["CPIAUCSL"]] %>%
+      arrange(date) %>%
+      mutate(value = (value / lag(value, 12) - 1) * 100) %>%
+      filter(!is.na(value))
+  }
+
+  # ── Macro block: UNRATE / CPI YoY / FEDFUNDS / MORTGAGE30US, jointly ------
+  have_macro <- all(vapply(
+    MACRO_BLOCK_IDS,
+    function(sid) !is.null(monthly_data[[sid]]),
+    logical(1)
+  ))
+
+  if (have_macro) {
+    macro_wide <- purrr::reduce(
+      purrr::map(MACRO_BLOCK_IDS, function(sid) {
+        monthly_data[[sid]] %>% select(date, value) %>% rename(!!sid := value)
+      }),
+      full_join,
+      by = "date"
+    ) %>%
+      arrange(date)
+
+    message("Fitting macro BVAR block (UNRATE, CPI YoY, FEDFUNDS, MORTGAGE30US)...")
+    macro_fc <- run_macro_bvar(macro_wide, horizon_months = horizon_months)
+
+    if (!is.null(macro_fc)) {
+      for (sid in MACRO_BLOCK_IDS) {
+        out[[sid]] <- macro_fc[[sid]]
+      }
+    } else {
+      message(
+        "Macro BVAR failed — falling back to univariate ensembles for the rate/inflation cluster."
+      )
+      have_macro <- FALSE
     }
+  }
 
+  # ── Remaining series: independent univariate ensembles ---------------------
+  univariate_ids <- setdiff(
+    names(FORECAST_SERIES),
+    if (have_macro) MACRO_BLOCK_IDS else character()
+  )
+
+  for (sid in univariate_ids) {
+    raw_df <- monthly_data[[sid]]
+    if (is.null(raw_df)) {
+      next
+    }
     message(glue("Ensemble forecasting {sid}..."))
     out[[sid]] <- run_ensemble(raw_df, horizon_months = horizon_months)
   }
@@ -275,6 +604,18 @@ run_all_forecasts <- function(fred_data, horizon_months = 18) {
 }
 
 # ── Plotting (unchanged contract) ────────────────────────────────────────────
+
+#' Human-readable label for a model key in the weights vector
+.pretty_model_name <- function(key) {
+  switch(
+    key,
+    prophet = "Prophet",
+    arima = "ARIMA",
+    ets = "ETS",
+    BVAR = "BVAR",
+    toupper(key)
+  )
+}
 
 plot_forecast_chart <- function(fc_result, series_id) {
   if (is.null(fc_result)) {
@@ -297,13 +638,22 @@ plot_forecast_chart <- function(fc_result, series_id) {
   col <- cfg$color
   cutoff <- max(hist$ds)
 
-  # Build weight label for subtitle
+  # Build weight label for subtitle (generic across ensemble / BVAR weights)
   w <- fc_result$weights
-  w_lbl <- glue(
-    "Prophet {round(w['prophet']*100)}% · ",
-    "ARIMA {round(w['arima']*100)}% · ",
-    "ETS {round(w['ets']*100)}%"
-  )
+  is_bvar <- identical(names(w), "BVAR")
+  method_lbl <- if (is_bvar) "Joint BVAR Forecast" else "Ensemble Forecast"
+  w_lbl <- if (is_bvar) {
+    "Jointly modeled with unemployment, CPI, Fed funds & mortgage rate"
+  } else {
+    paste(
+      mapply(
+        function(nm, val) glue("{.pretty_model_name(nm)} {round(val * 100)}%"),
+        names(w),
+        w
+      ),
+      collapse = " · "
+    )
+  }
 
   plot_ly() %>%
     # Confidence ribbon (forecast only)
@@ -314,7 +664,7 @@ plot_forecast_chart <- function(fc_result, series_id) {
       ymax = ~yhat_upper,
       fillcolor = paste0(col, "30"),
       line = list(color = "transparent"),
-      name = glue("{round(100*0.90)}% CI"),
+      name = glue("{round(100 * 0.90)}% CI"),
       showlegend = TRUE,
       hoverinfo = "none"
     ) %>%
@@ -334,13 +684,13 @@ plot_forecast_chart <- function(fc_result, series_id) {
       line = list(color = paste0(col, "99"), width = 1.5, dash = "dot"),
       name = "Recent Trend"
     ) %>%
-    # Ensemble forecast line
+    # Forecast line
     add_lines(
       data = fore,
       x = ~ds,
       y = ~yhat,
       line = list(color = col, width = 2.5, dash = "dash"),
-      name = "Ensemble Forecast"
+      name = method_lbl
     ) %>%
     # Forecast cutoff vertical
     add_segments(
@@ -357,8 +707,9 @@ plot_forecast_chart <- function(fc_result, series_id) {
       title = list(
         text = paste0(
           cfg$name,
-          " — 18-Month Ensemble Forecast<br>",
-          "<sup>",
+          glue(" — {fc_result$horizon}-Month "),
+          method_lbl,
+          "<br><sup>",
           w_lbl,
           "</sup>"
         ),
@@ -396,11 +747,15 @@ forecast_summary_table <- function(forecasts) {
     f6 <- df %>% filter(is_forecast) %>% slice(min(6, n()))
     f18 <- df %>% slice_tail(n = 1)
 
-    # Ensemble weights summary
+    # Weights summary (generic across ensemble / BVAR)
     w <- fc$weights
-    w_str <- glue(
-      "P{round(w['prophet']*100)}/A{round(w['arima']*100)}/E{round(w['ets']*100)}"
-    )
+    w_str <- if (identical(names(w), "BVAR")) {
+      "BVAR (joint)"
+    } else {
+      glue(
+        "P{round(w['prophet'] * 100)}/A{round(w['arima'] * 100)}/E{round(w['ets'] * 100)}"
+      )
+    }
 
     tibble(
       Indicator = cfg$name,
