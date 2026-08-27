@@ -1122,6 +1122,56 @@ compute_ensemble_weights <- function(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# .regime_from_gdp_point — headline regime label, keyed off the FINAL GDP point
+# estimate (post recession-probability drag) rather than the raw composite
+# score. The composite score alone can say "Moderate Growth" while the point
+# forecast — after the recession-probability discount — has already fallen
+# into "Stall / Slowdown" territory; deriving the label from the same number
+# shown on the card guarantees the two can never contradict each other.
+# Bands match the gdp_est ranges quoted by .regime_from_score() above.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+.regime_from_gdp_point <- function(pt) {
+  if (is.null(pt) || is.na(pt)) {
+    return(.regime_from_score(5)) # neutral fallback if forecast unavailable
+  }
+  if (pt >= 2.5) {
+    list(
+      label = "Expansion",
+      color = "#2dce89",
+      icon = "arrow-up",
+      gdp_est = "+2.5% to +3.5%",
+      summary = "Broad-based growth signals. Labor solid, consumer resilient, financial conditions supportive."
+    )
+  } else if (pt >= 1.0) {
+    list(
+      label = "Moderate Growth",
+      color = "#00b4d8",
+      icon = "minus",
+      gdp_est = "+1.0% to +2.5%",
+      summary = "Below-trend but positive growth likely. Mixed signals — watch rate transmission and consumer confidence."
+    )
+  } else if (pt >= -0.5) {
+    list(
+      label = "Stall / Slowdown",
+      color = "#f4a261",
+      icon = "arrow-down",
+      gdp_est = "-0.5% to +1.0%",
+      summary = "Growth at risk. Restrictive monetary conditions or financial stress beginning to bite."
+    )
+  } else {
+    list(
+      label = "Contraction Risk",
+      color = "#e94560",
+      icon = "exclamation-triangle",
+      gdp_est = "Below -0.5%",
+      summary = "Multiple negative signals. Recession probability elevated."
+    )
+  }
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # .growth_outlook_loading_html — animated screen while models train
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1995,25 +2045,10 @@ compute_ensemble_weights <- function(
   gdp_ci_lo <- gdp_point - uncertainty
   gdp_ci_hi <- gdp_point + uncertainty
 
-  # ── Override regime when recession prob and composite score disagree ────────────
-  # A composite score of 6.9/10 ("Moderate Growth") but 53% recession probability
-  # are contradictory signals. Reconcile by applying a hard regime override:
-  #   rec_prob >= 50%  →  "Stall / Slowdown" (floor)
-  #   rec_prob >= 65%  →  "Contraction Risk" (floor)
-  # This ensures the headline label is never rosier than the recession model allows.
-  rec_regime_override <- if (
-    !is.null(recession_prob_pct) && !is.na(recession_prob_pct)
-  ) {
-    if (recession_prob_pct >= 65) {
-      "Contraction Risk"
-    } else if (recession_prob_pct >= 50) {
-      "Stall / Slowdown"
-    } else {
-      NULL
-    }
-  } else {
-    NULL
-  }
+  # NOTE: the regime label shown alongside this forecast is no longer picked
+  # from a separate rec_prob >= 50%/65% override — it's derived directly from
+  # `gdp_point` below via .regime_from_gdp_point(), so label and number can't
+  # disagree. See build_growth_outlook().
 
   # ── Primary driver of the forecast ───────────────────────────────────────────
   if (!is.null(components)) {
@@ -2039,7 +2074,6 @@ compute_ensemble_weights <- function(
     uncertainty = round(uncertainty, 2),
     rec_drag = round(rec_drag, 2),
     top_driver = top_driver,
-    rec_regime_override = rec_regime_override,
     method = "Composite score + recession probability discount"
   )
 }
@@ -2201,8 +2235,6 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
       tw <- sum(sapply(components, `[[`, "weight"))
       raw_score <- sum(sapply(components, function(c) c$score * c$weight)) / tw
       score_0_10 <- max(0, min(10, round((raw_score + 1) / 2 * 10, 1)))
-      regime <- .regime_from_score(score_0_10) # ← no case_when
-      # Regime override applied after GDP forecast is computed (see gdp_forecast$rec_regime_override)
       drag <- names(which.min(sapply(components, `[[`, "score")))
       supp <- names(which.max(sapply(components, `[[`, "score")))
       swing <- list(
@@ -2397,6 +2429,16 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
         ensemble_weights = ew
       )
 
+      gdp_forecast <- .compute_gdp_forecast(
+        score_0_10,
+        recession_prob$prob,
+        components
+      )
+      # Regime label is derived from the final GDP point estimate (post
+      # recession-probability drag), not the raw composite score, so the
+      # headline label can never contradict the number shown beneath it.
+      regime <- .regime_from_gdp_point(gdp_forecast$point)
+
       list(
         score = score_0_10,
         raw_score = raw_score,
@@ -2405,11 +2447,7 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
         swing = swing,
         recession_prob = recession_prob,
         as_of = Sys.Date(),
-        gdp_forecast = .compute_gdp_forecast(
-          score_0_10,
-          recession_prob$prob,
-          components
-        )
+        gdp_forecast = gdp_forecast
       )
     },
     error = function(e) {
@@ -2656,29 +2694,10 @@ render_growth_outlook_html <- function(outlook) {
   result <- tryCatch(
     {
       rp <- outlook$recession_prob
+      # regime is already derived from gdp_forecast$point in build_growth_outlook(),
+      # so it can't contradict the point estimate rendered below.
       reg <- outlook$regime
       gfo <- outlook$gdp_forecast
-      # Reconcile regime label when recession probability contradicts composite score
-      if (!is.null(gfo) && !is.null(gfo$rec_regime_override)) {
-        override_label <- gfo$rec_regime_override
-        # Only override in the "worse" direction — never make it look rosier
-        regime_order <- c(
-          "Expansion" = 4,
-          "Moderate Growth" = 3,
-          "Stall / Slowdown" = 2,
-          "Contraction Risk" = 1
-        )
-        current_rank <- regime_order[reg$label] %||% 3
-        override_rank <- regime_order[override_label] %||% 3
-        if (!is.na(override_rank) && override_rank < current_rank) {
-          reg <- .regime_from_score(if (override_rank == 2) 3.4 else 1.0)
-          message(sprintf(
-            "[t3] Regime overridden by recession probability: '%s' → '%s'",
-            names(regime_order)[current_rank],
-            reg$label
-          ))
-        }
-      }
       score <- outlook$score
       comps <- outlook$components
       swing <- outlook$swing
