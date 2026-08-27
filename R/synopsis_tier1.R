@@ -720,7 +720,17 @@ render_synopsis_html <- function(blocks) {
 # TAB-LEVEL SYNOPSIS BUILDERS (unchanged from original)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-.tab_synopsis_html <- function(title, color, icon_name, bullets, note = NULL) {
+.tab_synopsis_html <- function(title, color, icon_name, bullets, note = NULL, intro = NULL) {
+  intro_html <- if (!is.null(intro) && nchar(intro) > 0) {
+    sprintf(
+      "<div style='margin-bottom:12px;padding-bottom:12px;border-bottom:1px solid #2a3042;
+               color:#c3c9d4;font-size:12.5px;line-height:1.75;'>%s</div>",
+      htmltools::htmlEscape(intro)
+    )
+  } else {
+    ""
+  }
+
   bullet_html <- paste(
     vapply(
       bullets,
@@ -759,11 +769,12 @@ render_synopsis_html <- function(blocks) {
                  letter-spacing:1px;margin-bottom:10px;'>
        <i class=\"fa fa-%s\" style=\"margin-right:6px;\"></i>%s \u2014 Current Landscape
      </div>
-     <ul style='list-style:none;padding:0;margin:0;'>%s</ul>%s</div>",
+     %s<ul style='list-style:none;padding:0;margin:0;'>%s</ul>%s</div>",
     color,
     color,
     icon_name,
     title,
+    intro_html,
     bullet_html,
     note_html
   )
@@ -773,6 +784,36 @@ build_labor_synopsis <- function(fred_data, kpis) {
   if (is.null(fred_data) || is.null(kpis)) {
     return(NULL)
   }
+
+  unemp_now <- kpis$unemp_rate %||% NA
+  wage_now <- kpis$wage_yoy %||% NA
+  avg_payrolls_3m <- {
+    p <- fred_data$PAYEMS
+    if (!is.null(p) && nrow(p) >= 4) {
+      round(mean(
+        diff(tail(arrange(p, date) %>% pull(value), 4)),
+        na.rm = TRUE
+      ))
+    } else {
+      NA
+    }
+  } %||%
+    NA
+
+  intro <- sprintf(
+    "Unemployment and payroll growth are the clearest real-time read on the economy's health: they drive consumer spending directly and shape how much room the Fed has to cut rates without reigniting wage-driven inflation. Right now the jobless rate sits at %.1f%% with hiring averaging %s over the last three months — %s, with wages growing %.1f%% YoY.",
+    unemp_now,
+    if (!is.na(avg_payrolls_3m)) sprintf("%+.0fK/mo", avg_payrolls_3m) else "an unclear pace",
+    if (!is.na(avg_payrolls_3m) && avg_payrolls_3m > 200) {
+      "a still-hot hiring pace"
+    } else if (!is.na(avg_payrolls_3m) && avg_payrolls_3m > 100) {
+      "cooling but solid hiring"
+    } else {
+      "a materially slowing job market"
+    },
+    wage_now
+  )
+
   htmltools::HTML(.tab_synopsis_html(
     "Labor Market",
     "#00b4d8",
@@ -781,26 +822,12 @@ build_labor_synopsis <- function(fred_data, kpis) {
       list(
         col = "#00b4d8",
         label = "Unemployment rate: ",
-        text = sprintf("%.1f%%", kpis$unemp_rate %||% NA)
+        text = sprintf("%.1f%%", unemp_now)
       ),
       list(
         col = "#2dce89",
         label = "3M avg payrolls: ",
-        text = sprintf(
-          "%+.0fK/mo",
-          {
-            p <- fred_data$PAYEMS
-            if (!is.null(p) && nrow(p) >= 4) {
-              round(mean(
-                diff(tail(arrange(p, date) %>% pull(value), 4)),
-                na.rm = TRUE
-              ))
-            } else {
-              NA
-            }
-          } %||%
-            NA
-        )
+        text = sprintf("%+.0fK/mo", avg_payrolls_3m)
       ),
       list(
         col = "#7c5cbf",
@@ -810,9 +837,10 @@ build_labor_synopsis <- function(fred_data, kpis) {
       list(
         col = "#f4a261",
         label = "Wage growth YoY: ",
-        text = sprintf("%.1f%%", kpis$wage_yoy %||% NA)
+        text = sprintf("%.1f%%", wage_now)
       )
-    )
+    ),
+    intro = intro
   ))
 }
 
@@ -820,24 +848,43 @@ build_inflation_synopsis <- function(fred_data, kpis) {
   if (is.null(fred_data) || is.null(kpis)) {
     return(NULL)
   }
+
+  cpi_now <- kpis$cpi_yoy %||% NA
+  core_now <- kpis$core_cpi_yoy %||% NA
+  real_ff <- (kpis$fed_funds %||% NA) - cpi_now
+
+  intro <- sprintf(
+    "Inflation is the single biggest input into Fed policy and the real return on every fixed-income asset you hold: the higher it runs above the 2%% target, the less room the Fed has to cut. CPI is currently running at %.1f%% YoY (core, which strips out volatile food & energy, at %.1f%%), leaving the real Fed Funds rate at %.1f%% — %s.",
+    cpi_now,
+    core_now,
+    real_ff,
+    if (!is.na(real_ff) && real_ff > 1.5) {
+      "solidly restrictive territory"
+    } else if (!is.na(real_ff) && real_ff > 0) {
+      "only mildly restrictive, below the historical neutral rate"
+    } else {
+      "still accommodative in real terms"
+    }
+  )
+
   htmltools::HTML(.tab_synopsis_html(
     "Inflation",
     "#e94560",
     "fire",
     list(
       list(
-        col = if (!is.na(kpis$cpi_yoy %||% NA) && (kpis$cpi_yoy %||% 0) > 3) {
+        col = if (!is.na(cpi_now) && cpi_now > 3) {
           "#e94560"
         } else {
           "#2dce89"
         },
         label = "CPI YoY: ",
-        text = sprintf("%.1f%%", kpis$cpi_yoy %||% NA)
+        text = sprintf("%.1f%%", cpi_now)
       ),
       list(
         col = "#f4a261",
         label = "Core CPI YoY: ",
-        text = sprintf("%.1f%%", kpis$core_cpi_yoy %||% NA)
+        text = sprintf("%.1f%%", core_now)
       ),
       list(
         col = "#7c5cbf",
@@ -847,12 +894,10 @@ build_inflation_synopsis <- function(fred_data, kpis) {
       list(
         col = "#00b4d8",
         label = "Real Fed Funds: ",
-        text = sprintf(
-          "%.1f%%",
-          (kpis$fed_funds %||% NA) - (kpis$cpi_yoy %||% NA)
-        )
+        text = sprintf("%.1f%%", real_ff)
       )
-    )
+    ),
+    intro = intro
   ))
 }
 
@@ -860,6 +905,23 @@ build_housing_synopsis <- function(fred_data, kpis) {
   if (is.null(fred_data) || is.null(kpis)) {
     return(NULL)
   }
+
+  starts_now <- kpis$housing_starts %||% NA
+  mort_now <- kpis$mortgage30 %||% NA
+
+  intro <- sprintf(
+    "Housing is one of the most rate-sensitive corners of the economy, so mortgage rates and starts double as an early read on how tight financial conditions really feel. At a %.2f%% 30-year mortgage rate, starts are running at %.0fK annualized — %s — and rate moves today typically show up in construction activity roughly a year later.",
+    mort_now,
+    starts_now,
+    if (!is.na(starts_now) && starts_now > 1400) {
+      "a healthy build pace"
+    } else if (!is.na(starts_now) && starts_now > 1100) {
+      "a moderate, rate-constrained pace"
+    } else {
+      "a weak pace consistent with affordability strain"
+    }
+  )
+
   htmltools::HTML(.tab_synopsis_html(
     "Housing",
     "#2dce89",
@@ -868,19 +930,20 @@ build_housing_synopsis <- function(fred_data, kpis) {
       list(
         col = "#2dce89",
         label = "Housing starts: ",
-        text = sprintf("%.0fK ann.", kpis$housing_starts %||% NA)
+        text = sprintf("%.0fK ann.", starts_now)
       ),
       list(
         col = "#f4a261",
         label = "30yr mortgage: ",
-        text = sprintf("%.2f%%", kpis$mortgage30 %||% NA)
+        text = sprintf("%.2f%%", mort_now)
       ),
       list(
         col = "#00b4d8",
         label = "Existing home sales: ",
         text = sprintf("%.2fM ann.", kpis$home_sales %||% NA)
       )
-    )
+    ),
+    intro = intro
   ))
 }
 
@@ -908,6 +971,22 @@ build_markets_synopsis <- function(fred_data, kpis) {
     NA
   }
 
+  spread_now <- kpis$t10y2y %||% NA
+
+  intro <- sprintf(
+    "Markets price in forward-looking risk faster than any official data release, which makes them a useful cross-check on the other tabs. The yield curve (10Y-2Y spread at %.2f pp, inverted %d of the last 24 months) has historically flagged recessions a year or more in advance, while the VIX at %.1f shows how much near-term stress investors are pricing in right now — %s.",
+    spread_now,
+    months_inv %||% 0L,
+    vix_now,
+    if (!is.na(vix_now) && vix_now > 25) {
+      "an elevated, fearful tone"
+    } else if (!is.na(vix_now) && vix_now > 18) {
+      "a cautious tone"
+    } else {
+      "a complacent, low-vol regime"
+    }
+  )
+
   bullets <- list(
     list(
       col = if (!is.na(months_inv) && months_inv > 12) "#e94560" else "#2dce89",
@@ -915,7 +994,7 @@ build_markets_synopsis <- function(fred_data, kpis) {
       text = sprintf(
         "inverted %d of last 24 months; spread %.2f pp",
         months_inv %||% 0L,
-        kpis$t10y2y %||% NA
+        spread_now
       )
     ),
     list(
@@ -950,14 +1029,103 @@ build_markets_synopsis <- function(fred_data, kpis) {
     "#f4a261",
     "chart-line",
     bullets,
-    if (!is.na(months_inv) && months_inv > 0) {
+    note = if (!is.na(months_inv) && months_inv > 0) {
       sprintf(
         "Curve inverted for %d of 24 months. Historically recession follows within 6-18 months.",
         months_inv
       )
     } else {
       NULL
+    },
+    intro = intro
+  ))
+}
+
+build_consumer_synopsis <- function(fred_data, kpis) {
+  if (is.null(fred_data) || is.null(kpis)) {
+    return(NULL)
+  }
+
+  sent <- fred_data$UMCSENT %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
     }
+  ip <- fred_data$INDPRO %>%
+    {
+      if (!is.null(.)) arrange(., date) %>% pull(value) else NULL
+    }
+
+  retail_now <- kpis$retail_yoy %||% NA
+  sent_now <- kpis$cons_sent %||% NA
+  sent_yr <- if (!is.null(sent) && length(sent) >= 12) {
+    sent[length(sent) - 12]
+  } else {
+    NA
+  }
+  ip_yoy <- kpis$indpro_yoy %||% NA
+
+  intro <- sprintf(
+    "Consumer spending drives roughly two-thirds of U.S. GDP, so retail sales and sentiment act as an early warning system for the broader economy — sentiment in particular tends to lead actual spending by a quarter or two. Retail sales are growing %.1f%% YoY nominally while sentiment sits at %.1f — %s.",
+    retail_now,
+    sent_now,
+    if (!is.na(sent_now) && sent_now > 80) {
+      "consumers remain confident, which tends to support continued spending"
+    } else if (!is.na(sent_now) && sent_now > 65) {
+      "sentiment is middling, worth watching for a spending pullback"
+    } else {
+      "sentiment is weak, historically a leading indicator of slowing spending"
+    }
+  )
+
+  bullets <- list(
+    list(
+      col = if (!is.na(retail_now) && retail_now > 0) "#2dce89" else "#e94560",
+      label = "Retail sales YoY: ",
+      text = sprintf("%.1f%% nominal", retail_now)
+    ),
+    list(
+      col = if (!is.na(sent_now) && sent_now > 80) {
+        "#2dce89"
+      } else if (!is.na(sent_now) && sent_now > 65) {
+        "#f4a261"
+      } else {
+        "#e94560"
+      },
+      label = "Consumer sentiment: ",
+      text = sprintf(
+        "%.1f (%s vs 1yr ago %.1f)",
+        sent_now,
+        if (!is.na(sent_yr) && !is.na(sent_now)) {
+          sprintf("%+.1f", sent_now - sent_yr)
+        } else {
+          "N/A"
+        },
+        sent_yr %||% NA
+      )
+    ),
+    list(
+      col = if (!is.na(ip_yoy) && ip_yoy > 0) "#2dce89" else "#e94560",
+      label = "Industrial production YoY: ",
+      text = sprintf(
+        "%.1f%% — %s",
+        ip_yoy,
+        if (!is.na(ip_yoy) && ip_yoy > 1) {
+          "expansion in manufacturing activity"
+        } else if (!is.na(ip_yoy) && ip_yoy > 0) {
+          "stagnant growth"
+        } else {
+          "contraction, watch for inventory build reversal"
+        }
+      )
+    )
+  )
+
+  htmltools::HTML(.tab_synopsis_html(
+    "Consumer",
+    "#00b4d8",
+    "shopping-cart",
+    bullets,
+    intro = intro
   ))
 }
 
