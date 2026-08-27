@@ -3,6 +3,13 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 suppressPackageStartupMessages({
+  # vars (via its Depends: MASS) must load BEFORE tidyverse/dplyr — MASS
+  # exports a select() that would otherwise mask dplyr::select() for every
+  # bare select() call in the app (data_fred.R, data_bls.R, data_markets.R,
+  # forecasting.R, server.R), silently breaking FRED/BLS data ingestion.
+  # Attaching order determines which same-named export wins, so whichever
+  # package loads LAST takes priority — load vars first so dplyr wins.
+  library(vars)
   library(shiny);         library(shinydashboard); library(shinyWidgets)
   library(shinycssloaders); library(shinyjs);      library(DT)
   library(plotly);        library(leaflet.extras)
@@ -10,7 +17,7 @@ suppressPackageStartupMessages({
   library(glue);          library(fredr);           library(tidyquant)
   library(tidycensus);    library(prophet);         library(httr2)
   library(jsonlite);      library(sf);              library(waiter)
-  library(markdown);      library(vars)
+  library(markdown)
 })
 
 # Load leaflet AFTER tidyquant/xts to avoid .xts_chob namespace collision.
