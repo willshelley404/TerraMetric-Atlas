@@ -881,8 +881,8 @@ server <- function(input, output, session) {
     }
     mort <- rv$fred_data$MORTGAGE30US %>%
       tail(120) %>%
-      select(date, mort = value)
-    start <- rv$fred_data$HOUST %>% tail(120) %>% select(date, starts = value)
+      dplyr::select(date, mort = value)
+    start <- rv$fred_data$HOUST %>% tail(120) %>% dplyr::select(date, starts = value)
     df <- inner_join(mort, start, by = "date") %>%
       filter(!is.na(mort), !is.na(starts))
 
@@ -1577,7 +1577,10 @@ server <- function(input, output, session) {
   output$tbl_fcst_summary <- renderDT({
     req(rv$forecasts)
     tbl <- forecast_summary_table(rv$forecasts)
-    if (is.null(tbl)) {
+    # map_dfr() over an all-NULL forecast list returns a zero-column tibble,
+    # not NULL — guard on that too, or formatStyle() below errors trying to
+    # find columns (incl. "Weights (P/A/E)") that don't exist yet.
+    if (is.null(tbl) || nrow(tbl) == 0) {
       return(datatable(data.frame()))
     }
     datatable(

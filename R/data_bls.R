@@ -92,7 +92,7 @@ fetch_all_bls <- function(lookback_years = 5) {
   for (sid in BLS_IDS) {
     result[[sid]] <- raw %>%
       filter(series_id == sid) %>%
-      select(date, value) %>%
+      dplyr::select(date, value) %>%
       arrange(date)
   }
   result
@@ -107,7 +107,7 @@ build_inflation_panel <- function(bls_data, fred_data) {
       nrow(bls_data[["CUSR0000SA0"]]) > 12) {
     frames[["CPI-U (BLS)"]] <- bls_data[["CUSR0000SA0"]] %>%
       yoy_change() %>%
-      select(date, yoy) %>%
+      dplyr::select(date, yoy) %>%
       filter(!is.na(yoy)) %>%
       rename(value = yoy) %>%
       mutate(series = "CPI-U YoY (BLS)")
@@ -118,7 +118,7 @@ build_inflation_panel <- function(bls_data, fred_data) {
       nrow(fred_data[["CPIAUCSL"]]) > 12) {
     frames[["Core CPI (FRED)"]] <- fred_data[["CPIAUCSL"]] %>%
       yoy_change() %>%
-      select(date, yoy) %>%
+      dplyr::select(date, yoy) %>%
       filter(!is.na(yoy)) %>%
       rename(value = yoy) %>%
       mutate(series = "CPI-U YoY (FRED)")
@@ -129,7 +129,7 @@ build_inflation_panel <- function(bls_data, fred_data) {
       nrow(fred_data[["CPILFESL"]]) > 12) {
     frames[["Core CPI"]] <- fred_data[["CPILFESL"]] %>%
       yoy_change() %>%
-      select(date, yoy) %>%
+      dplyr::select(date, yoy) %>%
       filter(!is.na(yoy)) %>%
       rename(value = yoy) %>%
       mutate(series = "Core CPI YoY")
@@ -140,7 +140,7 @@ build_inflation_panel <- function(bls_data, fred_data) {
       nrow(fred_data[["PCEPI"]]) > 12) {
     frames[["Core PCE"]] <- fred_data[["PCEPI"]] %>%
       yoy_change() %>%
-      select(date, yoy) %>%
+      dplyr::select(date, yoy) %>%
       filter(!is.na(yoy)) %>%
       rename(value = yoy) %>%
       mutate(series = "PCE YoY")

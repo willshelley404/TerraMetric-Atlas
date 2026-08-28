@@ -24,7 +24,7 @@ fetch_fred <- function(
       result <- do.call(fredr, args)
 
       result %>%
-        select(date, value) %>%
+        dplyr::select(date, value) %>%
         filter(!is.na(value)) %>%
         arrange(date) %>%
         mutate(series_id = series_id)
@@ -294,12 +294,12 @@ fred_correlation_matrix <- function(dlist, sids = NULL) {
     if (is.null(df)) {
       return(NULL)
     }
-    df %>% select(date, value) %>% rename(!!sid := value)
+    df %>% dplyr::select(date, value) %>% rename(!!sid := value)
   }) %>%
     reduce(function(a, b) full_join(a, b, by = "date")) %>%
     arrange(date) %>%
     mutate(across(-date, ~ zoo::na.approx(., na.rm = FALSE))) %>%
-    select(-date)
+    dplyr::select(-date)
 
   # Monthly sample
   cor(wide, use = "pairwise.complete.obs")

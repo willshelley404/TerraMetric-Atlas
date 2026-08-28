@@ -26,7 +26,7 @@ fetch_market_data <- function(tickers = ALL_TICKERS, lookback_days = 400) {
         to = Sys.Date(),
         get = "stock.prices"
       ) %>%
-        select(symbol, date, open, high, low, close, volume) %>%
+        dplyr::select(symbol, date, open, high, low, close, volume) %>%
         filter(!is.na(close)) %>%
         arrange(symbol, date)
 
@@ -87,7 +87,7 @@ market_summary_table <- function(mkt_returns, group = "all") {
       name = dplyr::recode(symbol, !!!TICKER_LABELS, .default = symbol),
       price = round(close, 2)
     ) %>%
-    select(symbol, name, price, ret_1d, ret_5d, ret_1m, ret_3m, ret_ytd) %>%
+    dplyr::select(symbol, name, price, ret_1d, ret_5d, ret_1m, ret_3m, ret_ytd) %>%
     rename(
       Ticker = symbol,
       Name = name,
