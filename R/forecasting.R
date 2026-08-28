@@ -85,6 +85,12 @@ MACRO_BLOCK_IDS <- c(
   "UNRATE", "CPIAUCSL", "FEDFUNDS", "MORTGAGE30US", "PAYEMS", "ICSA"
 )
 
+# Number of simulated future trajectories kept for the fan-chart overlay
+# (plot_forecast_chart draws these as thin lines so the forecast visually
+# wiggles the way the underlying model's own uncertainty actually looks,
+# instead of only showing the smooth median path + a static band).
+SAMPLE_PATH_COUNT <- 20L
+
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
 #' Compute RMSE for a numeric vector of residuals
@@ -94,6 +100,15 @@ MACRO_BLOCK_IDS <- c(
 .inverse_rmse_weights <- function(rmse_vec) {
   w <- 1 / rmse_vec
   w / sum(w) # normalise to sum to 1
+}
+
+#' Reshape a (paths x horizon) matrix of simulated trajectories into the long
+#' tibble (ds, path_id, value) that plot_forecast_chart's fan-chart overlay
+#' expects — one row per simulated point.
+.sample_paths_long <- function(path_mat, dates) {
+  purrr::map_dfr(seq_len(nrow(path_mat)), function(k) {
+    tibble::tibble(ds = dates, path_id = k, value = path_mat[k, ])
+  })
 }
 
 #' Aggregate a raw FRED tibble (daily/weekly/monthly) to true monthly frequency
@@ -212,13 +227,13 @@ MACRO_BLOCK_IDS <- c(
 
         fc_cv <- model_tbl_cv %>%
           modeltime::modeltime_forecast(
-            new_data = assessment_tbl %>% select(date),
+            new_data = assessment_tbl %>% dplyr::select(date),
             actual_data = analysis_tbl
           ) %>%
           filter(.key == "prediction")
 
         assessment_tbl %>%
-          select(date, actual = value) %>%
+          dplyr::select(date, actual = value) %>%
           mutate(h = row_number()) %>%
           inner_join(
             fc_cv %>% transmute(date = as.Date(.index), .model_id, pred = .value),
@@ -277,7 +292,7 @@ run_ensemble <- function(
 
   # ── Prep training table (modeltime expects `date` + `value`) ----------------
   train_tbl <- series_df %>%
-    select(date, value) %>%
+    dplyr::select(date, value) %>%
     filter(!is.na(value)) %>%
     arrange(date) %>%
     mutate(date = as.Date(date))
@@ -380,6 +395,45 @@ run_ensemble <- function(
               y = if_else(.key == "actual", .value, NA_real_),
               is_forecast = (.key == "prediction")
             )
+
+          # ── Sample paths for the fan-chart overlay -------------------------
+          #   Bootstrap trajectories by cumulatively summing resampled
+          #   one-step-ahead-scale innovations onto the point forecast — the
+          #   same "random-walk-style error growth" assumption already used
+          #   for the CI band above, just realized as individual paths
+          #   instead of collapsed into quantiles.
+          fore_yhat <- result$yhat[result$is_forecast]
+          fore_dates <- result$ds[result$is_forecast]
+          horizon_n <- length(fore_yhat)
+
+          noise_pool <- if (!is.null(cv_diag) && length(cv_diag$std_resid) >= 8) {
+            cv_diag$std_resid
+          } else if (exists("rmse_vec", inherits = FALSE)) {
+            rnorm(2000, mean = 0, sd = sum(weights * rmse_vec))
+          } else {
+            # cv_diag existed but its residual pool was too thin — rare edge
+            # case; fall back to a fresh in-sample noise estimate.
+            acc_tbl <- model_tbl %>% modeltime::modeltime_accuracy(new_data = train_tbl)
+            rv <- acc_tbl$rmse
+            sd_est <- if (any(!is.finite(rv))) NA_real_ else sum(weights * rv)
+            if (is.na(sd_est) || sd_est <= 0) {
+              sd_est <- sd(train_tbl$value, na.rm = TRUE) * 0.05
+            }
+            rnorm(2000, mean = 0, sd = sd_est)
+          }
+
+          noise_mat <- matrix(
+            sample(noise_pool, SAMPLE_PATH_COUNT * horizon_n, replace = TRUE),
+            nrow = SAMPLE_PATH_COUNT,
+            ncol = horizon_n
+          )
+          path_mat <- sweep(
+            t(apply(noise_mat, 1, cumsum)),
+            2,
+            fore_yhat,
+            "+"
+          )
+          sample_paths_tbl <- .sample_paths_long(path_mat, fore_dates)
         }) # end suppressWarnings
       }) # end suppressMessages
 
@@ -387,7 +441,8 @@ run_ensemble <- function(
         data = result,
         model_table = ensemble_tbl,
         weights = weights,
-        horizon = horizon_months
+        horizon = horizon_months,
+        sample_paths = sample_paths_tbl
       )
     },
     error = function(e) {
@@ -520,6 +575,15 @@ run_macro_bvar <- function(macro_wide, horizon_months = 18, ci_level = 0.90) {
 
           weights <- c(BVAR = 1)
 
+          # ── Sample paths for the fan-chart overlay ------------------------
+          #   We already drew thousands of full posterior trajectories to get
+          #   `point`/`lo`/`hi` above — keep a handful of the actual draws
+          #   (already re-integrated to levels) instead of discarding them,
+          #   so the chart can show real posterior paths rather than just
+          #   their smoothed median.
+          n_draws_total <- dim(level_draws)[1]
+          path_idx <- unique(round(seq(1, n_draws_total, length.out = SAMPLE_PATH_COUNT)))
+
           setNames(
             lapply(seq_along(vars_order), function(j) {
               v <- vars_order[j]
@@ -543,7 +607,16 @@ run_macro_bvar <- function(macro_wide, horizon_months = 18, ci_level = 0.90) {
                 data = bind_rows(hist_df, fc_df),
                 model_table = fit,
                 weights = weights,
-                horizon = horizon_months
+                horizon = horizon_months,
+                sample_paths = .sample_paths_long(
+                  {
+                    m <- level_draws[path_idx, , j]
+                    # Guard the length(path_idx) == 1 edge case, where
+                    # indexing already dropped the path dimension too.
+                    if (is.null(dim(m))) matrix(m, nrow = length(path_idx)) else m
+                  },
+                  future_dates
+                )
               )
             }),
             vars_order
@@ -594,7 +667,7 @@ run_all_forecasts <- function(fred_data, horizon_months = 18) {
   if (have_macro) {
     macro_wide <- purrr::reduce(
       purrr::map(MACRO_BLOCK_IDS, function(sid) {
-        monthly_data[[sid]] %>% select(date, value) %>% rename(!!sid := value)
+        monthly_data[[sid]] %>% dplyr::select(date, value) %>% rename(!!sid := value)
       }),
       full_join,
       by = "date"
@@ -686,7 +759,37 @@ plot_forecast_chart <- function(fc_result, series_id) {
     )
   }
 
-  plot_ly() %>%
+  p <- plot_ly()
+
+  # Simulated future paths (fan chart) — drawn first so they sit behind the
+  # ribbon/median line. Individual trajectories, not the smoothed median,
+  # are what actually shows the model's variation, so these are the fix for
+  # forecasts otherwise looking like a single straight/curved line.
+  paths <- fc_result$sample_paths
+  if (!is.null(paths) && nrow(paths) > 0) {
+    first_id <- min(paths$path_id)
+    p <- p %>%
+      add_lines(
+        data = paths[paths$path_id == first_id, ],
+        x = ~ds,
+        y = ~value,
+        line = list(color = paste0(col, "22"), width = 1),
+        name = "Simulated Paths",
+        showlegend = TRUE,
+        hoverinfo = "none"
+      ) %>%
+      add_lines(
+        data = paths[paths$path_id != first_id, ],
+        x = ~ds,
+        y = ~value,
+        split = ~path_id,
+        line = list(color = paste0(col, "22"), width = 1),
+        showlegend = FALSE,
+        hoverinfo = "none"
+      )
+  }
+
+  p %>%
     # Confidence ribbon (forecast only)
     add_ribbons(
       data = fore,
