@@ -1275,9 +1275,8 @@ server <- function(input, output, session) {
     if (is.null(rv$census_data)) {
       return(
         leaflet::leaflet() %>%
-          leaflet::addProviderTiles(
-            "CartoDB.DarkMatter",
-            options = leaflet::providerTileOptions(opacity = 0.95)
+          leaflet::addTiles(
+            options = leaflet::tileOptions(opacity = 0.95)
           ) %>%
           leaflet::setView(lng = -96, lat = 38, zoom = 4) %>%
           leaflet::addControl(
@@ -1298,7 +1297,7 @@ server <- function(input, output, session) {
     )
     if (is.null(map_out)) {
       leaflet::leaflet() %>%
-        leaflet::addProviderTiles("CartoDB.DarkMatter") %>%
+        leaflet::addTiles() %>%
         leaflet::setView(lng = -96, lat = 38, zoom = 4) %>%
         leaflet::addControl(
           html = "<div style='background:#1e2640;color:#e94560;padding:10px 14px;
@@ -1388,9 +1387,8 @@ server <- function(input, output, session) {
     if (is.null(rv$metro_sf)) {
       return(
         leaflet::leaflet() %>%
-          leaflet::addProviderTiles(
-            "CartoDB.DarkMatter",
-            options = leaflet::providerTileOptions(opacity = 0.95)
+          leaflet::addTiles(
+            options = leaflet::tileOptions(opacity = 0.95)
           ) %>%
           leaflet::setView(lng = -96, lat = 38, zoom = 4) %>%
           leaflet::addControl(
@@ -1415,7 +1413,7 @@ server <- function(input, output, session) {
 
     if (is.null(map_out)) {
       leaflet::leaflet() %>%
-        leaflet::addProviderTiles("CartoDB.DarkMatter") %>%
+        leaflet::addTiles() %>%
         leaflet::setView(lng = -96, lat = 38, zoom = 4) %>%
         leaflet::addControl(
           html = "<div style='background:#1e2640;color:#e94560;padding:10px 14px;

@@ -425,6 +425,13 @@ table.dataTable tbody td {
   background: #1a2035 !important;
 }
 
+/* Free OpenStreetMap tiles don't ship a dark style (unlike the old CartoDB.DarkMatter
+   provider, which now requires an API key). Invert + hue-rotate the raster tiles so
+   the basemap matches the app's dark navy theme without any external key. */
+.leaflet-tile-pane {
+  filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
+}
+
 .leaflet-popup-content-wrapper {
   background: #1e2640 !important;
   color: #d0d0d0 !important;

@@ -377,8 +377,7 @@ build_state_map <- function(state_sf, variable="unemp_rate") {
              else leaflet::labelFormat(suffix="%", between=" \u2013 ")
 
   leaflet::leaflet(state_sf, options=leaflet::leafletOptions(zoomControl=TRUE)) %>%
-    leaflet::addProviderTiles("CartoDB.DarkMatter",
-                              options=leaflet::providerTileOptions(opacity=0.95)) %>%
+    leaflet::addTiles(options=leaflet::tileOptions(opacity=0.95)) %>%
     leaflet::addPolygons(
       fillColor=colour_pal(vals), fillOpacity=0.82,
       color="#0f1117", weight=0.8, smoothFactor=1,
@@ -469,8 +468,7 @@ build_metro_bubble_map <- function(metro_sf_df, variable="unemp_rate", min_pop=5
              else leaflet::labelFormat(suffix="%", between=" \u2013 ")
 
   leaflet::leaflet(options=leaflet::leafletOptions(zoomControl=TRUE)) %>%
-    leaflet::addProviderTiles("CartoDB.DarkMatter",
-                              options=leaflet::providerTileOptions(opacity=0.95)) %>%
+    leaflet::addTiles(options=leaflet::tileOptions(opacity=0.95)) %>%
     leaflet::addCircleMarkers(
       lng=df$lon, lat=df$lat, radius=radius,
       fillColor=colour_pal(vals), fillOpacity=0.82,
