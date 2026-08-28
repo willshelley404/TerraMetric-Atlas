@@ -410,7 +410,16 @@ ui <- dashboardPage(
                   tags$hr(style="border-color:#2a3042;margin:6px 0;"),
                   "Weights auto-tuned by in-sample RMSE.", tags$br(),
                   "90% confidence intervals.", tags$br(),
-                  "Historical FRED data."
+                  "Historical FRED data.",
+                  tags$hr(style="border-color:#2a3042;margin:6px 0;"),
+                  icon("chart-line", style="color:#7c5cbf;"), " ", tags$b("Simulated Paths"),
+                  " (faint lines): individual simulated futures, not the average.",
+                  " A shaded band only shows how wide the range gets — these lines show",
+                  " what one realistic path actually looks like month-to-month, bumps included.",
+                  " For jointly-modeled indicators (Unemployment, CPI, Fed Funds, Mortgage Rate,",
+                  " Payrolls, Jobless Claims) each line is a real draw from the Bayesian VAR's",
+                  " posterior simulation; for the rest, they're built by resampling the model's",
+                  " own historical forecast errors onto its point forecast."
                 )
               )
             ),
