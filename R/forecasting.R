@@ -71,6 +71,7 @@ FORECAST_SERIES <- list(
     unit = "%",
     color = "#7c5cbf"
   ),
+  DGS10 = list(name = "10-Yr Treasury Yield", unit = "%", color = "#ffd166"),
   HOUST = list(name = "Housing Starts", unit = "K", color = "#2dce89"),
   PAYEMS = list(name = "Nonfarm Payrolls", unit = "K", color = "#00b4d8"),
   ICSA = list(name = "Initial Jobless Claims", unit = "K", color = "#06d6a0"),
@@ -82,7 +83,7 @@ FORECAST_SERIES <- list(
 # and PAYEMS/ICSA give the block a live read on labor-market momentum instead
 # of inferring it only from UNRATE's own — slower-moving — history)
 MACRO_BLOCK_IDS <- c(
-  "UNRATE", "CPIAUCSL", "FEDFUNDS", "MORTGAGE30US", "PAYEMS", "ICSA"
+  "UNRATE", "CPIAUCSL", "FEDFUNDS", "MORTGAGE30US", "DGS10", "PAYEMS", "ICSA"
 )
 
 # Number of simulated future trajectories kept for the fan-chart overlay
@@ -674,7 +675,7 @@ run_all_forecasts <- function(fred_data, horizon_months = 18) {
     ) %>%
       arrange(date)
 
-    message("Fitting macro BVAR block (UNRATE, CPI YoY, FEDFUNDS, MORTGAGE30US)...")
+    message("Fitting macro BVAR block (UNRATE, CPI YoY, FEDFUNDS, MORTGAGE30US, 10Y Treasury, payrolls, claims)...")
     macro_fc <- run_macro_bvar(macro_wide, horizon_months = horizon_months)
 
     if (!is.null(macro_fc)) {
@@ -747,7 +748,7 @@ plot_forecast_chart <- function(fc_result, series_id) {
   is_bvar <- identical(names(w), "BVAR")
   method_lbl <- if (is_bvar) "Joint BVAR Forecast" else "Ensemble Forecast"
   w_lbl <- if (is_bvar) {
-    "Jointly modeled with unemployment, CPI, Fed funds, mortgage rate, payrolls & jobless claims"
+    "Jointly modeled with unemployment, CPI, Fed funds, mortgage rate, 10-year Treasury, payrolls & jobless claims"
   } else {
     paste(
       mapply(
