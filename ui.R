@@ -393,6 +393,8 @@ ui <- dashboardPage(
       tabItem("forecasting",
         box(title = "18-Month Economic Forecasts — Ensemble (Prophet · ARIMA · ETS)", status = "info",
             solidHeader = TRUE, width = 12,
+          tabsetPanel(id = "fcst_tabs",
+            tabPanel("Forecast Chart", br(),
           fluidRow(
             column(4,
               selectInput("fcst_series", "Indicator:",
@@ -433,6 +435,32 @@ ui <- dashboardPage(
               "All Forecast Endpoints"),
           withSpinner(DTOutput("tbl_fcst_summary"),
                       type=4, color="#7c5cbf", color.background="#161b27", size=0.7)
+            ),
+            tabPanel("Model Diagnostics", br(),
+              div(style = "color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;",
+                  "All Indicators — Model Fit"),
+              div(style = "color:#9aa3b2;font-size:12px;line-height:1.6;margin-bottom:12px;",
+                  icon("info-circle", style="color:#00b4d8;"),
+                  " In-sample fit for each indicator (ensemble rows use the blended model; ",
+                  "jointly-modeled rows use that series' own BVAR equation). ",
+                  tags$b("Series Avg"), " is the historical average level (native units); ",
+                  tags$b("Err %"), " expresses RMSE against that scale so it reads as small/large ",
+                  "— for level rows it's a % of the average level, and for ", tags$code("I(1)"),
+                  " rows (fit in first-differences) it's a % of a typical monthly move. ",
+                  tags$b("Resid WN (p)"), " is a Ljung-Box white-noise test — higher means less ",
+                  "structure left in the residuals. ",
+                  tags$b("Note:"), " the R² of an ", tags$code("I(1)"),
+                  " row is a first-difference R², not directly comparable to the levels R² of the others — ",
+                  "use ", tags$b("Err %"), " for a comparable read of accuracy."),
+              withSpinner(DTOutput("tbl_fcst_diag_overview"),
+                          type=4, color="#7c5cbf", color.background="#161b27", size=0.7),
+              hr(style = "border-color:#2a3042;"),
+              uiOutput("fcst_diag_detail_header"),
+              uiOutput("fcst_diag_caption"),
+              withSpinner(DTOutput("tbl_fcst_diag_detail"),
+                          type=4, color="#7c5cbf", color.background="#161b27", size=0.7)
+            )
+          )
         )
       ),
 

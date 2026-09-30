@@ -97,6 +97,22 @@ SAMPLE_PATH_COUNT <- 20L
 #' Compute RMSE for a numeric vector of residuals
 .rmse <- function(residuals) sqrt(mean(residuals^2, na.rm = TRUE))
 
+#' Ljung-Box residual white-noise test p-value (model-adequacy diagnostic).
+#' A high p means the residuals are indistinguishable from white noise — the
+#' model captured the structure; a low p means autocorrelation is left over.
+#' Returns NA when there aren't enough finite residuals to test.
+.ljung_box_p <- function(residuals, lag = 10) {
+  r <- residuals[is.finite(residuals)]
+  L <- min(lag, length(r) - 2L)
+  if (length(r) < 5L || L < 1L) {
+    return(NA_real_)
+  }
+  tryCatch(
+    stats::Box.test(r, lag = L, type = "Ljung-Box")$p.value,
+    error = function(e) NA_real_
+  )
+}
+
 #' Convert weights inversely proportional to RMSE (lower error → higher weight)
 .inverse_rmse_weights <- function(rmse_vec) {
   w <- 1 / rmse_vec
@@ -262,6 +278,7 @@ SAMPLE_PATH_COUNT <- 20L
     weights <- .inverse_rmse_weights(rmse_vec)
   }
   names(weights) <- c("prophet", "arima", "ets")
+  cv_rmse <- setNames(rmse_vec, c("prophet", "arima", "ets"))
 
   # ── Horizon-scaled ensemble residual pool (for prediction bands) -----------
   ensemble_resid <- fold_resid %>%
@@ -270,7 +287,7 @@ SAMPLE_PATH_COUNT <- 20L
     summarise(resid = sum(w * resid) / sum(w), .groups = "drop") %>%
     mutate(std_resid = resid / sqrt(h))
 
-  list(weights = weights, std_resid = ensemble_resid$std_resid)
+  list(weights = weights, std_resid = ensemble_resid$std_resid, cv_rmse = cv_rmse)
 }
 
 # ── Core ensemble runner (univariate series only) ─────────────────────────────
@@ -312,22 +329,44 @@ run_ensemble <- function(
             models$ets
           )
 
+          # ── In-sample per-model accuracy + residual white-noise test ------------
+          #   Computed unconditionally now: it feeds the Model Diagnostics tab,
+          #   and doubles as the weighting fallback when there isn't enough
+          #   history to cross-validate. Calibrating on the training set once
+          #   gives us both the accuracy metrics and the residuals the
+          #   Ljung-Box adequacy test needs. modeltime_table order is fixed
+          #   (1=prophet, 2=arima, 3=ets) so rows line up with those names.
+          calib_tbl <- model_tbl %>%
+            modeltime::modeltime_calibrate(new_data = train_tbl, quiet = TRUE)
+          accuracy_tbl <- calib_tbl %>%
+            modeltime::modeltime_accuracy() %>%
+            arrange(.model_id)
+          rmse_vec <- accuracy_tbl$rmse
+
+          wn_by_model <- calib_tbl %>%
+            modeltime::modeltime_residuals() %>%
+            group_by(.model_id) %>%
+            summarise(wn_p = .ljung_box_p(.residuals), .groups = "drop")
+          accuracy_tbl <- accuracy_tbl %>%
+            left_join(wn_by_model, by = ".model_id")
+
           # ── Cross-validated weights + backtest residuals -------------------------
           cv_diag <- .cv_ensemble_diagnostics(train_tbl, horizon_months)
 
           if (!is.null(cv_diag)) {
             weights <- cv_diag$weights
+            cv_rmse <- cv_diag$cv_rmse # per-model out-of-sample RMSE (weight basis)
+            weight_basis <- "cv"
           } else {
             # Not enough history to carve out CV folds — fall back to in-sample
-            accuracy_tbl <- model_tbl %>%
-              modeltime::modeltime_accuracy(new_data = train_tbl)
-            rmse_vec <- accuracy_tbl$rmse
             weights <- if (any(!is.finite(rmse_vec))) {
               rep(1 / 3, 3)
             } else {
               .inverse_rmse_weights(rmse_vec)
             }
             names(weights) <- c("prophet", "arima", "ets")
+            cv_rmse <- NULL
+            weight_basis <- "insample"
           }
 
           # ── Build weighted ensemble model ----------------------------------------
@@ -335,6 +374,16 @@ run_ensemble <- function(
             modeltime.ensemble::ensemble_weighted(loadings = weights)
 
           ensemble_tbl <- modeltime::modeltime_table(ensemble_model)
+
+          # ── Blended-ensemble accuracy + residual white-noise test ---------------
+          #   One honest row for the combined model (not just its members), so
+          #   the overview table can show each indicator on a single line.
+          calib_ens <- ensemble_tbl %>%
+            modeltime::modeltime_calibrate(new_data = train_tbl, quiet = TRUE)
+          ensemble_accuracy <- calib_ens %>% modeltime::modeltime_accuracy()
+          ensemble_accuracy$wn_p <- .ljung_box_p(
+            (calib_ens %>% modeltime::modeltime_residuals())$.residuals
+          )
 
           # ── Future date frame (monthly) -----------------------------------------
           future_tbl <- timetk::future_frame(
@@ -443,7 +492,17 @@ run_ensemble <- function(
         model_table = ensemble_tbl,
         weights = weights,
         horizon = horizon_months,
-        sample_paths = sample_paths_tbl
+        sample_paths = sample_paths_tbl,
+        accuracy = accuracy_tbl,
+        ensemble_accuracy = ensemble_accuracy,
+        cv_rmse = cv_rmse,
+        weight_basis = weight_basis,
+        n_obs = nrow(train_tbl),
+        hist_start = min(train_tbl$date),
+        hist_end = max(train_tbl$date),
+        series_avg = mean(train_tbl$value, na.rm = TRUE),
+        series_sd_diff = stats::sd(diff(train_tbl$value), na.rm = TRUE),
+        model_family = "ensemble"
       )
     },
     error = function(e) {
@@ -568,6 +627,35 @@ run_macro_bvar <- function(macro_wide, horizon_months = 18, ci_level = 0.90) {
           lo <- apply(level_draws, c(2, 3), quantile, probs = alpha)
           hi <- apply(level_draws, c(2, 3), quantile, probs = 1 - alpha)
 
+          # ── In-sample per-equation fit (for the Model Diagnostics tab) ----------
+          #   fitted()/residuals() are on the standardized (and, where applied,
+          #   differenced) scale the BVAR was estimated on. R² is scale-free so
+          #   it carries over directly; RMSE is rescaled back to each series'
+          #   native units (× col_sd) so it reads in the series' own scale.
+          eq_fit <- tryCatch(
+            {
+              fv <- fitted(fit, type = "mean")
+              rs <- residuals(fit, type = "mean")
+              act <- fv + rs
+              rsq <- vapply(seq_along(vars_order), function(j) {
+                sse <- sum(rs[, j]^2)
+                sst <- sum((act[, j] - mean(act[, j]))^2)
+                if (!is.finite(sst) || sst == 0) NA_real_ else 1 - sse / sst
+              }, numeric(1))
+              rmse_native <- vapply(seq_along(vars_order), function(j) {
+                sqrt(mean((rs[, j] * col_sd[j])^2))
+              }, numeric(1))
+              mae_native <- vapply(seq_along(vars_order), function(j) {
+                mean(abs(rs[, j] * col_sd[j]))
+              }, numeric(1))
+              wn_p <- vapply(seq_along(vars_order), function(j) {
+                .ljung_box_p(rs[, j])
+              }, numeric(1))
+              list(rsq = rsq, rmse = rmse_native, mae = mae_native, wn_p = wn_p)
+            },
+            error = function(e) NULL
+          )
+
           future_dates <- seq(
             max(macro_wide$date),
             by = "1 month",
@@ -617,7 +705,21 @@ run_macro_bvar <- function(macro_wide, horizon_months = 18, ci_level = 0.90) {
                     if (is.null(dim(m))) matrix(m, nrow = length(path_idx)) else m
                   },
                   future_dates
-                )
+                ),
+                accuracy = tibble::tibble(
+                  rsq = if (is.null(eq_fit)) NA_real_ else eq_fit$rsq[j],
+                  rmse = if (is.null(eq_fit)) NA_real_ else eq_fit$rmse[j],
+                  mae = if (is.null(eq_fit)) NA_real_ else eq_fit$mae[j],
+                  wn_p = if (is.null(eq_fit)) NA_real_ else eq_fit$wn_p[j],
+                  lag_order = p,
+                  differenced = unname(needs_diff[[v]])
+                ),
+                n_obs = nrow(macro_wide),
+                hist_start = min(macro_wide$date),
+                hist_end = max(macro_wide$date),
+                series_avg = mean(mat[, v], na.rm = TRUE),
+                series_sd_diff = stats::sd(diff(mat[, v]), na.rm = TRUE),
+                model_family = "bvar"
               )
             }),
             vars_order
@@ -908,4 +1010,162 @@ forecast_summary_table <- function(forecasts) {
       `Weights (P/A/E)` = w_str
     )
   })
+}
+
+# ── Model diagnostics (goodness of fit) ───────────────────────────────────────
+
+#' Overview table: one row per forecasted indicator, directly comparable.
+#'
+#' For an ensemble series the row is the *blended* ensemble model's in-sample
+#' fit; for a jointly-modeled series it's that series' own BVAR equation. The
+#' Detail column carries the family-specific extras (ensemble blend weights, or
+#' the BVAR's lag order + I(1) flag) so the shared columns stay comparable.
+#'
+#' @return one tibble (Indicator · Method · Obs · R² · RMSE · MAE · Resid WN (p)
+#'   · Detail), or NULL/zero-row when nothing is available.
+forecast_diagnostics_overview <- function(forecasts) {
+  purrr::map_dfr(names(forecasts), function(sid) {
+    fc <- forecasts[[sid]]
+    if (is.null(fc) || is.null(fc$accuracy)) {
+      return(NULL)
+    }
+    cfg <- FORECAST_SERIES[[sid]]
+    family <- if (is.null(fc$model_family)) "ensemble" else fc$model_family
+    n_obs <- if (is.null(fc$n_obs)) NA_integer_ else fc$n_obs
+    is_diff <- FALSE
+
+    if (identical(family, "bvar")) {
+      acc <- fc$accuracy
+      method <- "Joint BVAR"
+      rsq <- acc$rsq; rmse <- acc$rmse; mae <- acc$mae; wn <- acc$wn_p
+      is_diff <- isTRUE(acc$differenced)
+      detail <- paste0(
+        acc$lag_order, " lags · ",
+        if (is_diff) "I(1)" else "levels"
+      )
+    } else {
+      acc <- fc$ensemble_accuracy
+      w <- fc$weights
+      method <- "Ensemble"
+      rsq <- acc$rsq; rmse <- acc$rmse; mae <- acc$mae; wn <- acc$wn_p
+      detail <- sprintf(
+        "P%d / A%d / E%d",
+        round(100 * unname(w["prophet"])),
+        round(100 * unname(w["arima"])),
+        round(100 * unname(w["ets"]))
+      )
+    }
+
+    # Anchor the raw error: normalize RMSE by the scale it lives on — the
+    # average level for level-fit rows, the typical monthly move (SD of
+    # changes) for I(1) rows whose RMSE is itself in change units.
+    series_avg <- if (is.null(fc$series_avg)) NA_real_ else fc$series_avg
+    denom <- if (is_diff) fc$series_sd_diff else abs(series_avg)
+    err_pct <- if (is.null(denom) || !is.finite(denom) || denom == 0) {
+      NA_real_
+    } else {
+      round(100 * rmse / denom, 1)
+    }
+
+    tibble::tibble(
+      Indicator = cfg$name,
+      Method = method,
+      Obs = n_obs,
+      `R²` = round(rsq, 3),
+      RMSE = round(rmse, 3),
+      MAE = round(mae, 3),
+      `Series Avg` = round(series_avg, if (abs(series_avg) >= 100) 0 else 2),
+      `Err %` = err_pct,
+      `Resid WN (p)` = round(wn, 3),
+      Detail = detail
+    )
+  })
+}
+
+#' Per-model detail table for one selected indicator (shown under the overview).
+#'   • ensemble → one row per member (Prophet / Auto ARIMA / ETS) with in-sample
+#'     RMSE/MAE/MAPE/MASE/R², the residual white-noise p, and the blend weight.
+#'   • bvar     → the joint model's own equation for this series (R², native
+#'     RMSE/MAE, white-noise p, lag order, I(1) flag).
+#'
+#' @return list(table, caption, family), or NULL if there's nothing to show.
+forecast_diagnostics_detail <- function(fc_result, series_id) {
+  if (is.null(fc_result) || is.null(fc_result$accuracy)) {
+    return(NULL)
+  }
+  cfg <- FORECAST_SERIES[[series_id]]
+  family <- if (is.null(fc_result$model_family)) {
+    "ensemble"
+  } else {
+    fc_result$model_family
+  }
+
+  if (identical(family, "bvar")) {
+    acc <- fc_result$accuracy
+    tbl <- tibble::tibble(
+      Model = "Bayesian VAR (joint)",
+      `R²` = round(acc$rsq, 3),
+      RMSE = round(acc$rmse, 3),
+      MAE = round(acc$mae, 3),
+      `Resid WN (p)` = round(acc$wn_p, 3),
+      `Lag Order` = acc$lag_order,
+      Differenced = ifelse(isTRUE(acc$differenced), "Yes — I(1)", "No")
+    )
+    caption <- glue(
+      "{cfg$name} is one equation of the joint Bayesian VAR. R², RMSE and MAE ",
+      "are in-sample one-step-ahead (RMSE & MAE in native units; a differenced ",
+      "series shows its differenced equation). Resid WN (p) is a Ljung-Box ",
+      "white-noise test on the residuals — higher is better (little structure left)."
+    )
+    return(list(table = tbl, caption = caption, family = family))
+  }
+
+  # ── ensemble ───────────────────────────────────────────────────────────────
+  acc <- fc_result$accuracy %>% arrange(.model_id)
+  w <- fc_result$weights
+  key_by_id <- c("prophet", "arima", "ets") # modeltime_table order
+  pretty <- c(prophet = "Prophet", arima = "Auto ARIMA", ets = "ETS")
+  keys <- key_by_id[acc$.model_id]
+  wn_p <- if ("wn_p" %in% names(acc)) round(acc$wn_p, 3) else NA_real_
+
+  # CV RMSE is the actual weight basis: Weight % ∝ 1 / CV RMSE. It usually
+  # reorders the models versus the (optimistic) in-sample RMSE, which is why
+  # the best in-sample fit is not always the highest-weighted model.
+  cv_rmse_vec <- fc_result$cv_rmse
+  cv_col <- if (is.null(cv_rmse_vec)) {
+    rep(NA_real_, length(keys))
+  } else {
+    round(unname(cv_rmse_vec[keys]), 3)
+  }
+
+  tbl <- tibble::tibble(
+    Model = unname(pretty[keys]),
+    `RMSE (in-samp)` = round(acc$rmse, 3),
+    MAE = round(acc$mae, 3),
+    MAPE = round(acc$mape, 2),
+    MASE = round(acc$mase, 3),
+    `R²` = round(acc$rsq, 3),
+    `Resid WN (p)` = wn_p,
+    `CV RMSE` = cv_col,
+    `Weight %` = round(100 * unname(w[keys]))
+  )
+  basis_note <- if (identical(fc_result$weight_basis, "insample")) {
+    glue(
+      "Too little history to cross-validate here, so the weights fell back to ",
+      "the in-sample RMSE (CV RMSE shown blank)."
+    )
+  } else {
+    glue(
+      "Weight % ∝ 1 / CV RMSE — the cross-validated (out-of-sample) error shown ",
+      "here — so a model that fits the training data best can still get less ",
+      "weight if it generalizes worse (which is why ARIMA/ETS can swap ranks)."
+    )
+  }
+  caption <- glue(
+    "Per-model fit for {cfg$name} (the overview row above blends these). ",
+    "RMSE (in-samp)/MAE/MAPE/MASE/R² are in-sample (optimistic, fit on the ",
+    "training data). {basis_note} Resid WN (p) is a Ljung-Box white-noise test ",
+    "on each model's residuals — higher is better."
+  )
+  list(table = tbl, caption = caption, family = family)
 }

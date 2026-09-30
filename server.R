@@ -1603,6 +1603,83 @@ server <- function(input, output, session) {
       )
   })
 
+  # ── Model Diagnostics sub-tab ──────────────────────────────────────────────
+  #   Overview: one comparable row per indicator (all at once).
+  output$tbl_fcst_diag_overview <- renderDT({
+    req(rv$forecasts)
+    ov <- forecast_diagnostics_overview(rv$forecasts)
+    if (is.null(ov) || nrow(ov) == 0) {
+      return(datatable(data.frame()))
+    }
+    datatable(
+      ov,
+      options = list(dom = "t", pageLength = 30, order = list()),
+      rownames = FALSE,
+      class = "table-dark compact stripe"
+    ) %>%
+      formatStyle(
+        columns = names(ov),
+        backgroundColor = "#1e2640",
+        color = "#d0d0d0"
+      ) %>%
+      formatStyle(
+        "Detail",
+        color = "#7c5cbf",
+        fontFamily = "monospace",
+        fontSize = "11px"
+      )
+  })
+
+  # Detail: per-model breakdown for the currently-selected indicator.
+  output$fcst_diag_detail_header <- renderUI({
+    req(rv$forecasts, input$fcst_series)
+    cfg <- FORECAST_SERIES[[input$fcst_series]]
+    div(
+      style = "color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;",
+      paste0("Selected — ", cfg$name, " · Per-Model Detail")
+    )
+  })
+
+  output$fcst_diag_caption <- renderUI({
+    req(rv$forecasts, input$fcst_series)
+    diag <- forecast_diagnostics_detail(
+      rv$forecasts[[input$fcst_series]],
+      input$fcst_series
+    )
+    if (is.null(diag)) {
+      return(div(
+        style = "color:#9aa3b2;font-size:12px;",
+        "No diagnostics available for this indicator."
+      ))
+    }
+    div(
+      style = "color:#9aa3b2;font-size:12px;line-height:1.6;margin-bottom:12px;",
+      icon("info-circle", style = "color:#00b4d8;"), " ", diag$caption
+    )
+  })
+
+  output$tbl_fcst_diag_detail <- renderDT({
+    req(rv$forecasts, input$fcst_series)
+    diag <- forecast_diagnostics_detail(
+      rv$forecasts[[input$fcst_series]],
+      input$fcst_series
+    )
+    if (is.null(diag) || nrow(diag$table) == 0) {
+      return(datatable(data.frame()))
+    }
+    datatable(
+      diag$table,
+      options = list(dom = "t", pageLength = 10),
+      rownames = FALSE,
+      class = "table-dark compact stripe"
+    ) %>%
+      formatStyle(
+        columns = names(diag$table),
+        backgroundColor = "#1e2640",
+        color = "#d0d0d0"
+      )
+  })
+
   # ═══════════════════════════════════════════════════════════════════════════
   # AI INSIGHTS
   # ═══════════════════════════════════════════════════════════════════════════
