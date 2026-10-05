@@ -374,8 +374,8 @@ server <- function(input, output, session) {
   output$ov_cpi <- renderPlotly({
     req(rv$fred_data)
     plots <- list()
-    if (!is.null(rv$fred_data$CPIAUCSL) && nrow(rv$fred_data$CPIAUCSL) > 12) {
-      cpi_yoy <- rv$fred_data$CPIAUCSL %>%
+    if (!is.null(rv$fred_data$CPIAUCNS) && nrow(rv$fred_data$CPIAUCNS) > 12) {
+      cpi_yoy <- rv$fred_data$CPIAUCNS %>%
         yoy_change() %>%
         filter(!is.na(yoy)) %>%
         tail(84)
@@ -385,8 +385,8 @@ server <- function(input, output, session) {
         color = "#e94560"
       )
     }
-    if (!is.null(rv$fred_data$CPILFESL) && nrow(rv$fred_data$CPILFESL) > 12) {
-      core_yoy <- rv$fred_data$CPILFESL %>%
+    if (!is.null(rv$fred_data$CPILFENS) && nrow(rv$fred_data$CPILFENS) > 12) {
+      core_yoy <- rv$fred_data$CPILFENS %>%
         yoy_change() %>%
         filter(!is.na(yoy)) %>%
         tail(84)
@@ -640,8 +640,8 @@ server <- function(input, output, session) {
     req(rv$fred_data)
     p <- plot_ly()
     for (pair in list(
-      list("CPIAUCSL", "CPI YoY", "#e94560"),
-      list("CPILFESL", "Core CPI YoY", "#f4a261")
+      list("CPIAUCNS", "CPI YoY", "#e94560"),
+      list("CPILFENS", "Core CPI YoY", "#f4a261")
     )) {
       df <- rv$fred_data[[pair[[1]]]]
       if (!is.null(df) && nrow(df) > 12) {
@@ -711,8 +711,8 @@ server <- function(input, output, session) {
     req(rv$fred_data)
     p <- plot_ly()
     for (pair in list(
-      list("PPIACO", "PPI YoY", "#e94560"),
-      list("CPIAUCSL", "CPI YoY", "#f4a261")
+      list("PPIFID", "PPI YoY", "#e94560"),
+      list("CPIAUCNS", "CPI YoY", "#f4a261")
     )) {
       df <- rv$fred_data[[pair[[1]]]]
       if (!is.null(df) && nrow(df) > 12) {
@@ -761,7 +761,7 @@ server <- function(input, output, session) {
   output$tbl_inflation <- renderDT({
     req(rv$fred_data)
     rows <- map_dfr(
-      c("CPIAUCSL", "CPILFESL", "PCEPI", "PCEPILFE", "PPIACO"),
+      c("CPIAUCNS", "CPILFENS", "PCEPI", "PCEPILFE", "PPIFID"),
       function(sid) {
         df <- rv$fred_data[[sid]]
         if (is.null(df) || nrow(df) < 14) {
@@ -778,15 +778,15 @@ server <- function(input, output, session) {
           Date = format(d_yoy$date[n], "%b %Y"),
           `YoY %` = round(d_yoy$yoy[n], 2),
           `Δ Prev` = sprintf("%+.2f pp", delta),
-          Context = if (sid == "CPIAUCSL") {
+          Context = if (sid == "CPIAUCNS") {
             "Headline; Fed target 2%"
-          } else if (sid == "CPILFESL") {
+          } else if (sid == "CPILFENS") {
             "Ex food & energy"
           } else if (sid == "PCEPI") {
             "PCE headline"
           } else if (sid == "PCEPILFE") {
             "Fed preferred gauge"
-          } else if (sid == "PPIACO") {
+          } else if (sid == "PPIFID") {
             "Leads CPI by ~2 months"
           } else {
             ""

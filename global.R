@@ -43,11 +43,13 @@ FRED_CFG <- list(
   JTSJOL             = list(label="Job Openings",           unit="K",       tab="labor"),
   JTSQUL             = list(label="Quits Rate",             unit="K",       tab="labor"),
   CES0500000003      = list(label="Avg Hourly Earnings",    unit="$/hr",    tab="labor"),
-  CPIAUCSL           = list(label="CPI All Items",          unit="Index",   tab="inflation"),
-  CPILFESL           = list(label="Core CPI",               unit="Index",   tab="inflation"),
+  CPIAUCSL           = list(label="CPI All Items (SA)",     unit="Index",   tab="inflation"),
+  CPILFESL           = list(label="Core CPI (SA)",          unit="Index",   tab="inflation"),
+  CPIAUCNS           = list(label="CPI All Items",          unit="Index",   tab="inflation"),
+  CPILFENS           = list(label="Core CPI",               unit="Index",   tab="inflation"),
   PCEPI              = list(label="PCE Price Index",        unit="Index",   tab="inflation"),
   PCEPILFE           = list(label="Core PCE YoY",           unit="%",       tab="inflation"),
-  PPIACO             = list(label="PPI All Commodities",    unit="Index",   tab="inflation"),
+  PPIFID             = list(label="PPI Final Demand",       unit="Index",   tab="inflation"),
   FEDFUNDS           = list(label="Fed Funds Rate",         unit="%",       tab="monetary"),
   T10Y2Y             = list(label="10Y-2Y Yield Spread",    unit="%",       tab="monetary"),
   DGS10              = list(label="10-Year Treasury",       unit="%",       tab="monetary"),
@@ -83,12 +85,12 @@ FRED_IDS <- names(FRED_CFG)
 
 # ── BLS Series ─────────────────────────────────────────────────────────────────
 BLS_IDS <- c(
-  "CUSR0000SA0", "CUSR0000SA0L1E", "WPSFD49207",
+  "CUUR0000SA0", "CUUR0000SA0L1E", "WPSFD49207",
   "CES0500000003", "CES0000000001", "LNS14000000"
 )
 BLS_LABELS <- c(
-  CUSR0000SA0    = "CPI-U All Items",
-  CUSR0000SA0L1E = "CPI-U Core",
+  CUUR0000SA0    = "CPI-U All Items",
+  CUUR0000SA0L1E = "CPI-U Core",
   WPSFD49207     = "PPI Finished Goods",
   CES0500000003  = "Avg Hourly Earnings",
   CES0000000001  = "Nonfarm Employment",
@@ -200,9 +202,14 @@ pct_change <- function(v) {
   if (n < 2 || any(is.na(v[c(n-1,n)]))) return(NA_real_)
   (v[n]/v[n-1] - 1) * 100
 }
+# Match on date (not row offset) so a missing month — e.g. Oct 2025 CPI, never
+# collected during the shutdown — doesn't turn later rows into 13-month changes.
 yoy_change <- function(df, lag_n=12) {
+  prior <- df %>% transmute(date = date %m+% months(lag_n), prior_value = value)
   df %>% arrange(date) %>%
-    mutate(yoy = (value/lag(value, lag_n) - 1)*100)
+    left_join(prior, by = "date") %>%
+    mutate(yoy = (value/prior_value - 1)*100) %>%
+    dplyr::select(-prior_value)
 }
 
 # ── Source modules ─────────────────────────────────────────────────────────────

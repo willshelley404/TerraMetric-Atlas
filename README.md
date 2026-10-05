@@ -117,7 +117,7 @@ Auto-detection: if `LLM_PROVIDER` is not set, the app detects whichever key is p
 | Category | Series IDs |
 |---|---|
 | Labor | UNRATE, PAYEMS, JTSJOL, JTSQUL, CES0500000003 |
-| Inflation | CPIAUCSL, CPILFESL, PCEPI, PCEPILFE, PPIACO |
+| Inflation | CPIAUCSL, CPILFESL, PCEPI, PCEPILFE, PPIFID |
 | Monetary | FEDFUNDS, DGS2, DGS10, T10Y2Y |
 | Yield Curve | DGS1MO, DGS3MO, DGS6MO, DGS1, DGS3, DGS5, DGS7, DGS20, DGS30 |
 | Housing | MORTGAGE30US, HOUST, PERMIT |

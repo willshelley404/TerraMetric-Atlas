@@ -207,10 +207,10 @@ build_kpis <- function(dlist) {
     avg_hrly_earn = latest_val(dlist, "CES0500000003"),
     wage_yoy = yoy_val(dlist, "CES0500000003"),
     # Inflation
-    cpi_yoy = yoy_val(dlist, "CPIAUCSL"),
-    core_cpi_yoy = yoy_val(dlist, "CPILFESL"),
+    cpi_yoy = yoy_val(dlist, "CPIAUCNS"),
+    core_cpi_yoy = yoy_val(dlist, "CPILFENS"),
     core_pce = yoy_val(dlist, "PCEPILFE"),
-    ppi_yoy = yoy_val(dlist, "PPIACO"),
+    ppi_yoy = yoy_val(dlist, "PPIFID"),
     # Monetary / Rates
     fed_funds = latest_val(dlist, "FEDFUNDS"),
     t10y2y = latest_val(dlist, "T10Y2Y"),

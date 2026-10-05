@@ -103,9 +103,9 @@ build_inflation_panel <- function(bls_data, fred_data) {
   frames <- list()
 
   # BLS CPI-U All Items
-  if (!is.null(bls_data[["CUSR0000SA0"]]) &&
-      nrow(bls_data[["CUSR0000SA0"]]) > 12) {
-    frames[["CPI-U (BLS)"]] <- bls_data[["CUSR0000SA0"]] %>%
+  if (!is.null(bls_data[["CUUR0000SA0"]]) &&
+      nrow(bls_data[["CUUR0000SA0"]]) > 12) {
+    frames[["CPI-U (BLS)"]] <- bls_data[["CUUR0000SA0"]] %>%
       yoy_change() %>%
       dplyr::select(date, yoy) %>%
       filter(!is.na(yoy)) %>%
@@ -114,9 +114,9 @@ build_inflation_panel <- function(bls_data, fred_data) {
   }
 
   # FRED CPI
-  if (!is.null(fred_data[["CPIAUCSL"]]) &&
-      nrow(fred_data[["CPIAUCSL"]]) > 12) {
-    frames[["Core CPI (FRED)"]] <- fred_data[["CPIAUCSL"]] %>%
+  if (!is.null(fred_data[["CPIAUCNS"]]) &&
+      nrow(fred_data[["CPIAUCNS"]]) > 12) {
+    frames[["CPI-U (FRED)"]] <- fred_data[["CPIAUCNS"]] %>%
       yoy_change() %>%
       dplyr::select(date, yoy) %>%
       filter(!is.na(yoy)) %>%
@@ -125,9 +125,9 @@ build_inflation_panel <- function(bls_data, fred_data) {
   }
 
   # Core CPI
-  if (!is.null(fred_data[["CPILFESL"]]) &&
-      nrow(fred_data[["CPILFESL"]]) > 12) {
-    frames[["Core CPI"]] <- fred_data[["CPILFESL"]] %>%
+  if (!is.null(fred_data[["CPILFENS"]]) &&
+      nrow(fred_data[["CPILFENS"]]) > 12) {
+    frames[["Core CPI"]] <- fred_data[["CPILFENS"]] %>%
       yoy_change() %>%
       dplyr::select(date, yoy) %>%
       filter(!is.na(yoy)) %>%
@@ -135,10 +135,10 @@ build_inflation_panel <- function(bls_data, fred_data) {
       mutate(series = "Core CPI YoY")
   }
 
-  # Core PCE
+  # PCE headline
   if (!is.null(fred_data[["PCEPI"]]) &&
       nrow(fred_data[["PCEPI"]]) > 12) {
-    frames[["Core PCE"]] <- fred_data[["PCEPI"]] %>%
+    frames[["PCE"]] <- fred_data[["PCEPI"]] %>%
       yoy_change() %>%
       dplyr::select(date, yoy) %>%
       filter(!is.na(yoy)) %>%
