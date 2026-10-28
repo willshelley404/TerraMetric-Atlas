@@ -157,15 +157,85 @@ market_returns_text <- function(mkt_returns, tickers=c("SPY","QQQ","GLD","USO","
   paste0("MARKET RETURNS\n", paste(lines, collapse="\n"))
 }
 
+#' The app's own model outputs (growth outlook, recession ensemble, forecasts)
+#' as text, so the LLM quotes these numbers instead of inventing its own.
+model_outputs_to_text <- function(outlook = NULL, forecasts = NULL) {
+  out <- "=== APP MODEL OUTPUTS (AUTHORITATIVE — quote these, do not re-derive) ===\n"
+
+  if (is.null(outlook) || isTRUE(outlook$.error)) {
+    out <- paste0(out, "Growth outlook / recession model: unavailable.\n")
+  } else {
+    gf <- outlook$gdp_forecast
+    rp <- outlook$recession_prob
+    out <- paste0(out,
+      "GROWTH OUTLOOK (6-12 month)\n",
+      sprintf("  Regime:                     %s\n", outlook$regime$label %||% "N/A"),
+      sprintf("  Composite score:            %.1f / 10\n", outlook$score %||% NA),
+      if (!is.null(gf)) sprintf(
+        "  Next-qtr GDP forecast:      %+.1f%% annualized (CI %.1f%% to %.1f%%; recession drag %+.1fpp)\n",
+        gf$point, gf$ci_lo, gf$ci_hi, gf$rec_drag) else ""
+    )
+    comps <- outlook$components
+    if (length(comps)) {
+      out <- paste0(out, "  Component scores (-1 contractionary … +1 expansionary):\n",
+        paste0(vapply(comps, function(c)
+          sprintf("    %-22s %+.2f  (%s)", c$label, c$score, c$detail %||% ""),
+          character(1)), collapse = "\n"), "\n")
+    }
+
+    if (!is.null(rp)) {
+      out <- paste0(out, "\nRECESSION PROBABILITY MODEL (12-month horizon)\n",
+        sprintf("  Probability:                %.0f%% (%s)\n", rp$prob, rp$tier$label %||% ""),
+        sprintf("  Model:                      %s\n", rp$model_type %||% "N/A"),
+        if (!is.null(rp$markov_prob) && !is.na(rp$markov_prob))
+          sprintf("  Markov regime p(recession): %.0f%%\n", rp$markov_prob * 100) else "",
+        if (!is.null(rp$anomaly$label))
+          sprintf("  Anomaly signal:             %s (MD=%.1f)\n",
+                  rp$anomaly$label, rp$anomaly$md %||% NA) else ""
+      )
+      fc <- rp$factor_contributions
+      if (!is.null(fc) && nrow(fc) > 0) {
+        fc <- head(fc[!fc$data_missing & abs(fc$contribution) > 0.01, ], 10)
+        if (nrow(fc) > 0) out <- paste0(out,
+          "  Top factor contributions (+ raises risk, - lowers):\n",
+          paste(sprintf("    %-32s %+.2f", fc$name, fc$contribution), collapse = "\n"), "\n")
+      }
+    }
+  }
+
+  if (is.null(forecasts)) {
+    out <- paste0(out, "\nINDICATOR FORECASTS: not yet run this session ",
+                  "(user has not opened the Forecasting tab).\n")
+  } else {
+    tbl <- tryCatch(forecast_summary_table(forecasts), error = function(e) NULL)
+    if (!is.null(tbl) && nrow(tbl) > 0) {
+      out <- paste0(out, "\nINDICATOR FORECASTS (Prophet/ARIMA/ETS ensemble or BVAR)\n",
+        paste(sprintf("  %-28s current %s → 6M %s %s → end-horizon %s (%s)",
+                      tbl$Indicator, tbl$Current, tbl$`6M Fcst`, tbl$`6M CI`,
+                      tbl$`18M Fcst`, tbl$Unit), collapse = "\n"), "\n")
+    }
+  }
+  out
+}
+
+MODEL_GROUNDING_RULES <- paste0(
+  "When discussing recession odds, GDP growth, or indicator paths, use the APP MODEL OUTPUTS ",
+  "as the authoritative figures and cite them. Do not produce a different recession probability ",
+  "or derive one by summing scenario weights. If you disagree with a model output, say so ",
+  "explicitly and explain why, but still state the model's number first."
+)
+
 # ── Insight generators ─────────────────────────────────────────────────────────
 generate_insights <- function(kpis, fred_data, mkt_returns=NULL,
-                               news_df=NULL, provider=NULL, model=NULL) {
-  eco_ctx  <- kpis_to_text(kpis)
-  mkt_ctx  <- market_returns_text(mkt_returns)
-  news_ctx <- headlines_for_llm(news_df, n=20)
+                               news_df=NULL, outlook=NULL, forecasts=NULL,
+                               provider=NULL, model=NULL) {
+  eco_ctx   <- kpis_to_text(kpis)
+  mkt_ctx   <- market_returns_text(mkt_returns)
+  news_ctx  <- headlines_for_llm(news_df, n=20)
+  model_ctx <- model_outputs_to_text(outlook, forecasts)
 
   user_msg <- glue(
-    "{eco_ctx}\n{mkt_ctx}\n\n",
+    "{eco_ctx}\n{mkt_ctx}\n\n{model_ctx}\n\n",
     "RECENT ECONOMIC NEWS:\n{news_ctx}\n\n---\n",
     "Provide a structured economic analysis:\n\n",
     "## Current Economic Conditions\n",
@@ -177,7 +247,9 @@ generate_insights <- function(kpis, fred_data, mkt_returns=NULL,
     "## Risk Matrix\n",
     "3 downside risks (probability + severity) and 2 upside scenarios.\n\n",
     "## 6-12 Month Scenarios\n",
-    "**Bear (25%):** ... **Base (55%):** ... **Bull (20%):** ...\n\n",
+    "**Bear (X%):** ... **Base (Y%):** ... **Bull (Z%):** ... ",
+    "Choose X/Y/Z yourself (summing to 100%) so the Bear weight is consistent with the ",
+    "model's recession probability and the Base case with its GDP forecast.\n\n",
     "## Executive Summary\n",
     "3 crisp sentences for a portfolio manager.\n\nUse data throughout."
   )
@@ -189,7 +261,8 @@ generate_insights <- function(kpis, fred_data, mkt_returns=NULL,
     system     = paste0(
       "You are a senior macroeconomic strategist at a global investment bank. ",
       "Deep expertise in monetary policy, labor economics, financial markets, and geopolitical risk. ",
-      "Be direct, quantitative, and take clear analytical positions. Use markdown formatting."
+      "Be direct, quantitative, and take clear analytical positions. Use markdown formatting. ",
+      MODEL_GROUNDING_RULES
     )
   )
 }
@@ -212,9 +285,9 @@ generate_sector_insight <- function(sector, kpi_text, news_headlines=NULL,
 #' reference it. Data context goes in the system prompt so it isn't repeated
 #' every turn.
 economic_chat <- function(question, kpis, news_df=NULL, history=list(),
-                          insights=NULL, provider=NULL, model=NULL,
-                          max_turns=10) {
-  ctx      <- kpis_to_text(kpis)
+                          insights=NULL, outlook=NULL, forecasts=NULL,
+                          provider=NULL, model=NULL, max_turns=10) {
+  ctx      <- paste0(kpis_to_text(kpis), "\n\n", model_outputs_to_text(outlook, forecasts))
   news_ctx <- if (!is.null(news_df)) headlines_for_llm(news_df, 10) else "N/A"
   ins_ctx  <- if (!is.null(insights) && nzchar(insights))
     paste0("\n\n=== PRIOR AI ECONOMIC ANALYSIS SHOWN TO USER ===\n", insights) else ""
@@ -222,7 +295,7 @@ economic_chat <- function(question, kpis, news_df=NULL, history=list(),
   system <- paste0(
     "You are a precise macroeconomic analyst. Give direct, data-grounded answers. ",
     "Answer concisely using the data below. The user may ask follow-up questions; ",
-    "use the conversation so far for context.\n\n",
+    "use the conversation so far for context. ", MODEL_GROUNDING_RULES, "\n\n",
     ctx, "\n\nNews:\n", news_ctx, ins_ctx
   )
 

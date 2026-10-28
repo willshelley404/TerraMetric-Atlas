@@ -1756,6 +1756,8 @@ server <- function(input, output, session) {
           fred_data = rv$fred_data,
           mkt_returns = rv$mkt_returns,
           news_df = rv$news_data,
+          outlook = tryCatch(growth_outlook(), error = function(e) NULL),
+          forecasts = rv$forecasts,
           provider = input$llm_provider,
           model = input$llm_model
         ),
@@ -1799,6 +1801,8 @@ server <- function(input, output, session) {
           news_df = rv$news_data,
           history = rv$chat_history,
           insights = rv$llm_text,
+          outlook = tryCatch(growth_outlook(), error = function(e) NULL),
+          forecasts = rv$forecasts,
           provider = input$llm_provider,
           model = input$llm_model
         ),
@@ -1866,16 +1870,20 @@ server <- function(input, output, session) {
     render_synopsis_html(blocks)
   })
 
-  output$growth_outlook_panel <- renderUI({
+  # Shared so the panel and the LLM prompts see the same model run
+  growth_outlook <- reactive({
     req(rv$fred_data, rv$kpis)
-    outlook <- tryCatch(
+    tryCatch(
       build_growth_outlook(rv$fred_data, rv$kpis, rv$mkt_returns),
       error = function(e) {
         message("[Growth outlook] ", e$message)
         NULL
       }
     )
-    render_growth_outlook_html(outlook)
+  })
+
+  output$growth_outlook_panel <- renderUI({
+    render_growth_outlook_html(growth_outlook())
   })
 
   # Tab-level synopsis panels (render on demand when data is available)
