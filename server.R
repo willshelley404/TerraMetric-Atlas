@@ -34,7 +34,7 @@ server <- function(input, output, session) {
     forecasts = NULL,
     infl_panel = NULL,
     llm_text = NULL,
-    chat_text = NULL,
+    chat_history = list(), # Ask the Economist turns: list(role, content); per-session only
     data_loaded = FALSE,
     loading_msg = "",
     last_updated = NULL
@@ -1787,31 +1787,66 @@ server <- function(input, output, session) {
     }
   })
 
-  # Quick Q&A
+  # Quick Q&A — multi-turn; history lives in rv$chat_history for this session
   observeEvent(input$btn_chat, {
-    req(nchar(input$chat_q) > 3, rv$kpis)
-    rv$chat_text <- NULL
+    q <- trimws(input$chat_q)
+    req(nchar(q) > 3, rv$kpis)
     withProgress(message = "Thinking…", value = 0.5, {
-      rv$chat_text <- tryCatch(
+      answer <- tryCatch(
         economic_chat(
-          question = input$chat_q,
+          question = q,
           kpis = rv$kpis,
           news_df = rv$news_data,
+          history = rv$chat_history,
+          insights = rv$llm_text,
           provider = input$llm_provider,
           model = input$llm_model
         ),
         error = function(e) paste0("Error: ", e$message)
       )
     })
+    rv$chat_history <- c(
+      rv$chat_history,
+      list(
+        list(role = "user", content = q),
+        list(role = "assistant", content = answer)
+      )
+    )
+    updateTextInput(session, "chat_q", value = "",
+                    placeholder = "Ask a follow-up…")
+  })
+
+  observeEvent(input$btn_chat_clear, {
+    rv$chat_history <- list()
+    updateTextInput(session, "chat_q", value = "",
+                    placeholder = "E.g. 'How will tariffs affect inflation?' or 'Is a recession likely?'")
   })
 
   output$chat_answer <- renderUI({
-    if (is.null(rv$chat_text)) {
+    if (length(rv$chat_history) == 0) {
       return(NULL)
     }
-    div(
-      style = "background:#1e2640;border-radius:8px;padding:14px;margin-top:10px;font-size:13px;line-height:1.7;",
-      HTML(markdown::markdownToHTML(text = rv$chat_text, fragment.only = TRUE))
+    turns <- lapply(rv$chat_history, function(m) {
+      if (m$role == "user") {
+        div(
+          style = "margin-top:10px;padding:8px 12px;border-left:3px solid #00b4d8;color:#9aa3b2;font-size:13px;",
+          icon("user", style = "color:#00b4d8;margin-right:6px;"), m$content
+        )
+      } else {
+        div(
+          style = "background:#1e2640;border-radius:8px;padding:14px;margin-top:6px;font-size:13px;line-height:1.7;",
+          HTML(markdown::markdownToHTML(text = m$content, fragment.only = TRUE))
+        )
+      }
+    })
+    tagList(
+      turns,
+      div(
+        style = "text-align:right;margin-top:8px;",
+        actionLink("btn_chat_clear", "New conversation",
+                   icon = icon("rotate-left"),
+                   style = "color:#9aa3b2;font-size:12px;")
+      )
     )
   })
 

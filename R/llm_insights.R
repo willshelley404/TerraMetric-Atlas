@@ -207,14 +207,32 @@ generate_sector_insight <- function(sector, kpi_text, news_headlines=NULL,
             system="You are a concise sector economist. Use numbers. No filler.")
 }
 
-economic_chat <- function(question, kpis, news_df=NULL, provider=NULL, model=NULL) {
+#' Multi-turn Q&A. `history` is a list of prior list(role, content) turns;
+#' `insights` is the generated AI Insights text (optional) so follow-ups can
+#' reference it. Data context goes in the system prompt so it isn't repeated
+#' every turn.
+economic_chat <- function(question, kpis, news_df=NULL, history=list(),
+                          insights=NULL, provider=NULL, model=NULL,
+                          max_turns=10) {
   ctx      <- kpis_to_text(kpis)
   news_ctx <- if (!is.null(news_df)) headlines_for_llm(news_df, 10) else "N/A"
-  msg      <- glue("{ctx}\n\nNews:\n{news_ctx}\n\nQuestion: {question}\n\n",
-                   "Answer concisely using the data above.")
-  call_llm(messages=list(list(role="user", content=msg)),
-            provider=provider, model=model, max_tokens=800, temperature=0.7,
-            system="You are a precise macroeconomic analyst. Give direct, data-grounded answers.")
+  ins_ctx  <- if (!is.null(insights) && nzchar(insights))
+    paste0("\n\n=== PRIOR AI ECONOMIC ANALYSIS SHOWN TO USER ===\n", insights) else ""
+
+  system <- paste0(
+    "You are a precise macroeconomic analyst. Give direct, data-grounded answers. ",
+    "Answer concisely using the data below. The user may ask follow-up questions; ",
+    "use the conversation so far for context.\n\n",
+    ctx, "\n\nNews:\n", news_ctx, ins_ctx
+  )
+
+  # Keep only the most recent turns to bound prompt size
+  if (length(history) > 2 * max_turns)
+    history <- tail(history, 2 * max_turns)
+
+  msgs <- c(history, list(list(role="user", content=question)))
+  call_llm(messages=msgs, provider=provider, model=model,
+            max_tokens=800, temperature=0.7, system=system)
 }
 
 available_models <- function(provider=NULL) {
