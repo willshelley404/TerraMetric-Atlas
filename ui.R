@@ -418,8 +418,9 @@ ui <- dashboardPage(
                   " (faint lines): individual simulated futures, not the average.",
                   " A shaded band only shows how wide the range gets — these lines show",
                   " what one realistic path actually looks like month-to-month, bumps included.",
-                  " For jointly-modeled indicators (Unemployment, CPI, Fed Funds, 10-Year Treasury, Mortgage Rate,",
-                  " Payrolls, Jobless Claims) each line is a real draw from the Bayesian VAR's",
+                  " For jointly-modeled indicators (",
+                  paste(vapply(MACRO_BLOCK_IDS, function(x) FORECAST_SERIES[[x]]$short, character(1)), collapse = ", "),
+                  ") each line is a real draw from the Bayesian VAR's",
                   " posterior simulation; for the rest, they're built by resampling the model's",
                   " own historical forecast errors onto its point forecast."
                 )

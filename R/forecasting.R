@@ -1,10 +1,11 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # R/forecasting.R — Macro-aware forecasting (BVAR block + ensemble)
 #
-# The rates/inflation/labor cluster (UNRATE, CPI YoY, FEDFUNDS, MORTGAGE30US,
-# nonfarm payrolls, initial jobless claims) is modeled *jointly* with a
-# Bayesian VAR (Minnesota prior) so that a labor-market shock (e.g. a
-# payrolls miss or a claims spike) propagates into the unemployment, rate,
+# The rates/inflation/labor/output cluster (UNRATE, CPI YoY, FEDFUNDS,
+# MORTGAGE30US, nonfarm payrolls, initial jobless claims, industrial
+# production) is modeled *jointly* with a Bayesian VAR (Minnesota prior)
+# so that a labor-market or output shock (e.g. a payrolls miss, a claims
+# spike, a factory-output slump) propagates into the unemployment, rate,
 # and inflation paths automatically via Okun's-law-style cross-equation
 # dynamics, instead of the labor and rates blocks being forecast in
 # isolation from each other. Forecast bands widen honestly with horizon.
@@ -58,33 +59,76 @@ suppressPackageStartupMessages({
 
 # ── Series metadata ───────────────────────────────────────────────────────────
 
+# `short` (macro-block series only) is the lowercase label used when listing
+# the jointly-modeled series in chart subtitles / help text.
 FORECAST_SERIES <- list(
-  UNRATE = list(name = "Unemployment Rate", unit = "%", color = "#00b4d8"),
+  UNRATE = list(
+    name = "Unemployment Rate",
+    unit = "%",
+    color = "#00b4d8",
+    short = "unemployment"
+  ),
   CPIAUCSL = list(
     name = "CPI Inflation (YoY %)",
     unit = "YoY %",
-    color = "#e94560"
+    color = "#e94560",
+    short = "CPI"
   ),
-  FEDFUNDS = list(name = "Fed Funds Rate", unit = "%", color = "#f4a261"),
+  FEDFUNDS = list(
+    name = "Fed Funds Rate",
+    unit = "%",
+    color = "#f4a261",
+    short = "Fed funds"
+  ),
   MORTGAGE30US = list(
     name = "30-Yr Mortgage Rate",
     unit = "%",
-    color = "#7c5cbf"
+    color = "#7c5cbf",
+    short = "mortgage rate"
   ),
-  DGS10 = list(name = "10-Yr Treasury Yield", unit = "%", color = "#ffd166"),
+  DGS10 = list(
+    name = "10-Yr Treasury Yield",
+    unit = "%",
+    color = "#ffd166",
+    short = "10-year Treasury"
+  ),
   HOUST = list(name = "Housing Starts", unit = "K", color = "#2dce89"),
-  PAYEMS = list(name = "Nonfarm Payrolls", unit = "K", color = "#00b4d8"),
-  ICSA = list(name = "Initial Jobless Claims", unit = "K", color = "#06d6a0"),
+  PAYEMS = list(
+    name = "Nonfarm Payrolls",
+    unit = "K",
+    color = "#00b4d8",
+    short = "payrolls"
+  ),
+  ICSA = list(
+    name = "Initial Jobless Claims",
+    unit = "K",
+    color = "#06d6a0",
+    short = "jobless claims"
+  ),
   RSAFS = list(name = "Retail Sales", unit = "M$", color = "#f4a261"),
-  DCOILWTICO = list(name = "WTI Crude Oil", unit = "$/bbl", color = "#e94560")
+  DCOILWTICO = list(name = "WTI Crude Oil", unit = "$/bbl", color = "#e94560"),
+  INDPRO = list(
+    name = "Industrial Production",
+    unit = "Index",
+    color = "#4cc9f0",
+    short = "industrial production"
+  )
 )
 
 # Series modeled jointly (fed funds reaction function is endogenous to these,
-# and PAYEMS/ICSA give the block a live read on labor-market momentum instead
-# of inferring it only from UNRATE's own — slower-moving — history)
+# PAYEMS/ICSA give the block a live read on labor-market momentum instead
+# of inferring it only from UNRATE's own — slower-moving — history, and
+# INDPRO gives it a direct read on real output rather than only via labor)
 MACRO_BLOCK_IDS <- c(
-  "UNRATE", "CPIAUCSL", "FEDFUNDS", "MORTGAGE30US", "DGS10", "PAYEMS", "ICSA"
+  "UNRATE", "CPIAUCSL", "FEDFUNDS", "MORTGAGE30US", "DGS10", "PAYEMS", "ICSA",
+  "INDPRO"
 )
+
+# Macro-block series modeled in levels but also reported as YoY %. Fitting
+# YoY directly would blind the model to the known base months (a weak base a
+# year ago means YoY rises even if the level is flat), so YoY is derived from
+# each posterior level path against the actual base instead.
+DERIVED_YOY_IDS <- c("INDPRO")
 
 # Number of simulated future trajectories kept for the fan-chart overlay
 # (plot_forecast_chart draws these as thin lines so the forecast visually
@@ -126,6 +170,40 @@ SAMPLE_PATH_COUNT <- 20L
   purrr::map_dfr(seq_len(nrow(path_mat)), function(k) {
     tibble::tibble(ds = dates, path_id = k, value = path_mat[k, ])
   })
+}
+
+#' YoY % forecast derived from posterior level paths: each draw is divided by
+#' its own level 12 months earlier — the actual history while the comparison
+#' still reaches back before the forecast start, that same draw after. Base
+#' months are matched by date, not row offset, because the joint sample can
+#' skip months another series is missing (e.g. the Oct-2025 shutdown gap).
+.derived_yoy <- function(hist_dates, hist_level, level_draws, future_dates, alpha) {
+  last_date <- future_dates[1] %m-% months(1) # forecast origin
+  base_of <- function(d) {
+    b <- d %m-% months(12)
+    if (b <= last_date) {
+      rep(hist_level[match(b, hist_dates)], nrow(level_draws))
+    } else {
+      level_draws[, match(b, future_dates)]
+    }
+  }
+  yoy <- vapply(seq_along(future_dates), function(k) {
+    (level_draws[, k] / base_of(future_dates[k]) - 1) * 100
+  }, numeric(nrow(level_draws)))
+  current <- (hist_level[match(last_date, hist_dates)] /
+    base_of(last_date)[1] - 1) * 100
+  if (anyNA(yoy) || is.na(current)) {
+    return(NULL)
+  }
+  list(
+    current = current,
+    forecast = tibble::tibble(
+      ds = future_dates,
+      yhat = apply(yoy, 2, median),
+      yhat_lower = apply(yoy, 2, quantile, probs = alpha),
+      yhat_upper = apply(yoy, 2, quantile, probs = 1 - alpha)
+    )
+  )
 }
 
 #' Aggregate a raw FRED tibble (daily/weekly/monthly) to true monthly frequency
@@ -537,6 +615,10 @@ run_macro_bvar <- function(macro_wide, horizon_months = 18, ci_level = 0.90) {
     return(NULL)
   }
 
+  # Unfiltered copy: derived YoY needs each series' own complete history for
+  # its base months, not just the rows every series has in common
+  macro_full <- arrange(macro_wide, date)
+
   macro_wide <- macro_wide %>%
     arrange(date) %>%
     filter(if_all(all_of(vars_order), ~ !is.na(.)))
@@ -719,7 +801,16 @@ run_macro_bvar <- function(macro_wide, horizon_months = 18, ci_level = 0.90) {
                 hist_end = max(macro_wide$date),
                 series_avg = mean(mat[, v], na.rm = TRUE),
                 series_sd_diff = stats::sd(diff(mat[, v]), na.rm = TRUE),
-                model_family = "bvar"
+                model_family = "bvar",
+                yoy = if (v %in% DERIVED_YOY_IDS) {
+                  .derived_yoy(
+                    macro_full$date[!is.na(macro_full[[v]])],
+                    macro_full[[v]][!is.na(macro_full[[v]])],
+                    level_draws[, , j],
+                    future_dates,
+                    alpha
+                  )
+                }
               )
             }),
             vars_order
@@ -760,7 +851,7 @@ run_all_forecasts <- function(fred_data, horizon_months = 18) {
       filter(!is.na(value))
   }
 
-  # ── Macro block: UNRATE / CPI YoY / FEDFUNDS / MORTGAGE30US, jointly ------
+  # ── Macro block: rates / CPI YoY / labor / industrial production, jointly --
   have_macro <- all(vapply(
     MACRO_BLOCK_IDS,
     function(sid) !is.null(monthly_data[[sid]]),
@@ -777,7 +868,7 @@ run_all_forecasts <- function(fred_data, horizon_months = 18) {
     ) %>%
       arrange(date)
 
-    message("Fitting macro BVAR block (UNRATE, CPI YoY, FEDFUNDS, MORTGAGE30US, 10Y Treasury, payrolls, claims)...")
+    message("Fitting macro BVAR block (UNRATE, CPI YoY, FEDFUNDS, MORTGAGE30US, 10Y Treasury, payrolls, claims, industrial production)...")
     macro_fc <- run_macro_bvar(macro_wide, horizon_months = horizon_months)
 
     if (!is.null(macro_fc)) {
@@ -850,7 +941,17 @@ plot_forecast_chart <- function(fc_result, series_id) {
   is_bvar <- identical(names(w), "BVAR")
   method_lbl <- if (is_bvar) "Joint BVAR Forecast" else "Ensemble Forecast"
   w_lbl <- if (is_bvar) {
-    "Jointly modeled with unemployment, CPI, Fed funds, mortgage rate, 10-year Treasury, payrolls & jobless claims"
+    others <- vapply(
+      setdiff(MACRO_BLOCK_IDS, series_id),
+      function(x) FORECAST_SERIES[[x]]$short,
+      character(1)
+    )
+    paste0(
+      "Jointly modeled with ",
+      paste(head(others, -1), collapse = ", "),
+      " & ",
+      tail(others, 1)
+    )
   } else {
     paste(
       mapply(
@@ -994,7 +1095,7 @@ forecast_summary_table <- function(forecasts) {
       )
     }
 
-    tibble(
+    row <- tibble(
       Indicator = cfg$name,
       Current = round(cur$y, 2),
       `6M Fcst` = round(f6$yhat, 2),
@@ -1009,6 +1110,28 @@ forecast_summary_table <- function(forecasts) {
       Unit = cfg$unit,
       `Weights (P/A/E)` = w_str
     )
+
+    # Derived YoY row (level-modeled series that are also read as growth)
+    if (!is.null(fc$yoy)) {
+      yf <- fc$yoy$forecast
+      y6 <- yf %>% slice(min(6, n()))
+      row <- bind_rows(row, tibble(
+        Indicator = glue("{cfg$name} (YoY %)"),
+        Current = round(fc$yoy$current, 2),
+        `6M Fcst` = round(y6$yhat, 2),
+        `6M CI` = paste0(
+          "[",
+          round(y6$yhat_lower, 2),
+          ", ",
+          round(y6$yhat_upper, 2),
+          "]"
+        ),
+        `18M Fcst` = round(tail(yf$yhat, 1), 2),
+        Unit = "YoY %",
+        `Weights (P/A/E)` = "BVAR (derived)"
+      ))
+    }
+    row
   })
 }
 
