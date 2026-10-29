@@ -66,7 +66,7 @@ FRED_CFG <- list(
   DTWEXBGS           = list(label="USD Index",              unit="Index",   tab="markets"),
   # Enhanced recession model inputs
   LNS11300060        = list(label="Prime-Age LFPR (25-54)", unit="%",       tab="labor"),
-  ICSA               = list(label="Initial Jobless Claims", unit="K",       tab="labor"),
+  ICSA               = list(label="Initial Jobless Claims", unit="Claims",  tab="labor"),
   ISRATIO            = list(label="Inventory-to-Sales",     unit="Ratio",   tab="consumer"),
   DRCCLACBS          = list(label="Credit Card Delinquency",unit="%",       tab="consumer"),
   # Yield curve tenors (for yield curve chart)

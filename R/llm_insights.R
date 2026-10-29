@@ -188,7 +188,11 @@ model_outputs_to_text <- function(outlook = NULL, forecasts = NULL) {
         sprintf("  Probability:                %.0f%% (%s)\n", rp$prob, rp$tier$label %||% ""),
         sprintf("  Model:                      %s\n", rp$model_type %||% "N/A"),
         if (!is.null(rp$markov_prob) && !is.na(rp$markov_prob))
-          sprintf("  Markov regime p(recession): %.0f%%\n", rp$markov_prob * 100) else "",
+          sprintf("  Markov regime p(recession): %.0f%% (current-month nowcast from IP; %.0f%% blend weight)\n",
+                  rp$markov_prob * 100, (rp$ensemble_weights$w_ms %||% NA) * 100) else "",
+        if (isTRUE(rp$glm_scored))
+          sprintf("  GLM alone / hand-tuned alone: %.0f%% / %.0f%%\n",
+                  rp$glm_prob * 100, rp$ht_prob * 100) else "",
         if (!is.null(rp$anomaly$label))
           sprintf("  Anomaly signal:             %s (MD=%.1f)\n",
                   rp$anomaly$label, rp$anomaly$md %||% NA) else ""
@@ -210,8 +214,8 @@ model_outputs_to_text <- function(outlook = NULL, forecasts = NULL) {
     tbl <- tryCatch(forecast_summary_table(forecasts), error = function(e) NULL)
     if (!is.null(tbl) && nrow(tbl) > 0) {
       out <- paste0(out, "\nINDICATOR FORECASTS (Prophet/ARIMA/ETS ensemble or BVAR)\n",
-        paste(sprintf("  %-28s current %s → 6M %s %s → end-horizon %s (%s)",
-                      tbl$Indicator, tbl$Current, tbl$`6M Fcst`, tbl$`6M CI`,
+        paste(sprintf("  %-28s current %s (as of %s) → 6M %s %s → end-horizon %s (%s)",
+                      tbl$Indicator, tbl$Current, tbl$`As of`, tbl$`6M Fcst`, tbl$`6M CI`,
                       tbl$`18M Fcst`, tbl$Unit), collapse = "\n"), "\n")
     }
   }

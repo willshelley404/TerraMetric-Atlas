@@ -294,7 +294,9 @@ build_synopsis <- function(fred_data, kpis) {
   cpi_yoy_now <- kpis$cpi_yoy %||% NA
   core_yoy_now <- kpis$core_cpi_yoy %||% NA
   cpi_trend <- if (!is.null(cpi)) {
-    yoy_series <- (cpi / lag(cpi, 12) - 1) * 100
+    # Date-matched: the feed drops the missing Oct-2025 row, so lag(12) by row
+    # would compare against 13 months back for every later month
+    yoy_series <- yoy_change(get_df("CPIAUCSL"))$yoy
     trend_dir(yoy_series[!is.na(yoy_series)], 6)
   } else {
     "unclear"

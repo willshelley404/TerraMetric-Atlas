@@ -1588,7 +1588,7 @@ server <- function(input, output, session) {
       options = list(dom = "t", pageLength = 20),
       rownames = FALSE,
       class = "table-dark compact stripe",
-      colnames = c("Indicator", "Current", "6M Fcst", "6M CI", "18M Fcst", "Unit", "Weights (P/A/E)")
+      colnames = c("Indicator", "Current", "As of", "6M Fcst", "6M CI", "18M Fcst", "Unit", "Weights (P/A/E)")
     ) %>%
       formatStyle(
         columns = names(tbl),

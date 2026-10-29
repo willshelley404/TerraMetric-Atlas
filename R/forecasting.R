@@ -102,6 +102,7 @@ FORECAST_SERIES <- list(
   ICSA = list(
     name = "Initial Jobless Claims",
     unit = "K",
+    scale = 1e-3, # FRED reports individual claims; shown in thousands
     color = "#06d6a0",
     short = "jobless claims"
   ),
@@ -840,14 +841,16 @@ run_all_forecasts <- function(fred_data, horizon_months = 18) {
     if (is.null(raw_df) || nrow(raw_df) < 24) {
       next
     }
-    monthly_data[[sid]] <- .aggregate_monthly(raw_df)
+    monthly_data[[sid]] <- .aggregate_monthly(raw_df) %>%
+      mutate(value = value * (FORECAST_SERIES[[sid]]$scale %||% 1))
   }
 
-  # CPI: convert to YoY % before forecasting (unit already "YoY %" in metadata)
+  # CPI: convert to YoY % before forecasting (unit already "YoY %" in metadata).
+  # Date-matched via yoy_change(): a row-offset lag(12) turns every month after
+  # a missing one (Oct-2025 shutdown) into a 13-month change.
   if (!is.null(monthly_data[["CPIAUCSL"]])) {
-    monthly_data[["CPIAUCSL"]] <- monthly_data[["CPIAUCSL"]] %>%
-      arrange(date) %>%
-      mutate(value = (value / lag(value, 12) - 1) * 100) %>%
+    monthly_data[["CPIAUCSL"]] <- yoy_change(monthly_data[["CPIAUCSL"]]) %>%
+      transmute(date, value = yoy) %>%
       filter(!is.na(value))
   }
 
@@ -896,6 +899,25 @@ run_all_forecasts <- function(fred_data, horizon_months = 18) {
     }
     message(glue("Ensemble forecasting {sid}..."))
     out[[sid]] <- run_ensemble(raw_df, horizon_months = horizon_months)
+  }
+
+  # Latest actual print per series, for the summary table's "Current". The
+  # BVAR origin is the last month all 8 macro series share and is a monthly
+  # average, so it can trail a weekly/daily series (mortgage, 10Y, claims)
+  # by a month.
+  for (sid in names(out)) {
+    if (is.null(out[[sid]])) {
+      next
+    }
+    src <- if (sid == "CPIAUCSL") {
+      monthly_data[[sid]] # already date-matched YoY %
+    } else {
+      fred_data[[sid]] %>% filter(!is.na(value)) %>% arrange(date)
+    }
+    if (!is.null(src) && nrow(src) > 0) {
+      sc <- if (sid == "CPIAUCSL") 1 else FORECAST_SERIES[[sid]]$scale %||% 1
+      out[[sid]]$latest <- list(date = max(src$date), value = tail(src$value, 1) * sc)
+    }
   }
 
   out
@@ -1082,6 +1104,11 @@ forecast_summary_table <- function(forecasts) {
     cfg <- FORECAST_SERIES[[sid]]
     df <- fc$data
     cur <- df %>% filter(!is_forecast) %>% slice_tail(n = 1)
+    # Latest actual print when available (matches the KPI scorecard); else the
+    # last modelled month
+    as_of_fmt <- function(d) format(d, if (lubridate::day(d) == 1) "%b %Y" else "%b %d, %Y")
+    cur_val <- fc$latest$value %||% cur$y
+    cur_date <- fc$latest$date %||% cur$ds
     f6 <- df %>% filter(is_forecast) %>% slice(min(6, n()))
     f18 <- df %>% slice_tail(n = 1)
 
@@ -1097,7 +1124,8 @@ forecast_summary_table <- function(forecasts) {
 
     row <- tibble(
       Indicator = cfg$name,
-      Current = round(cur$y, 2),
+      Current = round(cur_val, 2),
+      `As of` = as_of_fmt(cur_date),
       `6M Fcst` = round(f6$yhat, 2),
       `6M CI` = paste0(
         "[",
@@ -1118,6 +1146,7 @@ forecast_summary_table <- function(forecasts) {
       row <- bind_rows(row, tibble(
         Indicator = glue("{cfg$name} (YoY %)"),
         Current = round(fc$yoy$current, 2),
+        `As of` = as_of_fmt(yf$ds[1] %m-% months(1)),
         `6M Fcst` = round(y6$yhat, 2),
         `6M CI` = paste0(
           "[",
