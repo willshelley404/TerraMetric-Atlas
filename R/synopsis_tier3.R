@@ -3543,7 +3543,9 @@ render_growth_outlook_html <- function(outlook) {
           "</div>",
           ds,
           "<div style='color:#555;font-size:10px;margin-top:8px;'>",
-          "Tier 3: Ridge GLM (+ hand-tuned prior) + 3-state Markov nowcast + anomaly adjustment. Skill-weighted blend — see Model details for the historical backtest.",
+          "Tier 3: Ridge GLM (+ hand-tuned prior) + 3-state Markov nowcast + anomaly adjustment. Skill-weighted blend — see Model details for the historical backtest. ",
+          "<a href='https://willshelley404.github.io/recession-tracker/' target='_blank' rel='noopener' ",
+          "style='color:#00b4d8;text-decoration:none;'>Latest recession tracker \u2197</a>",
           "</div></div>"
         )
       }
