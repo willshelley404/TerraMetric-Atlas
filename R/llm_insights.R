@@ -157,7 +157,7 @@ market_returns_text <- function(mkt_returns, tickers=c("SPY","QQQ","GLD","USO","
   paste0("MARKET RETURNS\n", paste(lines, collapse="\n"))
 }
 
-#' The app's own model outputs (growth outlook, recession ensemble, forecasts)
+#' The app's own model outputs (growth outlook, recession model, forecasts)
 #' as text, so the LLM quotes these numbers instead of inventing its own.
 model_outputs_to_text <- function(outlook = NULL, forecasts = NULL) {
   out <- "=== APP MODEL OUTPUTS (AUTHORITATIVE — quote these, do not re-derive) ===\n"
@@ -196,15 +196,10 @@ model_outputs_to_text <- function(outlook = NULL, forecasts = NULL) {
       out <- paste0(out, "\nRECESSION PROBABILITY MODEL (12-month horizon)\n",
         sprintf("  Probability:                %.0f%% (%s)\n", rp$prob, rp$tier$label %||% ""),
         sprintf("  Model:                      %s\n", rp$model_type %||% "N/A"),
-        if (!is.null(rp$markov_prob) && !is.na(rp$markov_prob))
-          sprintf("  Markov regime p(recession): %.0f%% (current-month nowcast from IP; %.0f%% blend weight)\n",
-                  rp$markov_prob * 100, (rp$ensemble_weights$w_ms %||% NA) * 100) else "",
-        if (isTRUE(rp$glm_scored))
-          sprintf("  GLM alone / hand-tuned alone: %.0f%% / %.0f%%\n",
-                  rp$glm_prob * 100, rp$ht_prob * 100) else "",
-        if (!is.null(rp$anomaly$label))
-          sprintf("  Anomaly signal:             %s (MD=%.1f)\n",
-                  rp$anomaly$label, rp$anomaly$md %||% NA) else ""
+        if (!is.null(rp$month))
+          sprintf("  Data month / trained on:    %s / %d months through %s (base rate %.0f%%)\n",
+                  format(rp$month, "%b %Y"), rp$n_train, format(rp$train_end, "%b %Y"),
+                  rp$base_rate * 100) else ""
       )
       fc <- rp$factor_contributions
       if (!is.null(fc) && nrow(fc) > 0) {
