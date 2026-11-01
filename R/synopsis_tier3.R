@@ -2490,55 +2490,399 @@ run_glm_backtests <- function(glm_result) {
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# COMPOSITE SCORE — shared by the live card and the historical rebuild used to
+# calibrate the GDP mapping, so both are scored with identical rules.
+# `x` is a named list of scalar inputs (NA allowed → .score() treats as neutral).
+# ═══════════════════════════════════════════════════════════════════════════════
+
+.COMPOSITE_INPUTS <- c(
+  "u", "pay_3m", "ret_real", "cs", "real_rate", "yield_spread", "inv_months",
+  "hs", "mort", "vix", "hy", "cpi_y", "pce_y", "ip_y"
+)
+
+.composite_components <- function(x) {
+  g <- function(k) {
+    v <- x[[k]]
+    if (is.null(v) || length(v) == 0) NA_real_ else v
+  }
+  u <- g("u"); pay_3m <- g("pay_3m"); ret_real <- g("ret_real"); cs <- g("cs")
+  real_rate <- g("real_rate"); yield_spread <- g("yield_spread")
+  inv_months <- g("inv_months"); hs <- g("hs"); mort_v <- g("mort")
+  vix_v <- g("vix"); hy_v <- g("hy"); cpi_y <- g("cpi_y"); pce_y <- g("pce_y")
+  ip_y <- g("ip_y")
+
+  list(
+    labor = list(
+      weight = 2.5,
+      label = "Labor Market",
+      score = mean(c(
+        .score(u, 3.5, 5.0, FALSE),
+        .score(pay_3m, 150, 50, TRUE),
+        .score(u, 4.5, 5.5, FALSE)
+      )),
+      detail = if (!is.na(u) && !is.na(pay_3m)) {
+        sprintf("%.1f%% unemployment; %+.0fK/mo payrolls", u, pay_3m)
+      } else {
+        "N/A"
+      }
+    ),
+    consumer = list(
+      weight = 2.0,
+      label = "Consumer Demand",
+      score = mean(c(.score(ret_real, 1, -1, TRUE), .score(cs, 85, 65, TRUE))),
+      detail = if (!is.na(ret_real) && !is.na(cs)) {
+        sprintf("Real retail %.1f%%; sentiment %.0f", ret_real, cs)
+      } else {
+        "N/A"
+      }
+    ),
+    monetary = list(
+      weight = 2.0,
+      label = "Monetary Conditions",
+      score = mean(c(
+        .score(real_rate, 0.5, 2.5, FALSE),
+        .score(yield_spread, 0.5, -0.25, TRUE),
+        .score(inv_months, 3, 9, FALSE)
+      )),
+      detail = if (!is.na(real_rate) && !is.na(yield_spread)) {
+        sprintf(
+          "Real rate %.1f%%; 10Y-2Y %.2f pp; %d mo inv.",
+          real_rate, yield_spread, as.integer(inv_months %||% 0)
+        )
+      } else {
+        "N/A"
+      }
+    ),
+    housing = list(
+      weight = 1.5,
+      label = "Housing",
+      score = mean(c(.score(hs, 1400, 1000, TRUE), .score(mort_v, 6, 7.5, FALSE))),
+      detail = if (!is.na(hs) && !is.na(mort_v)) {
+        sprintf("%.0fK starts; %.2f%% mortgage", hs, mort_v)
+      } else {
+        "N/A"
+      }
+    ),
+    financial = list(
+      weight = 1.5,
+      label = "Financial Conditions",
+      score = mean(c(.score(vix_v, 18, 28, FALSE), .score(hy_v, 4.5, 6, FALSE))),
+      detail = if (!is.na(vix_v) && !is.na(hy_v)) {
+        sprintf("VIX %.1f; HY %.2f%%", vix_v, hy_v)
+      } else {
+        "N/A"
+      }
+    ),
+    inflation = list(
+      weight = 1.5,
+      label = "Inflation",
+      score = mean(c(.score(cpi_y, 2.5, 4.5, FALSE), .score(pce_y, 2.3, 3.5, FALSE))),
+      detail = if (!is.na(cpi_y) && !is.na(pce_y)) {
+        sprintf("CPI %.1f%%; Core PCE %.1f%%", cpi_y, pce_y)
+      } else {
+        "N/A"
+      }
+    ),
+    industrial = list(
+      weight = 1.0,
+      label = "Industrial Output",
+      score = .score(ip_y, 1, -1, TRUE),
+      detail = if (!is.na(ip_y)) sprintf("IP YoY %.1f%%", ip_y) else "N/A"
+    )
+  )
+}
+
+.composite_score <- function(components) {
+  tw <- sum(sapply(components, `[[`, "weight"))
+  raw <- sum(sapply(components, function(c) c$score * c$weight)) / tw
+  list(raw = raw, score_0_10 = max(0, min(10, round((raw + 1) / 2 * 10, 1))))
+}
+
+# Months (of the last n) with a negative monthly-average 10Y–2Y spread.
+# DGS10/DGS2 are daily, so counting raw observations would count trading days.
+.inv_months_monthly <- function(fred_data, n = 18L) {
+  m <- function(sid) {
+    df <- fred_data[[sid]]
+    if (is.null(df) || nrow(df) < 2) return(NULL)
+    df %>%
+      dplyr::filter(!is.na(value)) %>%
+      dplyr::mutate(date = lubridate::floor_date(date, "month")) %>%
+      dplyr::group_by(date) %>%
+      dplyr::summarise(v = mean(value), .groups = "drop")
+  }
+  a <- m("DGS10")
+  b <- m("DGS2")
+  if (is.null(a) || is.null(b)) return(0L)
+  s <- dplyr::inner_join(a, b, by = "date") %>% dplyr::arrange(date)
+  as.integer(sum(tail(s$v.x - s$v.y, n) < 0, na.rm = TRUE))
+}
+
+# Atlanta Fed GDPNow — latest nowcast (SAAR %) for the most recent quarter.
+# Fetched live rather than cached with the models: it updates several times a week.
+.fetch_gdpnow <- function(fred_data = NULL) {
+  tryCatch(
+    {
+      df <- tryCatch(
+        fredr::fredr("GDPNOW", observation_start = Sys.Date() - 730),
+        error = function(e) fred_data$GDPNOW
+      )
+      if (is.null(df)) return(NULL)
+      df <- df[!is.na(df$value), ]
+      if (nrow(df) == 0) return(NULL)
+      last <- df[which.max(df$date), ]
+      updated <- tryCatch(
+        as.Date(substr(fredr::fredr_series("GDPNOW")$last_updated, 1, 10)),
+        error = function(e) last$realtime_start %||% NA
+      )
+      list(
+        value = round(last$value, 1),
+        quarter = paste0(lubridate::year(last$date), "Q", lubridate::quarter(last$date)),
+        updated = updated
+      )
+    },
+    error = function(e) {
+      message("[t3] GDPNow fetch failed: ", e$message)
+      NULL
+    }
+  )
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# GDP MAPPING CALIBRATION
+# Rebuilds the composite score monthly from FRED history, then regresses
+# realised next-quarter real GDP growth (SAAR, A191RL1Q225SBEA) on the
+# end-of-quarter score. The band comes from the regression residuals, and an
+# expanding-window pseudo-out-of-sample RMSE is reported against a naive
+# historical-mean forecast. Recession probability enters only if it carries
+# significant information beyond the score (the score already contains the
+# yield curve, labour and credit signals the recession model uses).
+# Caveat: uses final-vintage data and ignores publication lags.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+.fred_hist_monthly <- function(fred_data, sid, start = as.Date("1959-01-01")) {
+  df <- tryCatch(
+    fredr::fredr(sid, observation_start = start, frequency = "m"),
+    error = function(e) {
+      message(sprintf("[t3] score history: fredr('%s') failed (%s) — using fred_data", sid, e$message))
+      fred_data[[sid]]
+    }
+  )
+  if (is.null(df) || nrow(df) == 0) return(NULL)
+  df %>%
+    dplyr::filter(!is.na(value)) %>%
+    dplyr::mutate(date = lubridate::floor_date(date, "month")) %>%
+    dplyr::group_by(date) %>%
+    dplyr::summarise(value = mean(value), .groups = "drop") %>%
+    dplyr::arrange(date)
+}
+
+build_score_history <- function(fred_data) {
+  ids <- c(
+    "UNRATE", "PAYEMS", "RSAFS", "UMCSENT", "FEDFUNDS", "CPIAUCNS", "DGS10",
+    "DGS2", "HOUST", "MORTGAGE30US", "VIXCLS", "BAMLH0A0HYM2", "PCEPILFE", "INDPRO"
+  )
+  raw <- lapply(setNames(ids, ids), function(s) .fred_hist_monthly(fred_data, s))
+  if (is.null(raw$UNRATE) || is.null(raw$CPIAUCNS)) {
+    message("[t3] score history: core series missing.")
+    return(NULL)
+  }
+
+  months <- seq(min(raw$UNRATE$date), max(raw$UNRATE$date), by = "month")
+  col <- function(s) {
+    df <- raw[[s]]
+    if (is.null(df)) return(rep(NA_real_, length(months)))
+    df$value[match(months, df$date)]
+  }
+  yoy <- function(v) (v / dplyr::lag(v, 12) - 1) * 100
+
+  p <- data.frame(date = months)
+  p$u <- col("UNRATE")
+  pay <- col("PAYEMS")
+  p$pay_3m <- (pay - dplyr::lag(pay, 3)) / 3
+  p$cpi_y <- yoy(col("CPIAUCNS"))
+  p$pce_y <- yoy(col("PCEPILFE"))
+  p$real_rate <- col("FEDFUNDS") - p$cpi_y
+  p$yield_spread <- col("DGS10") - col("DGS2")
+  p$inv_months <- zoo::rollapply(
+    p$yield_spread < 0, 18, function(z) sum(z, na.rm = TRUE),
+    fill = NA, align = "right", partial = TRUE
+  )
+  p$hs <- col("HOUST")
+  p$mort <- col("MORTGAGE30US")
+  p$ret_real <- yoy(col("RSAFS")) - p$cpi_y
+  p$cs <- col("UMCSENT")
+  p$vix <- col("VIXCLS")
+  p$hy <- col("BAMLH0A0HYM2")
+  p$ip_y <- yoy(col("INDPRO"))
+  p$inv_months[is.na(p$yield_spread)] <- NA
+
+  p$n_inputs <- rowSums(!is.na(p[, .COMPOSITE_INPUTS]))
+  p$score <- vapply(seq_len(nrow(p)), function(i) {
+    .composite_score(.composite_components(as.list(p[i, .COMPOSITE_INPUTS])))$score_0_10
+  }, numeric(1))
+  p
+}
+
+#' @param rec_series optional data.frame(date, prob) — monthly OOS recession
+#'   probability in [0,1] (e.g. run_glm_backtests()$long$series)
+fit_gdp_mapping <- function(fred_data, rec_series = NULL, min_inputs = 12L) {
+  tryCatch(
+    {
+      sh <- build_score_history(fred_data)
+      if (is.null(sh)) return(NULL)
+      gdp <- fredr::fredr(
+        "A191RL1Q225SBEA",
+        observation_start = as.Date("1959-01-01"),
+        frequency = "q"
+      ) %>%
+        dplyr::filter(!is.na(value)) %>%
+        dplyr::transmute(q = lubridate::floor_date(date, "quarter"), gdp = value)
+
+      # Score in the last month of quarter q → GDP growth in quarter q+1
+      d <- sh %>%
+        dplyr::filter(lubridate::month(date) %in% c(3, 6, 9, 12)) %>%
+        dplyr::mutate(q = lubridate::floor_date(date, "quarter"), q_next = q %m+% months(3)) %>%
+        dplyr::inner_join(gdp, by = c(q_next = "q")) %>%
+        dplyr::rename(gdp_next = gdp)
+
+      if (!is.null(rec_series)) {
+        d <- d %>% dplyr::left_join(
+          rec_series %>% dplyr::transmute(date = lubridate::floor_date(date, "month"), rec = prob),
+          by = "date"
+        )
+      } else {
+        d$rec <- NA_real_
+      }
+
+      # COVID lockdown/rebound quarters (-28% / +35% SAAR) are not forecastable
+      # from macro indicators and would dominate an OLS fit
+      covid <- d$q_next %in% as.Date(c("2020-04-01", "2020-07-01"))
+      d <- d[d$n_inputs >= min_inputs & !covid, ]
+      if (nrow(d) < 40) {
+        message(sprintf("[t3] GDP mapping: only %d usable quarters — skipping fit.", nrow(d)))
+        return(NULL)
+      }
+
+      # Keep recession probability only if it adds significant (negative) info
+      rec_coef <- 0
+      rec_t <- NA_real_
+      dr <- d[!is.na(d$rec), ]
+      if (nrow(dr) >= 40) {
+        m2 <- lm(gdp_next ~ score + rec, data = dr)
+        cf <- summary(m2)$coefficients
+        rec_t <- cf["rec", "t value"]
+        if (cf["rec", "Estimate"] < 0 && rec_t < -1.96) {
+          d <- dr
+          rec_coef <- cf["rec", "Estimate"]
+        }
+      }
+      fml <- if (rec_coef < 0) gdp_next ~ score + rec else gdp_next ~ score
+      m <- lm(fml, data = d)
+      cf <- summary(m)$coefficients
+      res <- residuals(m)
+
+      # Expanding-window pseudo-OOS from 2005 vs naive historical mean
+      oos_idx <- which(d$q_next >= as.Date("2005-01-01"))
+      oos <- t(vapply(oos_idx, function(i) {
+        tr <- d[d$q_next < d$q[i], ]
+        if (nrow(tr) < 30) return(c(NA_real_, NA_real_))
+        mi <- lm(fml, data = tr)
+        c(d$gdp_next[i] - predict(mi, newdata = d[i, ]), d$gdp_next[i] - mean(tr$gdp_next))
+      }, numeric(2)))
+      ok <- stats::complete.cases(oos)
+
+      out <- list(
+        intercept = unname(coef(m)[1]),
+        slope = unname(coef(m)["score"]),
+        slope_se = cf["score", "Std. Error"],
+        rec_coef = rec_coef,
+        rec_t = rec_t,
+        r2 = summary(m)$r.squared,
+        n = nrow(d),
+        from = min(d$q_next),
+        to = max(d$q_next),
+        resid_sd = stats::sd(res),
+        resid_q10 = unname(stats::quantile(res, 0.10)),
+        resid_q90 = unname(stats::quantile(res, 0.90)),
+        rmse_oos = sqrt(mean(oos[ok, 1]^2)),
+        rmse_naive = sqrt(mean(oos[ok, 2]^2)),
+        n_oos = sum(ok),
+        last_gdp = tail(gdp, 1),
+        fitted_at = Sys.time()
+      )
+      message(sprintf(
+        "[t3] GDP mapping: gdp = %.2f + %.2f×score%s (R²=%.2f, n=%d, %s→%s); 80%% band [%+.1f, %+.1f]; OOS RMSE %.2f vs naive %.2f; rec t=%.2f",
+        out$intercept, out$slope,
+        if (rec_coef < 0) sprintf(" %+.2f×rec", rec_coef) else "",
+        out$r2, out$n, format(out$from, "%Y-%m"), format(out$to, "%Y-%m"),
+        out$resid_q10, out$resid_q90, out$rmse_oos, out$rmse_naive, rec_t
+      ))
+      out
+    },
+    error = function(e) {
+      message("[t3] fit_gdp_mapping failed: ", e$message)
+      NULL
+    }
+  )
+}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # GDP POINT FORECAST
-# Maps composite score + recession probability to a quantitative annualized GDP
-# estimate for the next quarter.
-#
-# Calibration anchors (score → annualized GDP, post-WWII US data):
+# Primary: the fitted mapping from fit_gdp_mapping() (score → next-quarter
+# GDP, residual-based 80% band).
+# Fallback (fit unavailable): piecewise-linear judgemental anchors below, with
+# no recession-probability drag (the score already carries those signals) and
+# a wide ±2pp band.
 #   score  0  →  -3.5%  (deep recession: 2008Q4, 2020Q1)
 #   score  3  →  -0.5%  (mild recession / stall: 2001, 2022H1)
 #   score  5  →  +1.5%  (below-trend: 2015–16, 2019)
 #   score  7  →  +2.5%  (trend growth: 2014–17 average)
 #   score  8  →  +3.0%  (above-trend: 2018, 2023Q3)
 #   score 10  →  +4.5%  (boom: 2021Q3, 1983–84)
-#
-# The formula is:  gdp_base = -3.5 + score × 0.70
-# Then a recession probability discount pulls the estimate toward
-# recession territory when the model flags elevated risk.
 # ═══════════════════════════════════════════════════════════════════════════════
 
-.compute_gdp_forecast <- function(score_0_10, recession_prob_pct, components) {
+.GDP_SCORE_ANCHORS <- data.frame(
+  score = c(0, 3, 5, 7, 8, 10),
+  gdp = c(-3.5, -0.5, 1.5, 2.5, 3.0, 4.5)
+)
+
+.compute_gdp_forecast <- function(score_0_10, recession_prob_pct, components,
+                                  mapping = NULL) {
   if (is.null(score_0_10) || is.na(score_0_10)) {
     return(NULL)
   }
-
-  # ── Base estimate from composite score ───────────────────────────────────────
-  gdp_base <- -3.5 + score_0_10 * 0.70 # maps 0 → -3.5%, 10 → +3.5%
-  # Asymmetric floor/ceiling: recoveries can exceed model range
-  gdp_base <- max(-5.0, min(5.5, gdp_base))
-
-  # ── Recession probability discount ───────────────────────────────────────────
-  # At 0% prob: no adjustment.  At 50%: -0.9pp.  At 90%: -1.6pp.
-  # Uses sqrt to make the drag non-linear (small probs barely matter,
-  # high probs strongly pull toward contraction).
   rec_prob <- if (!is.null(recession_prob_pct) && !is.na(recession_prob_pct)) {
     pmax(0, pmin(100, recession_prob_pct))
   } else {
-    15
+    NA_real_
   }
-  rec_drag <- -1.8 * sqrt(rec_prob / 100) # 0% → 0, 50% → -1.27, 90% → -1.71
 
-  gdp_point <- gdp_base + rec_drag
+  if (!is.null(mapping)) {
+    rec_drag <- if (mapping$rec_coef < 0 && !is.na(rec_prob)) {
+      mapping$rec_coef * rec_prob / 100
+    } else {
+      0
+    }
+    gdp_point <- mapping$intercept + mapping$slope * score_0_10 + rec_drag
+    gdp_ci_lo <- gdp_point + mapping$resid_q10
+    gdp_ci_hi <- gdp_point + mapping$resid_q90
+    method <- "fitted"
+  } else {
+    rec_drag <- 0
+    gdp_point <- stats::approx(
+      .GDP_SCORE_ANCHORS$score, .GDP_SCORE_ANCHORS$gdp,
+      xout = score_0_10, rule = 2
+    )$y
+    gdp_ci_lo <- gdp_point - 2.0
+    gdp_ci_hi <- gdp_point + 2.0
+    method <- "anchors"
+  }
+  uncertainty <- (gdp_ci_hi - gdp_ci_lo) / 2
 
-  # ── Uncertainty band: widens with recession risk ──────────────────────────────
-  # Reflects that model accuracy falls sharply near turning points
-  uncertainty <- 0.6 + (rec_prob / 100) * 1.4 # 0% → ±0.6, 50% → ±1.3, 90% → ±1.86
-  gdp_ci_lo <- gdp_point - uncertainty
-  gdp_ci_hi <- gdp_point + uncertainty
-
-  # NOTE: the regime label shown alongside this forecast is no longer picked
-  # from a separate rec_prob >= 50%/65% override — it's derived directly from
-  # `gdp_point` below via .regime_from_gdp_point(), so label and number can't
+  # NOTE: the regime label shown alongside this forecast is derived directly
+  # from `gdp_point` via .regime_from_gdp_point(), so label and number can't
   # disagree. See build_growth_outlook().
 
   # ── Primary driver of the forecast ───────────────────────────────────────────
@@ -2565,7 +2909,8 @@ run_glm_backtests <- function(glm_result) {
     uncertainty = round(uncertainty, 2),
     rec_drag = round(rec_drag, 2),
     top_driver = top_driver,
-    method = "Composite score + recession probability discount"
+    method = method,
+    mapping = mapping
   )
 }
 
@@ -2627,115 +2972,17 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
         NA
       }
       ret_real <- if (!is.na(ret_y) && !is.na(cpi_y)) ret_y - cpi_y else NA
-      inv_months <- if (!is.null(t10) && !is.null(t2)) {
-        n <- min(length(t10), length(t2), 18)
-        sum((tail(t10, n) - tail(t2, n)) < 0, na.rm = TRUE)
-      } else {
-        0
-      }
+      inv_months <- .inv_months_monthly(fred_data, 18L)
 
-      components <- list(
-        labor = list(
-          weight = 2.5,
-          label = "Labor Market",
-          score = mean(
-            c(
-              .score(u, 3.5, 5.0, FALSE),
-              .score(pay_3m, 150, 50, TRUE),
-              .score(u, 4.5, 5.5, FALSE)
-            ),
-            na.rm = TRUE
-          ),
-          detail = if (!is.na(u) && !is.na(pay_3m)) {
-            sprintf("%.1f%% unemployment; %+.0fK/mo payrolls", u, pay_3m)
-          } else {
-            "N/A"
-          }
-        ),
-        consumer = list(
-          weight = 2.0,
-          label = "Consumer Demand",
-          score = mean(
-            c(.score(ret_real, 1, -1, TRUE), .score(cs, 85, 65, TRUE)),
-            na.rm = TRUE
-          ),
-          detail = if (!is.na(ret_real) && !is.na(cs)) {
-            sprintf("Real retail %.1f%%; sentiment %.0f", ret_real, cs)
-          } else {
-            "N/A"
-          }
-        ),
-        monetary = list(
-          weight = 2.0,
-          label = "Monetary Conditions",
-          score = mean(
-            c(
-              .score(real_rate, 0.5, 2.5, FALSE),
-              .score(yield_spread, 0.5, -0.25, TRUE),
-              .score(inv_months, 3, 9, FALSE)
-            ),
-            na.rm = TRUE
-          ),
-          detail = if (!is.na(real_rate) && !is.na(yield_spread)) {
-            sprintf(
-              "Real rate %.1f%%; 10Y-2Y %.2f pp; %d mo inv.",
-              real_rate,
-              yield_spread,
-              inv_months
-            )
-          } else {
-            "N/A"
-          }
-        ),
-        housing = list(
-          weight = 1.5,
-          label = "Housing",
-          score = mean(
-            c(.score(hs, 1400, 1000, TRUE), .score(mort_v, 6, 7.5, FALSE)),
-            na.rm = TRUE
-          ),
-          detail = if (!is.na(hs) && !is.na(mort_v)) {
-            sprintf("%.0fK starts; %.2f%% mortgage", hs, mort_v)
-          } else {
-            "N/A"
-          }
-        ),
-        financial = list(
-          weight = 1.5,
-          label = "Financial Conditions",
-          score = mean(
-            c(.score(vix_v, 18, 28, FALSE), .score(hy_v, 4.5, 6, FALSE)),
-            na.rm = TRUE
-          ),
-          detail = if (!is.na(vix_v) && !is.na(hy_v)) {
-            sprintf("VIX %.1f; HY %.2f%%", vix_v, hy_v)
-          } else {
-            "N/A"
-          }
-        ),
-        inflation = list(
-          weight = 1.5,
-          label = "Inflation",
-          score = mean(
-            c(.score(cpi_y, 2.5, 4.5, FALSE), .score(pce_y, 2.3, 3.5, FALSE)),
-            na.rm = TRUE
-          ),
-          detail = if (!is.na(cpi_y) && !is.na(pce_y)) {
-            sprintf("CPI %.1f%%; Core PCE %.1f%%", cpi_y, pce_y)
-          } else {
-            "N/A"
-          }
-        ),
-        industrial = list(
-          weight = 1.0,
-          label = "Industrial Output",
-          score = .score(ip_y, 1, -1, TRUE),
-          detail = if (!is.na(ip_y)) sprintf("IP YoY %.1f%%", ip_y) else "N/A"
-        )
-      )
-      tw <- sum(sapply(components, `[[`, "weight"))
-      raw_score <- sum(sapply(components, function(c) c$score * c$weight)) / tw
-      score_0_10 <- max(0, min(10, round((raw_score + 1) / 2 * 10, 1)))
+      components <- .composite_components(list(
+        u = u, pay_3m = pay_3m, ret_real = ret_real, cs = cs,
+        real_rate = real_rate, yield_spread = yield_spread,
+        inv_months = inv_months, hs = hs, mort = mort_v, vix = vix_v,
+        hy = hy_v, cpi_y = cpi_y, pce_y = pce_y, ip_y = ip_y
+      ))
+      cs_out <- .composite_score(components)
+      raw_score <- cs_out$raw
+      score_0_10 <- cs_out$score_0_10
       drag <- names(which.min(sapply(components, `[[`, "score")))
       supp <- names(which.max(sapply(components, `[[`, "score")))
       swing <- list(
@@ -2869,8 +3116,13 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
           )
           prog("Rolling backtest (1985\u2013present)\u2026", 0.85)
           bt_obj <- if (!is.null(glm_obj)) run_glm_backtests(glm_obj) else NULL
+          prog("Calibrating score \u2192 GDP mapping\u2026", 0.90)
+          gdp_map <- fit_gdp_mapping(fred_data, bt_obj$long$series)
           prog("Caching results\u2026", 0.95)
-          new_cache <- list(glm = glm_obj, markov = ms_obj, ew = ew_obj, backtest = bt_obj)
+          new_cache <- list(
+            glm = glm_obj, markov = ms_obj, ew = ew_obj, backtest = bt_obj,
+            gdp_map = gdp_map
+          )
           assign(cache_name, new_cache, envir = .GlobalEnv)
           # Persist to disk so cache survives Shiny restarts
           tryCatch(
@@ -2898,6 +3150,12 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
           get(cache_name, envir = .GlobalEnv),
           error = function(e) NULL
         )
+      }
+
+      # Caches built before the GDP calibration existed: fit it once and keep it
+      if (!is.null(cache) && !"gdp_map" %in% names(cache)) {
+        cache$gdp_map <- fit_gdp_mapping(fred_data, cache$backtest$long$series)
+        assign(cache_name, cache, envir = .GlobalEnv)
       }
 
       glm_result <- cache$glm
@@ -2936,7 +3194,8 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
       gdp_forecast <- .compute_gdp_forecast(
         score_0_10,
         recession_prob$prob,
-        components
+        components,
+        mapping = cache$gdp_map
       )
       # Regime label is derived from the final GDP point estimate (post
       # recession-probability drag), not the raw composite score, so the
@@ -2951,7 +3210,8 @@ build_growth_outlook <- function(fred_data, kpis, mkt_returns = NULL) {
         swing = swing,
         recession_prob = recession_prob,
         as_of = Sys.Date(),
-        gdp_forecast = gdp_forecast
+        gdp_forecast = gdp_forecast,
+        gdpnow = .fetch_gdpnow(fred_data)
       )
     },
     error = function(e) {
@@ -3268,16 +3528,56 @@ render_growth_outlook_html <- function(outlook) {
         } else {
           "#e94560"
         }
-        arrow_sym <- if (pt > 2.5) {
-          "\u2191\u2191"
-        } else if (pt > 1.0) {
-          "\u2191"
-        } else if (pt > -0.5) {
-          "\u2192"
+        mp <- gf$mapping
+        ci_note <- paste0(
+          if (identical(gf$method, "fitted")) "80% band [" else "±2pp band [",
+          lo, "%, ", hi, "%]"
+        )
+        method_note <- if (identical(gf$method, "fitted")) {
+          sprintf(
+            paste0(
+              "Regression of next-quarter real GDP on the composite score, %s–%s ",
+              "(n=%d, excl. 2020Q2–Q3). Out-of-sample RMSE %.1fpp vs %.1fpp for a ",
+              "naive average. Band from historical residuals. Not a professional forecast."
+            ),
+            format(mp$from, "%Y"), format(mp$to, "%Y"), mp$n, mp$rmse_oos, mp$rmse_naive
+          )
         } else {
-          "\u2193"
+          paste0(
+            "Calibration unavailable — judgemental score→GDP anchors, uncalibrated. ",
+            "Not a professional forecast."
+          )
         }
-        ci_note <- paste0("CI [", lo, "%, ", hi, "%]")
+        gn <- outlook$gdpnow
+        gdpnow_html <- if (!is.null(gn) && !is.na(gn$value)) {
+          gn_col <- if (gn$value >= 2.5) {
+            "#2dce89"
+          } else if (gn$value >= 1.0) {
+            "#00b4d8"
+          } else if (gn$value >= 0) {
+            "#f4a261"
+          } else {
+            "#e94560"
+          }
+          paste0(
+            "<div style='display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;",
+            "margin-top:8px;padding-top:8px;border-top:1px solid #22304a;'>",
+            "<span style='color:#9aa3b2;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;'>",
+            "Atlanta Fed GDPNow &middot; ", gn$quarter, "</span>",
+            "<span style='color:", gn_col, ";font-size:20px;font-weight:800;'>",
+            sprintf("%+.1f", gn$value), "%</span>",
+            "<span style='color:#6b7585;font-size:11px;'>",
+            sprintf("model %+.1fpp vs nowcast", pt - gn$value),
+            if (!is.na(gn$updated)) {
+              paste0(" &middot; updated ", format(gn$updated, "%b %d"))
+            } else {
+              ""
+            },
+            "</span></div>"
+          )
+        } else {
+          ""
+        }
         td <- gf$top_driver
         driver_note <- if (!is.null(td)) {
           paste0(" &nbsp;\u2014&nbsp; ", td$contrib_sign, ": ", td$name)
@@ -3294,14 +3594,13 @@ render_growth_outlook_html <- function(outlook) {
           "<span style='color:",
           col,
           ";font-size:30px;font-weight:800;'>",
-          arrow_sym,
-          " ",
           sprintf("%+.1f", pt),
           "%</span>",
           "<span style='color:#6b7585;font-size:12px;'>",
           ci_note,
           "</span>",
           "</div>",
+          gdpnow_html,
           "<div style='color:#6b7585;font-size:10px;margin-top:4px;'>",
           if (gf$rec_drag < -0.2) {
             paste0(
@@ -3315,7 +3614,7 @@ render_growth_outlook_html <- function(outlook) {
           driver_note,
           "</div>",
           "<div style='color:#555;font-size:9px;margin-top:6px;'>",
-          "Point estimate from composite score + recession risk discount. CI widens with uncertainty. Not a professional forecast.",
+          method_note,
           "</div></div>"
         )
       } else {

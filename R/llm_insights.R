@@ -172,8 +172,17 @@ model_outputs_to_text <- function(outlook = NULL, forecasts = NULL) {
       sprintf("  Regime:                     %s\n", outlook$regime$label %||% "N/A"),
       sprintf("  Composite score:            %.1f / 10\n", outlook$score %||% NA),
       if (!is.null(gf)) sprintf(
-        "  Next-qtr GDP forecast:      %+.1f%% annualized (CI %.1f%% to %.1f%%; recession drag %+.1fpp)\n",
-        gf$point, gf$ci_lo, gf$ci_hi, gf$rec_drag) else ""
+        "  Next-qtr GDP forecast:      %+.1f%% annualized (%s %.1f%% to %.1f%%; recession drag %+.1fpp; %s)\n",
+        gf$point,
+        if (identical(gf$method, "fitted")) "80% band" else "rough band",
+        gf$ci_lo, gf$ci_hi, gf$rec_drag,
+        if (identical(gf$method, "fitted")) sprintf(
+          "regression on score, OOS RMSE %.1fpp", gf$mapping$rmse_oos)
+        else "uncalibrated anchors") else "",
+      if (!is.null(outlook$gdpnow)) sprintf(
+        "  Atlanta Fed GDPNow (%s):   %+.1f%% annualized (updated %s) — external nowcast, more accurate than the model for the current quarter\n",
+        outlook$gdpnow$quarter, outlook$gdpnow$value,
+        format(outlook$gdpnow$updated, "%Y-%m-%d")) else ""
     )
     comps <- outlook$components
     if (length(comps)) {
