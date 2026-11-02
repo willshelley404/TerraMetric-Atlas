@@ -1,0 +1,849 @@
+---
+title: "Recession Probability Model"
+subtitle: "Sign-constrained Ridge GLM · data, math and validation"
+format:
+  html:
+    theme:
+      light: cosmo
+      dark:  darkly
+    toc: true
+    toc-depth: 3
+    toc-location: left
+    number-sections: false
+    page-layout: full
+    code-tools: true
+    code-fold: true
+    code-overflow: wrap
+    smooth-scroll: true
+    embed-resources: true
+    self-contained-math: true
+    fig-responsive: true
+    fig-align: center
+    fig-width: 11
+    fig-height: 5
+    grid:
+      body-width: 1180px
+      sidebar-width: 260px
+execute:
+  echo: true
+  warning: false
+  message: false
+  freeze: false
+---
+
+<!--
+PURPOSE   Explains the 12-month recession-probability model used by the
+          TerraMetric Atlas growth-outlook card: the data it reads, the maths
+          of each step, how it is validated, and where it can mislead.
+          The model code lives in R/synopsis_tier3.R (section "RECESSION
+          MODEL"); this document does not re-implement it, it reads a
+          snapshot produced by running that code.
+PARAMS    snapshot_path  path to the snapshot RDS (default below).
+BUILD     1. From the repo root (needs FRED_API_KEY, see .Renviron.example):
+               Rscript docs/build_recession_snapshot.R      (~90 s)
+          2. quarto render docs/recession_model.qmd
+DEPENDS   R: glmnet, zoo, lubridate, fredr (snapshot) and dplyr, tidyr,
+          ggplot2, scales, gt, htmltools, knitr (this document).
+          Quarto >= 1.4. No network needed at render time.
+-->
+
+```{r}
+#| label: params
+#| tags: [parameters]
+#| include: false
+snapshot_path <- "recession_model_snapshot.rds"
+```
+
+```{r}
+#| label: setup
+#| include: false
+suppressPackageStartupMessages({
+  library(dplyr); library(tidyr); library(ggplot2)
+  library(scales); library(gt); library(htmltools); library(lubridate)
+})
+
+# ── Brand palette ────────────────────────────────────────────────────────────
+NAVY <- "#1B2A4A"; ORANGE <- "#FC6600"; TEAL <- "#2EC4B6"
+GREY <- "#6c757d"; GREEN <- "#198754"; RED <- "#dc3545"; AMBER <- "#d97706"
+
+theme_atlas <- function(base_size = 12) {
+  theme_minimal(base_size = base_size, base_family = "sans") +
+    theme(
+      plot.title = element_text(color = NAVY, face = "bold"),
+      plot.subtitle = element_text(color = GREY),
+      axis.title = element_text(color = NAVY),
+      axis.text = element_text(color = NAVY),
+      axis.line.x = element_line(color = "#ced4da"),
+      panel.grid.minor = element_blank(),
+      panel.grid.major = element_line(color = "#e9ecef"),
+      strip.text = element_text(color = NAVY, face = "bold"),
+      legend.position = "bottom",
+      plot.background = element_rect(fill = "white", color = NA)
+    )
+}
+theme_set(theme_atlas())
+
+# ── Formatting helpers ───────────────────────────────────────────────────────
+fmt_pct <- function(x, d = 1) sprintf(paste0("%.", d, "f%%"), 100 * x)
+fmt_pp  <- function(x, d = 1) sprintf(paste0("%+.", d, " pp"), 100 * x)
+fmt_mon <- function(x) format(x, "%b %Y")
+
+# ── HTML helpers (return a string; call inside cat() in an `output: asis` chunk)
+kpi_card <- function(label, value, sub = "", color = NAVY) {
+  sprintf(
+    '<div style="flex:1 1 170px;border-left:5px solid %s;background:%s14;padding:.65rem .9rem;border-radius:4px;">
+       <div style="font-size:.72rem;letter-spacing:.04em;text-transform:uppercase;color:%s;">%s</div>
+       <div style="font-size:1.7rem;font-weight:700;color:%s;line-height:1.15;">%s</div>
+       <div style="font-size:.78rem;color:%s;">%s</div></div>',
+    color, color, GREY, label, color, value, GREY, sub
+  )
+}
+raw_html <- function(x) {
+  fence <- strrep("`", 3)
+  paste0("\n", fence, "{=html}\n", x, "\n", fence, "\n")
+}
+kpi_row <- function(...) {
+  raw_html(paste0('<div style="display:flex;flex-wrap:wrap;gap:12px;margin:1rem 0;">',
+                  paste0(c(...), collapse = ""), "</div>"))
+}
+callout <- function(kind, title, body) {
+  col <- c(inputs = TEAL, logic = NAVY, output = GREEN, warn = AMBER, note = GREY)[[kind]]
+  raw_html(sprintf(
+    '<div style="border-left:4px solid %s;background:%s1a;padding:.7rem 1rem;margin:1rem 0;border-radius:4px;">
+       <div style="font-weight:700;color:%s;margin-bottom:.2rem;">%s</div><div>%s</div></div>',
+    col, col, col, title, body
+  ))
+}
+formula_box <- function(text, caption = "") {
+  raw_html(sprintf(
+    '<div style="margin:1rem 0;"><pre style="background:#f1f3f5;color:%s;border:1px solid #dee2e6;border-radius:4px;padding:.8rem 1rem;overflow-x:auto;font-size:.82rem;">%s</pre>
+     <div style="font-size:.78rem;color:%s;margin-top:-.4rem;">%s</div></div>',
+    NAVY, text, GREY, caption
+  ))
+}
+gt_atlas <- function(g) {
+  g |>
+    tab_options(
+      table.font.size = px(13), data_row.padding = px(4),
+      column_labels.background.color = "#f1f3f5",
+      column_labels.font.weight = "bold",
+      table.width = pct(100)
+    )
+}
+
+# ── Snapshot ─────────────────────────────────────────────────────────────────
+snap   <- readRDS(snapshot_path)
+K      <- snap$consts
+P      <- K$predictors
+m      <- snap$live$model
+cur    <- snap$current
+bt     <- snap$live$backtest
+fc     <- cur$factor_contributions
+panel  <- snap$panel
+train  <- snap$train
+latest <- snap$latest
+jan_asof <- as.Date(format(latest, "%Y-01-01"))
+
+eta     <- m$intercept + sum(fc$contribution)
+cvfit   <- m$fit
+i1se    <- which(cvfit$lambda == cvfit$lambda.1se)
+imin    <- which(cvfit$lambda == cvfit$lambda.min)
+null_dev <- -2 * (m$base_rate * log(m$base_rate) + (1 - m$base_rate) * log(1 - m$base_rate))
+sum_abs_beta <- sum(abs(m$beta))
+p_max <- plogis(m$intercept + 3 * sum_abs_beta)
+
+# NBER recession spells for chart shading
+rle_r <- rle(panel$recession == 1)
+ends_i <- cumsum(rle_r$lengths); starts_i <- ends_i - rle_r$lengths + 1
+nber <- data.frame(xmin = panel$date[starts_i[rle_r$values]],
+                   xmax = panel$date[ends_i[rle_r$values]])
+shade_nber <- function(from = min(panel$date)) {
+  geom_rect(data = nber[nber$xmax >= from, ], inherit.aes = FALSE,
+            aes(xmin = xmin, xmax = xmax, ymin = -Inf, ymax = Inf),
+            fill = GREY, alpha = 0.18)
+}
+```
+
+# 1 — Summary
+
+```{r}
+#| echo: false
+#| output: asis
+tier_col <- c(Low = GREEN, "Low–Moderate" = AMBER, Moderate = AMBER, High = RED, Elevated = RED)[[cur$tier$label]]
+cat(kpi_row(
+  kpi_card("12-month recession probability", fmt_pct(snap$live$prob), paste("as of", fmt_mon(cur$month)), tier_col),
+  kpi_card("Tier", cur$tier$label, "5-tier scale, section 6.4", tier_col),
+  kpi_card("Training window", paste(m$n_train, "months"), paste(fmt_mon(min(train$date)), "–", fmt_mon(m$train_end)), NAVY),
+  kpi_card("Backtest skill vs climatology", sprintf("%.0f%%", 100 * bt$skill), sprintf("Brier %.3f vs %.3f", bt$brier, bt$brier_clim), TEAL),
+  kpi_card("Backtest AUC", sprintf("%.2f", bt$auc), sprintf("%d scored months, %s–", bt$n, format(bt$from, "%Y")), TEAL)
+))
+```
+
+The model answers one question: **what is the probability that the NBER will date at least one month of recession in the next 12 months?** The answer is a number between 0 and 1, recomputed daily from public FRED data.
+
+- It is a **logistic regression** on nine macro indicators (yield curve, labor, credit, sentiment, policy stance).
+- The coefficients are fitted by **Ridge regularisation** (shrinks them toward zero) and **sign-constrained** (each one may only push risk in the direction macro theory expects).
+- It is **refit every January** on the latest 360 months (30 years) whose outcome is already known.
+- It is validated with a **walk-forward backtest** from 1985 that repeats the same January refit using only information available at the time.
+
+```{mermaid}
+flowchart LR
+  A["FRED<br/>13 monthly series"] --> B["Monthly panel<br/>9 predictors + NBER label"]
+  B --> C["Training rows<br/>latest 360 labelled months,<br/>12-month embargo"]
+  C --> D["Robust scaler<br/>median / MAD, clamp ±3"]
+  D --> E["Ridge logit<br/>glmnet, sign-constrained,<br/>λ from 5-fold CV"]
+  E --> F["p = σ(β₀ + Σ βⱼ zⱼ)"]
+  B --> F
+  F --> G["Growth-outlook card,<br/>GDP drag, LLM context"]
+```
+
+# 2 — Data
+
+## 2.1 Source series
+
+All inputs come from the St. Louis Fed's FRED API (`fredr`), pulled at monthly frequency from January 1959. FRED's monthly conversion of daily and weekly series is a **simple average** over the month. The app re-fetches once a day, because FRED adds a month at a time and revises recent values.
+
+```{r}
+#| label: tbl-series
+src <- data.frame(
+  id = K$series,
+  description = c(
+    "NBER recession indicator (1 = month between a peak and its trough)",
+    "10-year minus 2-year Treasury constant-maturity spread (daily)",
+    "10-year Treasury yield (daily); backup for the spread",
+    "2-year Treasury yield (daily); backup for the spread",
+    "Unemployment rate, U-3 (SA)",
+    "Total unemployed + marginally attached + part-time for economic reasons, U-6 (SA)",
+    "Total nonfarm payrolls, thousands (SA)",
+    "Effective federal funds rate (monthly average)",
+    "CPI-U, all items (SA)",
+    "labor-force participation rate, ages 25–54 (SA)",
+    "University of Michigan consumer sentiment index (monthly from 1978, quarterly before)",
+    "Moody's Baa corporate yield minus the 10-year Treasury yield",
+    "Initial jobless claims (weekly, SA)"
+  ),
+  feeds = c(
+    "target label", "yield_spread", "yield_spread (backup)", "yield_spread (backup)",
+    "u_rise, gap_rise", "gap_rise", "pay_3m", "real_rate", "real_rate",
+    "prime_lfpr", "sent_chg12", "baa_spread", "claims_rise"
+  ),
+  stringsAsFactors = FALSE
+)
+src |>
+  left_join(snap$series_meta, by = "id") |>
+  transmute(
+    Series = id, Description = description, `Feeds` = feeds,
+    `First obs` = fmt_mon(first), `Last obs` = fmt_mon(last),
+    Observations = n_obs, `Gap-filled` = n_filled
+  ) |>
+  gt() |> gt_atlas() |>
+  cols_align("right", columns = c(Observations, `Gap-filled`)) |>
+  tab_style(style = cell_text(font = "monospace", weight = "bold"), locations = cells_body(Series))
+```
+
+## 2.2 Cleaning and the monthly panel
+
+### Inputs
+
+The thirteen monthly series above, each on its own native start date.
+
+### How it is applied
+
+1. **Common calendar.** Every series is matched onto the contiguous monthly grid of `USREC`. A lag is always a *calendar* lag (`t − 12 months`), never a row offset, so a missing month cannot silently shift a feature.
+2. **Single-month gap filling.** An `NA` is filled only if **both** neighbouring months are present. For a strictly positive series the fill is the geometric mean, otherwise the arithmetic mean:
+
+$$
+\hat v_t \;=\; \begin{cases}\sqrt{v_{t-1}\,v_{t+1}} & \text{if } v>0 \text{ throughout}\\[2pt] \tfrac12\,(v_{t-1}+v_{t+1}) & \text{otherwise.}\end{cases}
+$$
+
+   Longer gaps stay missing. `USREC`, `T10Y2Y`, `DGS10`, `DGS2` and `BAA10YM` are never filled (an indicator or a rate is not interpolated).
+3. **Completeness rule.** A month is usable (`complete`) only when all nine predictors exist. One exception: `gap_rise` (needs U-6, which starts in 1994) may be missing *before its first observation*, where it is scored as the training median ($z=0$). After 1994 a missing value blocks the month.
+
+### What it produces
+
+A table of `r nrow(panel)` monthly rows (`r fmt_mon(min(panel$date))` – `r fmt_mon(max(panel$date))`) of which `r sum(panel$complete)` are `complete`, the first being `r fmt_mon(min(panel$date[panel$complete]))`.
+
+```{r}
+#| label: fig-availability
+#| fig-cap: "Coverage of each source series. The model's usable history starts where the last predictor arrives; the training window sits well inside it."
+av <- snap$series_meta |>
+  mutate(id = factor(id, levels = rev(id)))
+ggplot(av, aes(y = id)) +
+  geom_segment(aes(x = first, xend = last, yend = id), color = TEAL, linewidth = 4) +
+  geom_vline(xintercept = min(train$date), linetype = 2, color = ORANGE) +
+  annotate("text", x = min(train$date), y = 0.4, label = "  current training window starts",
+           hjust = 0, color = ORANGE, size = 3.5) +
+  labs(x = NULL, y = NULL)
+```
+
+```{r}
+#| echo: false
+#| output: asis
+cat(callout("note", "Pre-1978 sentiment is sparse",
+  "UMCSENT is only monthly from 1978; before that it is quarterly, so earlier panel rows are complete only in quarter-end months. This matters for the first walk-forward fits (1985–1990), which train on a short, sparse history, but not for the current window (1995–)."))
+```
+
+## 2.3 The nine predictors
+
+Each predictor is a transformation of the series above chosen to carry a *leading* signal rather than a level that merely tracks the cycle. Notation: $U$ unemployment (U-3), $G=\text{U6}-\text{U3}$, $\min_{12}(x)_t=\min(x_{t-11},\dots,x_t)$ the trailing 12-month low (current month included).
+
+```{r}
+#| label: tbl-predictors
+pred_tbl <- data.frame(
+  predictor = P,
+  definition = c(
+    "T10Y2Yₜ  (backup: DGS10 − DGS2)",
+    "Uₜ − min₁₂(U)ₜ",
+    "Gₜ − min₁₂(G)ₜ",
+    "mean of the last 3 monthly changes in PAYEMS",
+    "FEDFUNDSₜ − 100·(CPIₜ / CPIₜ₋₁₂ − 1)",
+    "LNS11300060ₜ (level)",
+    "UMCSENTₜ − UMCSENTₜ₋₁₂",
+    "BAA10YMₜ",
+    "100·(ICSAₜ / min₁₂(ICSA)ₜ − 1)"
+  ),
+  unit = c("pp", "pp", "pp", "000 jobs / mo", "pp", "%", "index pts", "pp", "%"),
+  why = c(
+    "Inversion has preceded every post-war recession; a steeper curve means easier expected policy.",
+    "How far unemployment has risen off its 12-month low (a Sahm-rule style trigger, on the raw monthly rate rather than a 3-month average).",
+    "Involuntary part-time and marginally attached workers rise before headline unemployment does.",
+    "Hiring momentum; smooths single-month payroll noise.",
+    "Ex-post real policy rate: tight policy is a headwind with a lag.",
+    "Slack in the core working-age population that the unemployment rate hides.",
+    "Falling household confidence leads spending.",
+    "Credit stress: investors demand more to hold corporate risk.",
+    "Layoffs picking up from a cyclical low."
+  ),
+  sign = K$sign[P],
+  stringsAsFactors = FALSE
+)
+first_av <- vapply(P, function(v) fmt_mon(min(panel$date[!is.na(panel[[v]])])), "")
+pred_tbl |>
+  mutate(
+    `Expected sign` = ifelse(sign > 0, "+ (higher → more risk)", "− (higher → less risk)"),
+    `First value` = first_av[predictor]
+  ) |>
+  transmute(Predictor = predictor, Definition = definition, Unit = unit,
+            `Expected sign`, `First value`, Rationale = why) |>
+  gt() |> gt_atlas() |>
+  tab_style(cell_text(font = "monospace", weight = "bold"), cells_body(Predictor))
+```
+
+```{r}
+#| echo: false
+#| output: asis
+cat(callout("warn", "Definitions worth knowing",
+  paste0("<b>real_rate</b> uses trailing CPI inflation, not expected inflation, so it is an ex-post measure. ",
+         "<b>u_rise</b> is called the Sahm rule in the app, but the classical Sahm rule uses the 3-month average of unemployment; this model uses the raw monthly rate, which is noisier. ",
+         "<b>claims_rise</b> and the rate series are averaged to monthly from weekly or daily data.")))
+```
+
+# 3 — Target and training window
+
+### Inputs
+
+The `USREC` series and the nine predictors.
+
+### How it is applied
+
+**Target.** For month $t$, with $R_s=1$ if month $s$ lies in an NBER recession:
+
+$$
+y_t \;=\; \mathbf 1\!\Big[\,\exists\,k\in\{1,\dots,12\}:\; R_{t+k}=1\Big].
+$$
+
+So $y_t=1$ means "a recession month occurs somewhere in the next 12 months", and **a month already in recession can still score 0** if the recession ends within the year. $y_t$ is undefined (`NA`) when fewer than six future months are observed.
+
+**Training rows.** A model fitted "as of" date $a$ uses only rows that are (i) `complete`, (ii) have a defined $y_t$, and (iii) satisfy $t\le a-12$ months — the **12-month embargo**, because $y_t$ is only fully known 12 months later. Of those it keeps the **latest 360**.
+
+**Refit schedule.** The live model is fitted as of **January 1 of the latest scored year**. The walk-forward backtest uses the identical rule for every year.
+
+### What it produces
+
+For the current model (as of `r fmt_mon(jan_asof)`): `r nrow(train)` training rows from `r fmt_mon(min(train$date))` to `r fmt_mon(max(train$date))`, of which `r sum(train$rec_next12)` have $y=1$ — a **training base rate of `r fmt_pct(m$base_rate)`**.
+
+```{r}
+#| label: fig-window
+#| fig-height: 2.2
+#| fig-cap: "Timeline of the live model. Labels in the embargo are not yet resolved, so the model never trains on the most recent 12 months; it scores every month of the current year."
+a <- jan_asof
+seg <- data.frame(
+  part = factor(c("Earlier history (not used)", "Training window (360 labelled months)",
+                  "Embargo (labels unresolved)", "Scored by this model"),
+                levels = c("Earlier history (not used)", "Training window (360 labelled months)",
+                           "Embargo (labels unresolved)", "Scored by this model")),
+  xmin = c(min(panel$date[panel$complete]), min(train$date), m$train_end %m+% months(1), a),
+  xmax = c(min(train$date) %m-% months(1), m$train_end, a %m-% months(1), latest)
+)
+ggplot(seg) +
+  geom_rect(aes(xmin = xmin, xmax = xmax, ymin = 0, ymax = 1, fill = part), color = "white") +
+  scale_fill_manual(values = c("#ced4da", NAVY, AMBER, ORANGE), name = NULL) +
+  scale_x_date(date_breaks = "5 years", date_labels = "%Y") +
+  scale_y_continuous(NULL, breaks = NULL) +
+  labs(x = NULL) + coord_cartesian(ylim = c(0, 1)) +
+  theme(panel.grid.major.y = element_blank())
+```
+
+```{r}
+#| label: fig-target
+#| fig-cap: "NBER recession months (grey) and the target y: 1 in the 12 months before and during each recession, 0 otherwise."
+tg <- panel[!is.na(panel$rec_next12), ]
+ggplot(tg, aes(date, rec_next12)) +
+  shade_nber() +
+  geom_area(fill = ORANGE, alpha = 0.55) +
+  labs(x = NULL, y = "y = recession in next 12 months")
+```
+
+```{r}
+#| echo: false
+#| output: asis
+cat(callout("warn", "The most recent labels are right-censored",
+  "FRED's USREC is 0 until the NBER announces a peak, and that announcement typically lags by months and sometimes by more than a year. A recession that began recently would still read 0. The 12-month embargo protects the <i>training</i> set against most of this, but the final months of the backtest (where only 6–11 future months are observed) can count a pending recession as a 0."))
+```
+
+# 4 — Preprocessing: the robust scaler
+
+### Inputs
+
+The nine predictors for the training rows only.
+
+### How it is applied
+
+Each predictor has a center and scale estimated **on the training rows**, then every row (training and scoring) is transformed:
+
+$$
+z_{tj} \;=\; \operatorname{clamp}_{[-3,\,3]}\!\left(\frac{x_{tj}-\operatorname{med}_j}{\operatorname{MAD}_j}\right),
+\qquad
+\operatorname{MAD}_j = 1.4826\cdot\operatorname{median}\big|x_{ij}-\operatorname{med}_j\big| .
+$$
+
+- **Median/MAD instead of mean/SD**, so a few extreme months (2008, 2020) do not stretch the scale. The 1.4826 factor makes MAD comparable to a standard deviation for a normal variable.
+- **Clamping at ±3** stops any single extreme reading from dominating the score.
+- A missing value becomes $z=0$ (the training median): neutral.
+- The scaler is built **only from training rows**, so a scoring month never influences its own scale (no look-ahead).
+
+### What it produces
+
+The center and scale below and today's standardised readings. A $z$ of 1 means "one robust standard deviation above the 30-year median".
+
+```{r}
+#| label: tbl-scaler
+data.frame(
+  Predictor = P,
+  Median = m$scaler$center[P], MAD = m$scaler$scale[P],
+  Raw = fc$raw_value[match(unname(K$labels[P]), fc$name)],
+  z = fc$z_score[match(unname(K$labels[P]), fc$name)]
+) |>
+  gt() |> gt_atlas() |>
+  fmt_number(c(Median, MAD, Raw, z), decimals = 2) |>
+  tab_spanner("Training window", c(Median, MAD)) |>
+  tab_spanner(paste("Latest month,", fmt_mon(cur$month)), c(Raw, z)) |>
+  tab_style(cell_text(font = "monospace", weight = "bold"), cells_body(Predictor))
+```
+
+# 5 — Estimation: sign-constrained Ridge logistic regression
+
+### Inputs
+
+The scaled matrix $Z\in\mathbb R^{360\times 9}$ and the labels $y\in\{0,1\}^{360}$.
+
+### How it is applied
+
+**Model.** The log-odds ("logit") is linear in the standardised predictors:
+
+$$
+\eta_t=\beta_0+\sum_{j=1}^{9}\beta_j z_{tj},\qquad
+\Pr(y_t=1\mid z_t)=\sigma(\eta_t)=\frac{1}{1+e^{-\eta_t}} .
+$$
+
+**Estimation.** `glmnet` with $\alpha=0$ (pure Ridge) minimises the penalised negative log-likelihood, subject to box constraints on every slope:
+
+$$
+\min_{\beta_0,\boldsymbol\beta}\;
+-\frac1N\sum_{i=1}^{N}\Big[y_i\,\eta_i-\log\!\big(1+e^{\eta_i}\big)\Big]
+\;+\;\frac{\lambda}{2}\sum_{j=1}^{9}\tilde\beta_j^{\,2}
+\qquad\text{s.t.}\qquad
+\ell_j\le\beta_j\le u_j .
+$$
+
+- $\tilde\beta_j=\beta_j\,\operatorname{sd}(z_j)$ is the coefficient on a unit-variance column: `glmnet` standardises internally (its default), so the penalty treats every predictor equally. The reported $\beta_j$ are on the $z$ scale.
+- The **intercept is not penalised**.
+- **Ridge** shrinks all coefficients toward zero smoothly and, unlike Lasso, keeps correlated predictors (yield spread, credit spread, claims) together instead of picking one. Equivalent view: a Gaussian prior on each standardised slope with standard deviation $1/\sqrt{N\lambda}$ — here $\approx$ `r sprintf("%.2f", 1 / sqrt(m$n_train * cvfit$lambda.1se))`.
+- **Sign constraints.** Each predictor has a theory-based expected sign $s_j$ (table in section 2.3). Positive: $[\ell_j,u_j]=[0,\infty)$; negative: $(-\infty,0]$. A coefficient is allowed to be exactly 0 but never to flip sign. This removes late-cycle artefacts such as "tighter policy → *less* risk" that an unconstrained fit finds in some windows.
+
+**Choosing the penalty $\lambda$.** `cv.glmnet` evaluates a path of `r length(cvfit$lambda)` values of $\lambda$ (here `r sprintf("%.3f", min(cvfit$lambda))` to `r sprintf("%.0f", max(cvfit$lambda))`) with **5-fold cross-validation** scored by binomial deviance, $D=-2\,\overline{\,y\log\hat p+(1-y)\log(1-\hat p)\,}$:
+
+$$
+\lambda_{\min}=\arg\min_\lambda \overline{D}(\lambda),\qquad
+\lambda_{1\mathrm{se}}=\max\Big\{\lambda:\ \overline{D}(\lambda)\le \overline{D}(\lambda_{\min})+\operatorname{SE}\big(\overline D(\lambda_{\min})\big)\Big\}.
+$$
+
+The model uses **$\lambda_{1\mathrm{se}}$**: the most heavily penalised model that is statistically indistinguishable from the best. It deliberately trades a little in-sample fit for stability. The folds are **fixed and class-stratified** (seed `20260101`) so that identical data always give an identical $\lambda$; the default random folds moved $\lambda_{1\mathrm{se}}$ enough to swing the headline probability between restarts. Contiguous time-block folds were tried and rejected: with rare recessions a block can leave a training split with no positives.
+
+### What it produces
+
+The fitted intercept and nine slopes, and the chosen penalty.
+
+```{r}
+#| label: fig-cv
+#| fig-cap: "Left: 5-fold CV deviance across the penalty path (dashed lines: λ_min and the chosen λ_1se; the dotted line is the deviance of a constant-base-rate model). Right: coefficient paths; every slope is held on its theory side of zero."
+cvd <- data.frame(loglam = log(cvfit$lambda), cvm = cvfit$cvm, lo = cvfit$cvm - cvfit$cvsd, hi = cvfit$cvm + cvfit$cvsd)
+p1 <- ggplot(cvd, aes(loglam, cvm)) +
+  geom_ribbon(aes(ymin = lo, ymax = hi), fill = TEAL, alpha = 0.25) +
+  geom_line(color = NAVY, linewidth = 1) +
+  geom_hline(yintercept = null_dev, linetype = 3, color = GREY) +
+  geom_vline(xintercept = log(c(cvfit$lambda.min, cvfit$lambda.1se)), linetype = 2, color = ORANGE) +
+  annotate("text", x = log(cvfit$lambda.1se), y = max(cvd$cvm), label = " λ_1se", hjust = 0, color = ORANGE) +
+  labs(x = "log λ", y = "CV binomial deviance")
+bm <- as.matrix(cvfit$glmnet.fit$beta)
+path <- data.frame(loglam = rep(log(cvfit$glmnet.fit$lambda), each = nrow(bm)),
+                   term = rep(rownames(bm), times = ncol(bm)), beta = as.vector(bm))
+p2 <- ggplot(path, aes(loglam, beta, color = term)) +
+  geom_line(linewidth = 0.8) +
+  geom_vline(xintercept = log(cvfit$lambda.1se), linetype = 2, color = ORANGE) +
+  scale_x_continuous(limits = c(log(cvfit$lambda.min) - 0.2, log(cvfit$lambda.1se) + 3)) +
+  labs(x = "log λ", y = "β (on the z scale)", color = NULL) +
+  guides(color = guide_legend(nrow = 3))
+if (requireNamespace("patchwork", quietly = TRUE)) {
+  patchwork::wrap_plots(p1, p2, nrow = 1)
+} else { print(p1); print(p2) }
+```
+
+```{r}
+#| label: tbl-betas
+bt_tbl <- data.frame(
+  Predictor = P, Label = unname(K$labels[P]),
+  Sign = ifelse(K$sign[P] > 0, "+", "−"),
+  beta = m$beta[P]
+) |> mutate(`Odds ratio per +1 z` = exp(beta),
+            Status = ifelse(beta == 0, "constraint binding / shrunk to 0", "active"))
+bind_rows(
+  data.frame(Predictor = "(intercept)", Label = "Baseline log-odds", Sign = "", beta = m$intercept,
+             `Odds ratio per +1 z` = NA_real_, Status = "unpenalised", check.names = FALSE),
+  bt_tbl
+) |>
+  gt() |> gt_atlas() |>
+  fmt_number(c(beta, `Odds ratio per +1 z`), decimals = 3) |>
+  sub_missing(missing_text = "") |>
+  cols_label(beta = "β") |>
+  tab_style(cell_text(font = "monospace", weight = "bold"), cells_body(Predictor))
+```
+
+On the training window the cross-validated deviance at $\lambda_{1\mathrm{se}}$ is `r sprintf("%.3f", cvfit$cvm[i1se])` versus `r sprintf("%.3f", null_dev)` for a model that only knows the base rate — a **`r sprintf("%.0f%%", 100 * (1 - cvfit$cvm[i1se] / null_dev))` reduction**. The standard error of the minimum is `r sprintf("%.3f", cvfit$cvsd[imin])`. Note the chosen $\lambda$ is `r sprintf("%.1f", cvfit$lambda.1se / cvfit$lambda.min)`× the CV-minimising one.
+
+# 6 — Scoring and explaining the current reading
+
+## 6.1 The calculation
+
+### Inputs
+
+The latest month's nine raw values, the fitted $\beta$ and the training scaler.
+
+### How it is applied
+
+1. Standardise: $z_j=\operatorname{clamp}\big((x_j-\operatorname{med}_j)/\operatorname{MAD}_j\big)$.
+2. Each predictor's **log-odds contribution** is $c_j=\beta_j z_j$.
+3. Sum and squash: $\eta=\beta_0+\sum_j c_j$, $p=\sigma(\eta)$.
+
+### What it produces
+
+```{r}
+#| echo: false
+#| output: asis
+fcs <- fc[order(-abs(fc$contribution)), ]
+lines <- sprintf("%-46s beta %+6.3f  x  z %+6.2f  =  %+7.3f", fcs$name, fcs$beta, fcs$z_score, fcs$contribution)
+txt <- paste0(
+  paste(lines, collapse = "\n"),
+  sprintf("\n%s\n%-46s %29s %+7.3f", strrep("-", 88), "Sum of contributions", "", sum(fc$contribution)),
+  sprintf("\n%-46s %29s %+7.3f", "Intercept (beta0)", "", m$intercept),
+  sprintf("\n%-46s %29s %+7.3f", "Log-odds  eta", "", eta),
+  sprintf("\n%-46s %29s %7.1f%%", "p = 1 / (1 + exp(-eta))", "", 100 * plogis(eta))
+)
+cat(formula_box(txt, paste("Worked example for", fmt_mon(cur$month), "- the app displays", sprintf("%.1f%%", cur$prob))))
+```
+
+```{r}
+#| label: fig-contrib
+#| fig-cap: "β·z contribution of each predictor to today's log-odds. Bars to the right raise recession risk; bars to the left lower it. The intercept sets the baseline risk before any information."
+fc |>
+  mutate(name = factor(name, levels = rev(name[order(-abs(contribution))])),
+         dir = ifelse(contribution > 0, "raises risk", "lowers risk")) |>
+  ggplot(aes(contribution, name, fill = dir)) +
+  geom_col() + geom_vline(xintercept = 0, color = NAVY) +
+  scale_fill_manual(values = c("raises risk" = RED, "lowers risk" = GREEN), name = NULL) +
+  labs(x = "log-odds contribution (β × z)", y = NULL)
+```
+
+## 6.2 Reading a coefficient
+
+The slopes are on the standardised scale, so they are directly comparable: $e^{\beta_j}$ is the **multiplicative change in the odds** of a recession when predictor $j$ rises by one robust standard deviation, other things equal. Because of the logistic curve, the effect on the *probability* depends on where you start. At today's reading ($p=$ `r fmt_pct(plogis(eta))`):
+
+```{r}
+#| label: tbl-sens
+sens <- data.frame(
+  Predictor = P,
+  `z rises by 1` = plogis(eta + m$beta[P]) - plogis(eta),
+  `z falls by 1` = plogis(eta - m$beta[P]) - plogis(eta),
+  check.names = FALSE
+)
+sens |>
+  gt() |> gt_atlas() |>
+  fmt_percent(c(`z rises by 1`, `z falls by 1`), decimals = 1, force_sign = TRUE) |>
+  tab_spanner("Change in probability (percentage points of p)", c(`z rises by 1`, `z falls by 1`)) |>
+  tab_style(cell_text(font = "monospace", weight = "bold"), cells_body(Predictor))
+```
+
+## 6.3 What the model cannot say
+
+Because each $z$ is clamped to $\pm3$ and $\beta$ is shrunk, the output is bounded. With the current coefficients ($\sum_j|\beta_j|=$ `r sprintf("%.2f", sum_abs_beta)`) the highest probability the model can ever produce is `r fmt_pct(p_max)` and the lowest is `r fmt_pct(plogis(m$intercept - 3 * sum_abs_beta), 3)`. The model is therefore never "certain", which is appropriate for an indicator built from a handful of historical recessions.
+
+## 6.4 Tiers
+
+The app reports the probability in one of five labelled tiers (function `.classify_recession_tier`):
+
+| Probability | Tier | color |
+|---|---|---|
+| $<15\%$ | Low | green |
+| $15$–$30\%$ | Low–Moderate | amber |
+| $30$–$50\%$ | Moderate | amber |
+| $50$–$65\%$ | High | red-orange |
+| $\ge 65\%$ | Elevated | red |
+
+# 7 — Validation
+
+### Inputs
+
+The full panel (1976–), the same fitting code as the live model.
+
+### How it is applied
+
+**Walk-forward backtest.** For every year $Y$ from 1985, fit the model *as of 1 January $Y$* — using only labels that had resolved by then — and score each complete month of year $Y$. Each month's probability is therefore pseudo-out-of-sample: it never uses a label that was unknown at the time.
+
+**Metrics** (over months whose $y$ is defined; $\hat p$ is the backtest probability):
+
+$$
+\text{Brier}=\overline{(\hat p-y)^2},\qquad
+\text{Skill}=1-\frac{\text{Brier}}{\text{Brier}_{\text{clim}}},
+$$
+
+where $\text{Brier}_{\text{clim}}$ scores each month with its own training base rate. **AUC** is the probability that a randomly chosen pre-recession month ($y=1$) gets a higher $\hat p$ than a randomly chosen calm month ($y=0$), computed from ranks (Mann–Whitney). **Hit rate** is $\Pr(\hat p>0.5\mid y=1)$ and **false-alarm rate** $\Pr(\hat p>0.5\mid y=0)$.
+
+### What it produces
+
+```{r}
+#| echo: false
+#| output: asis
+cat(kpi_row(
+  kpi_card("Brier score", sprintf("%.3f", bt$brier), sprintf("climatology %.3f", bt$brier_clim), NAVY),
+  kpi_card("Skill vs climatology", sprintf("%.0f%%", 100 * bt$skill), "1 − Brier / Brier_clim", TEAL),
+  kpi_card("AUC", sprintf("%.3f", bt$auc), "ranking ability", TEAL),
+  kpi_card("Hit rate at 50%", fmt_pct(bt$hit_rate, 0), "months before/in recession flagged", AMBER),
+  kpi_card("False-alarm rate at 50%", fmt_pct(bt$false_alarm_rate), "calm months flagged", GREEN)
+))
+```
+
+```{r}
+#| label: fig-backtest
+#| fig-cap: "Walk-forward probability since 1985 (grey bands: NBER recessions). The dashed lines are the tier cut-offs at 15%, 30%, 50% and 65%."
+bs <- bt$series
+ggplot(bs, aes(date, prob)) +
+  shade_nber(min(bs$date)) +
+  geom_hline(yintercept = c(.15, .30, .50, .65), linetype = 2, color = "#adb5bd") +
+  geom_line(color = NAVY, linewidth = 0.9) +
+  geom_point(data = bs[nrow(bs), ], color = ORANGE, size = 3) +
+  scale_y_continuous(labels = percent, limits = c(0, 1)) +
+  labs(x = NULL, y = "P(recession in next 12 months)")
+```
+
+```{r}
+#| label: tbl-episodes
+bt$episodes |>
+  transmute(Recession = recession, `Peak in the 12 months before it began` = runup_peak,
+            `Peak while the y = 1 spell lasted` = spell_peak) |>
+  gt() |> gt_atlas() |>
+  fmt_percent(c(2, 3), decimals = 0)
+```
+
+```{r}
+#| label: tbl-calibration
+#| tbl-cap: "Calibration: within each probability band, how often a recession actually followed."
+d <- bs[!is.na(bs$rec_next12), ]
+d$band <- cut(d$prob, c(0, .15, .30, .50, .65, 1), include.lowest = TRUE,
+              labels = c("<15%", "15–30%", "30–50%", "50–65%", "≥65%"))
+calib <- d |>
+  group_by(Band = band) |>
+  summarise(Months = n(), `Mean predicted` = mean(prob), `Observed frequency` = mean(rec_next12), .groups = "drop")
+calib |>
+  gt() |> gt_atlas() |>
+  fmt_percent(c(`Mean predicted`, `Observed frequency`), decimals = 0)
+```
+
+```{r}
+#| echo: false
+#| output: asis
+cat(callout("output", "How to read this",
+  paste0("The model ranks well (AUC ", sprintf("%.2f", bt$auc), ") and is roughly calibrated: months it scores 50–65% were followed by a recession ",
+         fmt_pct(calib$`Observed frequency`[calib$Band == "50–65%"], 0), " of the time. ",
+         "It is <b>not</b> a sharp alarm. At a 50% threshold it flags only about ", fmt_pct(bt$hit_rate, 0),
+         " of pre-recession months, and its peak in the 12 months before the ",
+         paste(bt$episodes$recession[bt$episodes$runup_peak < 0.5], collapse = ", "),
+         " recessions began stayed below 50%. ",
+         "Read it as a risk gauge that rises early and gradually, not as a binary signal.")))
+cat(callout("warn", "How much weight the backtest can bear",
+  "Four recessions fall in the scored period, and adjacent months share 11 of 12 target months, so the effective sample is far smaller than the month count. Differences of a few thousandths in Brier score between model variants are not statistically meaningful. The inputs are final-vintage FRED data (revised payrolls, seasonal factors, CPI), and the predictor set, the sign constraints and the 30-year window were chosen after looking at this history, so the backtest is optimistic relative to true real-time performance."))
+```
+
+# 8 — Refit cadence: why January, and what the alternatives would say
+
+The model is refit once a year, in January. This section records the evidence behind keeping that schedule. Every variant uses the same data, predictors, scaler, constraints and CV rule; only *when* and *on what window* the model is fitted changes.
+
+```{r}
+#| label: tbl-cadence
+cm <- snap$cmp; lab <- snap$cmp_labels
+cad <- do.call(rbind, lapply(names(cm), function(k) {
+  d <- cm[[k]]; dd <- d[!is.na(d$y) & !is.na(d$prob), ]
+  n1 <- sum(dd$y == 1); n0 <- sum(dd$y == 0)
+  data.frame(
+    Option = k, Description = lab[[k]],
+    Now = d$prob[d$date == latest],
+    Brier = mean((dd$prob - dd$y)^2),
+    AUC = (sum(rank(dd$prob)[dd$y == 1]) - n1 * (n1 + 1) / 2) / (n1 * n0),
+    FA = mean(dd$prob[dd$y == 0] > 0.5)
+  )
+}))
+cad |>
+  gt() |> gt_atlas() |>
+  fmt_percent(c(Now, FA), decimals = 1) |>
+  fmt_number(c(Brier, AUC), decimals = 3) |>
+  cols_label(Now = paste("Probability,", fmt_mon(latest)), FA = "False alarms at 50%") |>
+  tab_style(cell_fill("#fff3e6"), cells_body(rows = Option == "A")) |>
+  tab_style(cell_text(weight = "bold"), cells_body(rows = Option == "A"))
+```
+
+```{r}
+#| echo: false
+#| output: asis
+jmp <- abs(snap$jumps$jump)
+lag_total <- length(seq(m$train_end, latest, by = "month")) - 1L
+cat(callout("logic", "Findings",
+  paste0(
+  "<ul style='margin:0;padding-left:1.1rem;'>",
+  "<li><b>The choice barely moves today's number.</b> Every rolling-window variant (A–C, F) puts the current probability between ",
+  fmt_pct(min(cad$Now[cad$Option %in% c("A","B","C","F")]), 0), " and ", fmt_pct(max(cad$Now[cad$Option %in% c("A","B","C","F")]), 0), ".</li>",
+  "<li><b>Refitting more often is not meaningfully better.</b> Monthly vs annual changes Brier by ", sprintf("%.4f", cad$Brier[cad$Option == "A"] - cad$Brier[cad$Option == "C"]), ", well inside the noise of four recessions.</li>",
+  "<li><b>An expanding window is worse</b> (D, E): 1960s–70s relationships dilute the model and double the yield-curve coefficient, raising false alarms.</li>",
+  "<li><b>Never refitting is worse still</b> (G): a model frozen in 1985 reads ", fmt_pct(cad$Now[cad$Option == "G"], 0), " today and has a ", fmt_pct(cad$FA[cad$Option == "G"], 0), " false-alarm rate.</li>",
+  "<li><b>The cost of the annual cadence is a step each January</b>: scoring the same January with the new rather than the old model moves the probability by a mean of ", sprintf("%.1f", 100 * mean(jmp)), " pp (maximum ", sprintf("%.1f", 100 * max(jmp)), " pp, in ", snap$jumps$year[which.max(jmp)], "; the last eight refits were all within ±", sprintf("%.1f", 100 * max(abs(tail(snap$jumps$jump, 8)))), " pp).</li>",
+  "<li>The live model is also stale between refits: its labels stop in ", fmt_mon(m$train_end), ", ", lag_total, " months before the month it scores. Twelve of those months are the embargo that any schedule has; the other ", lag_total - 12, " are the cost of waiting for January.</li></ul>")))
+```
+
+```{r}
+#| label: fig-betapath
+#| fig-cap: "Coefficient on each predictor in every January model since 1985. Signs and rough sizes are stable, but the slopes drift: in recent Januaries baa_spread has risen, claims_rise has fallen and the yield-curve slope has weakened (about −1.2 to −0.6 over the last two refits). That drift is the source of the January step."
+snap$beta_path |>
+  filter(term != "intercept") |>
+  ggplot(aes(year, beta)) +
+  geom_step(color = NAVY, linewidth = 0.9) +
+  geom_hline(yintercept = 0, color = GREY, linewidth = 0.3) +
+  facet_wrap(~term, scales = "free_y", nrow = 3) +
+  labs(x = "Fit year (as of 1 January)", y = "β")
+```
+
+# 9 — How the output is used downstream
+
+- **Growth-outlook card.** Shows the probability, tier and the nine $\beta_jz_j$ contributions (the bar chart in section 6.1), plus a link to the published recession tracker, which uses the same method.
+- **GDP forecast.** A regression maps a separate composite macro score to next-quarter real GDP growth. The recession probability (using the backtest's out-of-sample series, so there is no look-ahead) is added to that regression **only if** its coefficient is negative and significant ($t<-1.96$); if so, $\text{GDP}=a+b\cdot\text{score}+c\cdot p_{\text{rec}}$ and the drag is shown on the card. Otherwise it plays no part in the forecast.
+- **LLM context.** The probability, tier and top drivers are passed to the LLM insight prompts (`R/llm_insights.R`).
+- **Caching.** Fetch, fit and backtest run together in `train_recession_glm()`; the result is cached in memory for one day.
+
+# 10 — Limitations and risks
+
+```{r}
+#| echo: false
+#| output: asis
+cat(callout("warn", "Statistical",
+  paste0(
+  "<ul style='margin:0;padding-left:1.1rem;'>",
+  "<li><b>Few events.</b> A handful of recessions (four since 1985) underlie every estimate. Coefficients and backtest metrics carry wide uncertainty that the app does not display; the probability is a point estimate with no interval.</li>",
+  "<li><b>Overlapping labels.</b> Adjacent months share 11 of their 12 target months, so observations are heavily autocorrelated. The stratified random CV folds ignore this and are optimistic about out-of-sample error, which may lead the chosen penalty to be too weak.</li>",
+  "<li><b>Selection after the fact.</b> The predictor set, sign constraints and window length were chosen with knowledge of the history they are then tested on.</li>",
+  "<li><b>Constraints can hide a missing signal.</b> Prime-age LFPR is currently held at exactly 0 and ", names(which.min(abs(m$beta[m$beta != 0])))[1], " is close to it; with the sign constraint a predictor whose historical relationship has reversed simply drops out rather than flagging the change.</li></ul>")))
+cat(callout("warn", "Data",
+  paste0(
+  "<ul style='margin:0;padding-left:1.1rem;'>",
+  "<li><b>Final vintages.</b> Payrolls, unemployment, CPI and sentiment are revised after release; the backtest uses today's values, not what a forecaster saw.</li>",
+  "<li><b>NBER dating lag.</b> The label for recent months is unknown and appears as 0 until the NBER dates a peak (section 3).</li>",
+  "<li><b>Publication calendar.</b> Daily yields and weekly claims run a month ahead of the monthly macro series, so the latest scored month (", fmt_mon(latest), ") is the last month where every predictor exists; the newest yield and claims readings are not used until the monthly series catch up. A single missing month (for example during a government shutdown) is bridged by interpolation, longer gaps block scoring.</li>",
+  "<li><b>Regime change.</b> The model learns from 30 years of relationships; a recession with a new cause (a pandemic, a non-monetary shock) is detected only through the labor and credit indicators it moves.</li></ul>")))
+cat(callout("note", "Operational",
+  "<ul style='margin:0;padding-left:1.1rem;'><li>The annual refit means the live model lags new data by up to 12 months of labels (section 8).</li><li>Any failure in fetching or fitting returns no model (<code>train_recession_glm()</code> returns <code>NULL</code>); since the hand-tuned fallback was removed there is no substitute estimate.</li><li>The 360-month window and 12-month embargo are constants in <code>R/synopsis_tier3.R</code>; changing them changes both the live reading and the backtest. The recession tracker must be kept on the same settings.</li></ul>"))
+```
+
+# 11 — Code map and reproduction
+
+| Step | Function (`R/synopsis_tier3.R`) |
+|---|---|
+| Fetch the 13 series from 1959 | `.fetch_glm_series()` |
+| Single-month gap fill | `.fill_single_gaps()` |
+| Monthly panel, target and predictors | `build_glm_panel()` |
+| Select training rows (window + embargo) | `.glm_training_rows()` |
+| Median/MAD scaler and transform | `build_robust_scaler()`, `apply_robust_scaler()` |
+| Fixed, stratified CV folds | `.cv_folds()` |
+| Sign limits for glmnet | `.glm_sign_limits()` |
+| Fit (Ridge, constrained, λ₁ₛₑ) | `fit_recession_glm()` |
+| Score | `predict_recession_glm()` |
+| Walk-forward backtest and metrics | `backtest_recession_glm()` |
+| Fit + score latest + backtest, one call | `train_recession_glm()` |
+| Card payload (β·z, tier) | `.compute_recession_prob()`, `.classify_recession_tier()` |
+
+To regenerate this document with fresh data: run `Rscript docs/build_recession_snapshot.R`, then `quarto render docs/recession_model.qmd`. The snapshot was built `r format(snap$built_at, "%Y-%m-%d %H:%M")` and scores **`r fmt_mon(latest)`**.
+
+<details>
+<summary>Glossary</summary>
+
+**Base rate (climatology)**
+: Share of months in the training window with $y=1$. A model that always predicts this number is the "no-skill" benchmark.
+
+**Brier score**
+: Mean squared error of a probability forecast against the 0/1 outcome; lower is better, 0 is perfect.
+
+**Clamp**
+: Cap a value to a range; here $z$ is limited to $[-3,3]$.
+
+**Cross-validation (CV)**
+: Splitting the training data into folds, fitting on all but one and scoring on the one held out, to choose $\lambda$ without using the test data.
+
+**Deviance (binomial)**
+: $-2\times$ the average log-likelihood of the labels; the loss that logistic regression minimises.
+
+**Embargo**
+: The 12-month gap between the as-of date and the latest training row, so that no label overlaps the future.
+
+**λ (lambda)**
+: Strength of the Ridge penalty. Larger $\lambda$ means smaller, more stable coefficients.
+
+**λ₁ₛₑ ("one-standard-error rule")**
+: The largest $\lambda$ whose CV error is within one standard error of the best; favours the simpler, more shrunk model.
+
+**Log-odds (logit)**
+: $\log\frac{p}{1-p}$. The model is linear on this scale; $\sigma$ converts it back to a probability.
+
+**MAD**
+: Median absolute deviation, scaled by 1.4826; a robust analogue of the standard deviation.
+
+**NBER**
+: The National Bureau of Economic Research committee that dates US business-cycle peaks and troughs; the source of `USREC`.
+
+**Pseudo-out-of-sample**
+: Scored only with information available at the time, but using today's data vintages and today's design choices.
+
+**Ridge (α = 0)**
+: Regularisation that penalises the sum of squared coefficients.
+
+**Sign constraint**
+: A bound that forces a coefficient to be $\ge 0$ or $\le 0$, according to macro theory.
+
+**Walk-forward**
+: Re-fitting the model at each step through time and scoring only the period after the fit.
+
+</details>
