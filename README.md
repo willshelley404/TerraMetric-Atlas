@@ -6,7 +6,7 @@ real-time news, and free-tier LLM analysis into a single interactive platform.
 
 ---
 
-## ✨ Features
+## Features
 
 | Module | Data Sources | Description |
 |---|---|---|
