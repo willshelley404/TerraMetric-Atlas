@@ -182,14 +182,14 @@ cat(kpi_row(
 The model answers one question: **what is the probability that the NBER will date at least one month of recession in the next 12 months?** The answer is a number between 0 and 1, recomputed daily from public FRED data.
 
 - It is a **logistic regression** on nine macro indicators (yield curve, labor, credit, sentiment, policy stance).
-- The coefficients are fitted by **Ridge regularisation** (shrinks them toward zero) and **sign-constrained** (each one may only push risk in the direction macro theory expects).
+- The coefficients are fitted by **Ridge regularization** (shrinks them toward zero) and **sign-constrained** (each one may only push risk in the direction macro theory expects).
 - It is **refit every January** on the latest 360 months (30 years) whose outcome is already known.
 - It is validated with a **walk-forward backtest** from 1985 that repeats the same January refit using only information available at the time.
 
 ```{mermaid}
 flowchart LR
   A["FRED<br/>13 monthly series"] --> B["Monthly panel<br/>9 predictors + NBER label"]
-  B --> C["Training rows<br/>latest 360 labelled months,<br/>12-month embargo"]
+  B --> C["Training rows<br/>latest 360 labeled months,<br/>12-month embargo"]
   C --> D["Robust scaler<br/>median / MAD, clamp ±3"]
   D --> E["Ridge logit<br/>glmnet, sign-constrained,<br/>λ from 5-fold CV"]
   E --> F["p = σ(β₀ + Σ βⱼ zⱼ)"]
@@ -250,7 +250,7 @@ The thirteen monthly series above, each on its own native start date.
 ### How it is applied
 
 1. **Common calendar.** Every series is matched onto the contiguous monthly grid of `USREC`. A lag is always a *calendar* lag (`t − 12 months`), never a row offset, so a missing month cannot silently shift a feature.
-2. **Single-month gap filling.** An `NA` is filled only if **both** neighbouring months are present. For a strictly positive series the fill is the geometric mean, otherwise the arithmetic mean:
+2. **Single-month gap filling.** An `NA` is filled only if **both** neighboring months are present. For a strictly positive series the fill is the geometric mean, otherwise the arithmetic mean:
 
 $$
 \hat v_t \;=\; \begin{cases}\sqrt{v_{t-1}\,v_{t+1}} & \text{if } v>0 \text{ throughout}\\[2pt] \tfrac12\,(v_{t-1}+v_{t+1}) & \text{otherwise.}\end{cases}
@@ -265,14 +265,18 @@ A table of `r nrow(panel)` monthly rows (`r fmt_mon(min(panel$date))` – `r fmt
 
 ```{r}
 #| label: fig-availability
-#| fig-cap: "Coverage of each source series. The model's usable history starts where the last predictor arrives; the training window sits well inside it."
+#| fig-cap: "Coverage of each source series (teal bars). The dashed orange line marks the first month of the current 360-month training window. The model's usable history starts where the last predictor arrives; the training window sits well inside it."
 av <- snap$series_meta |>
   mutate(id = factor(id, levels = rev(id)))
+n_av <- nrow(av)
 ggplot(av, aes(y = id)) +
   geom_segment(aes(x = first, xend = last, yend = id), color = TEAL, linewidth = 4) +
   geom_vline(xintercept = min(train$date), linetype = 2, color = ORANGE) +
-  annotate("text", x = min(train$date), y = 0.4, label = "  current training window starts",
-           hjust = 0, color = ORANGE, size = 3.5) +
+  # label sits above the top row, in its own headroom, so it cannot collide with the axis
+  annotate("text", x = min(train$date), y = n_av + 0.95,
+           label = paste0("  Current training window starts ", fmt_mon(min(train$date))),
+           hjust = 0, color = ORANGE, size = 3.5, fontface = "bold") +
+  scale_y_discrete(expand = expansion(add = c(0.6, 1.4))) +
   labs(x = NULL, y = NULL)
 ```
 
@@ -286,6 +290,29 @@ cat(callout("note", "Pre-1978 sentiment is sparse",
 ## 2.3 The nine predictors
 
 Each predictor is a transformation of the series above chosen to carry a *leading* signal rather than a level that merely tracks the cycle. Notation: $U$ unemployment (U-3), $G=\text{U6}-\text{U3}$, $\min_{12}(x)_t=\min(x_{t-11},\dots,x_t)$ the trailing 12-month low (current month included).
+
+### Why these nine
+
+A recession is rarely a single event. It is usually a chain: money gets tighter, borrowing gets more expensive and riskier, firms slow hiring and then lay people off, and households, who account for roughly two-thirds of US spending, pull back, which pushes firms to cut more. The nine predictors are chosen so that every link in that chain has at least one gauge, and so that the gauges report at different points in the cycle: financial indicators tend to move early, labor-market indicators confirm that the slowdown is real, and sentiment sits in between. Together they give a broader and more timely read than any single series.
+
+All nine come from series published monthly or faster, which is why the model does not use GDP: it arrives quarterly, is released with a lag and is heavily revised, so by the time it signals trouble the recession is typically under way.
+
+**Monetary policy and market expectations** (`yield_spread`, `real_rate`)
+: The Federal Reserve's rate decisions are the main lever on the economy, and its effects arrive with a lag. The *yield spread* (10-year minus 2-year Treasury) summarizes what bond investors expect: when short rates exceed long rates (an inverted curve), the market is pricing in rate cuts because it expects weaker growth, and it has been among the most reliable early warnings, often 6–18 months ahead. The *real policy rate* (the fed funds rate minus inflation) measures how restrictive policy is once inflation is stripped out; a high real rate squeezes mortgages, business investment and corporate profits for a year or more after it is reached.
+
+**Credit conditions** (`baa_spread`)
+: Firms and households rely on borrowing to invest and spend. The *Baa spread* is the extra yield investors demand to hold investment-grade (but lower-rated) corporate bonds rather than Treasuries. It widens when lenders become fearful of defaults, so it flags the point where financing dries up for businesses, which turns a slowdown into layoffs. It also reacts quickly to financial stress, which makes it a useful early signal.
+
+**Labor market: slack and breadth** (`u_rise`, `gap_rise`, `prime_lfpr`)
+: Rising unemployment is the clearest sign a recession is happening, so the model looks at how much it has *risen* from its recent low (the same idea as the Sahm rule), not at its level. Because the headline rate can understate weakness, `gap_rise` adds the gap between the broad U-6 measure (which includes involuntary part-timers and discouraged workers) and the headline U-3 rate, and `prime_lfpr` tracks participation among workers aged 25–54, which is unaffected by retirement trends and shows when people leave the labor force because jobs are scarce.
+
+**Labor market: momentum and layoffs** (`pay_3m`, `claims_rise`)
+: Hiring slows before unemployment climbs. The three-month average of *payroll growth* shows whether employers are still adding jobs, and *initial jobless claims*, up from their 12-month low, are the earliest and highest-frequency read on layoffs. They tell the model whether the labor market is turning now, rather than whether it has already turned.
+
+**Household demand** (`sent_chg12`)
+: Consumer spending is the largest component of the economy. The *year-over-year change in consumer sentiment* captures whether households are growing more cautious about jobs, prices and their finances before that caution shows up in retail sales. Sentiment is noisy, so the model uses the change rather than the level and gives it a modest role next to the harder labor and credit data.
+
+Two design choices follow from this. Where possible, predictors measure a *change from a recent low* (unemployment, U-6 gap, claims, sentiment, payrolls) rather than a raw level, because a level can sit high or low for structural reasons for years, whereas a rise off a recent low says conditions are deteriorating now. The remaining four (yield spread, real rate, Baa spread and prime-age participation) are levels, but each is already measured relative to something, either another rate or the labor force, so it is comparable across decades. And the sign constraints in section 5 mean each predictor can only push risk in the direction economic theory predicts, so a gauge cannot "earn" weight by pointing the wrong way in one sample.
 
 ```{r}
 #| label: tbl-predictors
@@ -354,7 +381,7 @@ $$
 
 So $y_t=1$ means "a recession month occurs somewhere in the next 12 months", and **a month already in recession can still score 0** if the recession ends within the year. $y_t$ is undefined (`NA`) when fewer than six future months are observed.
 
-**Training rows.** A model fitted "as of" date $a$ uses only rows that are (i) `complete`, (ii) have a defined $y_t$, and (iii) satisfy $t\le a-12$ months — the **12-month embargo**, because $y_t$ is only fully known 12 months later. Of those it keeps the **latest 360**.
+**Training rows.** A model fitted "as of" date $a$ uses only rows that are (i) `complete`, (ii) have a defined $y_t$, and (iii) satisfy $t\le a-12$ months — the **12-month embargo**, a standard term for holding out the most recent rows whose labels are not yet settled. The embargo exists because $y_t$ is only fully known 12 months later. (It is not a test set: embargoed months are neither trained on nor used for tuning, they are just too recent to have a settled label. Out-of-sample testing is the walk-forward backtest in section 7.) Of those it keeps the **latest 360**.
 
 **Refit schedule.** The live model is fitted as of **January 1 of the latest scored year**. The walk-forward backtest uses the identical rule for every year.
 
@@ -368,9 +395,9 @@ For the current model (as of `r fmt_mon(jan_asof)`): `r nrow(train)` training ro
 #| fig-cap: "Timeline of the live model. Labels in the embargo are not yet resolved, so the model never trains on the most recent 12 months; it scores every month of the current year."
 a <- jan_asof
 seg <- data.frame(
-  part = factor(c("Earlier history (not used)", "Training window (360 labelled months)",
+  part = factor(c("Earlier history (not used)", "Training window (360 labeled months)",
                   "Embargo (labels unresolved)", "Scored by this model"),
-                levels = c("Earlier history (not used)", "Training window (360 labelled months)",
+                levels = c("Earlier history (not used)", "Training window (360 labeled months)",
                            "Embargo (labels unresolved)", "Scored by this model")),
   xmin = c(min(panel$date[panel$complete]), min(train$date), m$train_end %m+% months(1), a),
   xmax = c(min(train$date) %m-% months(1), m$train_end, a %m-% months(1), latest)
@@ -386,7 +413,7 @@ ggplot(seg) +
 
 ```{r}
 #| label: fig-target
-#| fig-cap: "NBER recession months (grey) and the target y: 1 in the 12 months before and during each recession, 0 otherwise."
+#| fig-cap: "NBER recession months (gray) and the target y: 1 in the 12 months before and during each recession, 0 otherwise."
 tg <- panel[!is.na(panel$rec_next12), ]
 ggplot(tg, aes(date, rec_next12)) +
   shade_nber() +
@@ -424,7 +451,7 @@ $$
 
 ### What it produces
 
-The center and scale below and today's standardised readings. A $z$ of 1 means "one robust standard deviation above the 30-year median".
+The center and scale below and today's standardized readings. A $z$ of 1 means "one robust standard deviation above the 30-year median".
 
 ```{r}
 #| label: tbl-scaler
@@ -449,14 +476,14 @@ The scaled matrix $Z\in\mathbb R^{360\times 9}$ and the labels $y\in\{0,1\}^{360
 
 ### How it is applied
 
-**Model.** The log-odds ("logit") is linear in the standardised predictors:
+**Model.** The log-odds ("logit") is linear in the standardized predictors:
 
 $$
 \eta_t=\beta_0+\sum_{j=1}^{9}\beta_j z_{tj},\qquad
 \Pr(y_t=1\mid z_t)=\sigma(\eta_t)=\frac{1}{1+e^{-\eta_t}} .
 $$
 
-**Estimation.** `glmnet` with $\alpha=0$ (pure Ridge) minimises the penalised negative log-likelihood, subject to box constraints on every slope:
+**Estimation.** `glmnet` with $\alpha=0$ (pure Ridge) minimizes the penalized negative log-likelihood, subject to box constraints on every slope:
 
 $$
 \min_{\beta_0,\boldsymbol\beta}\;
@@ -466,10 +493,10 @@ $$
 \ell_j\le\beta_j\le u_j .
 $$
 
-- $\tilde\beta_j=\beta_j\,\operatorname{sd}(z_j)$ is the coefficient on a unit-variance column: `glmnet` standardises internally (its default), so the penalty treats every predictor equally. The reported $\beta_j$ are on the $z$ scale.
-- The **intercept is not penalised**.
-- **Ridge** shrinks all coefficients toward zero smoothly and, unlike Lasso, keeps correlated predictors (yield spread, credit spread, claims) together instead of picking one. Equivalent view: a Gaussian prior on each standardised slope with standard deviation $1/\sqrt{N\lambda}$ — here $\approx$ `r sprintf("%.2f", 1 / sqrt(m$n_train * cvfit$lambda.1se))`.
-- **Sign constraints.** Each predictor has a theory-based expected sign $s_j$ (table in section 2.3). Positive: $[\ell_j,u_j]=[0,\infty)$; negative: $(-\infty,0]$. A coefficient is allowed to be exactly 0 but never to flip sign. This removes late-cycle artefacts such as "tighter policy → *less* risk" that an unconstrained fit finds in some windows.
+- $\tilde\beta_j=\beta_j\,\operatorname{sd}(z_j)$ is the coefficient on a unit-variance column: `glmnet` standardizes internally (its default), so the penalty treats every predictor equally. The reported $\beta_j$ are on the $z$ scale.
+- The **intercept is not penalized**.
+- **Ridge** shrinks all coefficients toward zero smoothly and, unlike Lasso, keeps correlated predictors (yield spread, credit spread, claims) together instead of picking one. Equivalent view: a Gaussian prior on each standardized slope with standard deviation $1/\sqrt{N\lambda}$ — here $\approx$ `r sprintf("%.2f", 1 / sqrt(m$n_train * cvfit$lambda.1se))`.
+- **Sign constraints.** Each predictor has a theory-based expected sign $s_j$ (table in section 2.3). Positive: $[\ell_j,u_j]=[0,\infty)$; negative: $(-\infty,0]$. A coefficient is allowed to be exactly 0 but never to flip sign. This removes late-cycle artifacts such as "tighter policy → *less* risk" that an unconstrained fit finds in some windows.
 
 **Choosing the penalty $\lambda$.** `cv.glmnet` evaluates a path of `r length(cvfit$lambda)` values of $\lambda$ (here `r sprintf("%.3f", min(cvfit$lambda))` to `r sprintf("%.0f", max(cvfit$lambda))`) with **5-fold cross-validation** scored by binomial deviance, $D=-2\,\overline{\,y\log\hat p+(1-y)\log(1-\hat p)\,}$:
 
@@ -478,7 +505,7 @@ $$
 \lambda_{1\mathrm{se}}=\max\Big\{\lambda:\ \overline{D}(\lambda)\le \overline{D}(\lambda_{\min})+\operatorname{SE}\big(\overline D(\lambda_{\min})\big)\Big\}.
 $$
 
-The model uses **$\lambda_{1\mathrm{se}}$**: the most heavily penalised model that is statistically indistinguishable from the best. It deliberately trades a little in-sample fit for stability. The folds are **fixed and class-stratified** (seed `20260101`) so that identical data always give an identical $\lambda$; the default random folds moved $\lambda_{1\mathrm{se}}$ enough to swing the headline probability between restarts. Contiguous time-block folds were tried and rejected: with rare recessions a block can leave a training split with no positives.
+The model uses **$\lambda_{1\mathrm{se}}$**: the most heavily penalized model that is statistically indistinguishable from the best. It deliberately trades a little in-sample fit for stability. The folds are **fixed and class-stratified** (seed `20260101`) so that identical data always give an identical $\lambda$; the default random folds moved $\lambda_{1\mathrm{se}}$ enough to swing the headline probability between restarts. Contiguous time-block folds were tried and rejected: with rare recessions a block can leave a training split with no positives.
 
 ### What it produces
 
@@ -519,7 +546,7 @@ bt_tbl <- data.frame(
             Status = ifelse(beta == 0, "constraint binding / shrunk to 0", "active"))
 bind_rows(
   data.frame(Predictor = "(intercept)", Label = "Baseline log-odds", Sign = "", beta = m$intercept,
-             `Odds ratio per +1 z` = NA_real_, Status = "unpenalised", check.names = FALSE),
+             `Odds ratio per +1 z` = NA_real_, Status = "unpenalized", check.names = FALSE),
   bt_tbl
 ) |>
   gt() |> gt_atlas() |>
@@ -529,7 +556,7 @@ bind_rows(
   tab_style(cell_text(font = "monospace", weight = "bold"), cells_body(Predictor))
 ```
 
-On the training window the cross-validated deviance at $\lambda_{1\mathrm{se}}$ is `r sprintf("%.3f", cvfit$cvm[i1se])` versus `r sprintf("%.3f", null_dev)` for a model that only knows the base rate — a **`r sprintf("%.0f%%", 100 * (1 - cvfit$cvm[i1se] / null_dev))` reduction**. The standard error of the minimum is `r sprintf("%.3f", cvfit$cvsd[imin])`. Note the chosen $\lambda$ is `r sprintf("%.1f", cvfit$lambda.1se / cvfit$lambda.min)`× the CV-minimising one.
+On the training window the cross-validated deviance at $\lambda_{1\mathrm{se}}$ is `r sprintf("%.3f", cvfit$cvm[i1se])` versus `r sprintf("%.3f", null_dev)` for a model that only knows the base rate — a **`r sprintf("%.0f%%", 100 * (1 - cvfit$cvm[i1se] / null_dev))` reduction**. The standard error of the minimum is `r sprintf("%.3f", cvfit$cvsd[imin])`. Note the chosen $\lambda$ is `r sprintf("%.1f", cvfit$lambda.1se / cvfit$lambda.min)`× the CV-minimizing one.
 
 # 6 — Scoring and explaining the current reading
 
@@ -541,7 +568,7 @@ The latest month's nine raw values, the fitted $\beta$ and the training scaler.
 
 ### How it is applied
 
-1. Standardise: $z_j=\operatorname{clamp}\big((x_j-\operatorname{med}_j)/\operatorname{MAD}_j\big)$.
+1. Standardize: $z_j=\operatorname{clamp}\big((x_j-\operatorname{med}_j)/\operatorname{MAD}_j\big)$.
 2. Each predictor's **log-odds contribution** is $c_j=\beta_j z_j$.
 3. Sum and squash: $\eta=\beta_0+\sum_j c_j$, $p=\sigma(\eta)$.
 
@@ -576,7 +603,7 @@ fc |>
 
 ## 6.2 Reading a coefficient
 
-The slopes are on the standardised scale, so they are directly comparable: $e^{\beta_j}$ is the **multiplicative change in the odds** of a recession when predictor $j$ rises by one robust standard deviation, other things equal. Because of the logistic curve, the effect on the *probability* depends on where you start. At today's reading ($p=$ `r fmt_pct(plogis(eta))`):
+The slopes are on the standardized scale, so they are directly comparable: $e^{\beta_j}$ is the **multiplicative change in the odds** of a recession when predictor $j$ rises by one robust standard deviation, other things equal. Because of the logistic curve, the effect on the *probability* depends on where you start. At today's reading ($p=$ `r fmt_pct(plogis(eta))`):
 
 ```{r}
 #| label: tbl-sens
@@ -599,7 +626,7 @@ Because each $z$ is clamped to $\pm3$ and $\beta$ is shrunk, the output is bound
 
 ## 6.4 Tiers
 
-The app reports the probability in one of five labelled tiers (function `.classify_recession_tier`):
+The app reports the probability in one of five labeled tiers (function `.classify_recession_tier`):
 
 | Probability | Tier | color |
 |---|---|---|
@@ -644,7 +671,7 @@ cat(kpi_row(
 
 ```{r}
 #| label: fig-backtest
-#| fig-cap: "Walk-forward probability since 1985 (grey bands: NBER recessions). The dashed lines are the tier cut-offs at 15%, 30%, 50% and 65%."
+#| fig-cap: "Walk-forward probability since 1985 (gray bands: NBER recessions). The dashed lines are the tier cut-offs at 15%, 30%, 50% and 65%."
 bs <- bt$series
 ggplot(bs, aes(date, prob)) +
   shade_nber(min(bs$date)) +
@@ -672,7 +699,7 @@ d$band <- cut(d$prob, c(0, .15, .30, .50, .65, 1), include.lowest = TRUE,
               labels = c("<15%", "15–30%", "30–50%", "50–65%", "≥65%"))
 calib <- d |>
   group_by(Band = band) |>
-  summarise(Months = n(), `Mean predicted` = mean(prob), `Observed frequency` = mean(rec_next12), .groups = "drop")
+  summarize(Months = n(), `Mean predicted` = mean(prob), `Observed frequency` = mean(rec_next12), .groups = "drop")
 calib |>
   gt() |> gt_atlas() |>
   fmt_percent(c(`Mean predicted`, `Observed frequency`), decimals = 0)
@@ -814,16 +841,16 @@ To regenerate this document with fresh data: run `Rscript docs/build_recession_s
 : Splitting the training data into folds, fitting on all but one and scoring on the one held out, to choose $\lambda$ without using the test data.
 
 **Deviance (binomial)**
-: $-2\times$ the average log-likelihood of the labels; the loss that logistic regression minimises.
+: $-2\times$ the average log-likelihood of the labels; the loss that logistic regression minimizes.
 
 **Embargo**
-: The 12-month gap between the as-of date and the latest training row, so that no label overlaps the future.
+: The 12 most recent months before the as-of date, excluded from training because their 12-month outcome has not yet resolved. A standard term in time-series machine learning and quantitative finance for keeping unsettled labels out of the training set. It is not a test set: embargoed months are neither trained on nor used for tuning.
 
 **λ (lambda)**
 : Strength of the Ridge penalty. Larger $\lambda$ means smaller, more stable coefficients.
 
 **λ₁ₛₑ ("one-standard-error rule")**
-: The largest $\lambda$ whose CV error is within one standard error of the best; favours the simpler, more shrunk model.
+: The largest $\lambda$ whose CV error is within one standard error of the best; favors the simpler, more shrunk model.
 
 **Log-odds (logit)**
 : $\log\frac{p}{1-p}$. The model is linear on this scale; $\sigma$ converts it back to a probability.
@@ -838,7 +865,7 @@ To regenerate this document with fresh data: run `Rscript docs/build_recession_s
 : Scored only with information available at the time, but using today's data vintages and today's design choices.
 
 **Ridge (α = 0)**
-: Regularisation that penalises the sum of squared coefficients.
+: Regularization that penalizes the sum of squared coefficients.
 
 **Sign constraint**
 : A bound that forces a coefficient to be $\ge 0$ or $\le 0$, according to macro theory.
