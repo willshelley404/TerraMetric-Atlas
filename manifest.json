@@ -1426,36 +1426,6 @@
         "Built": "R 4.6.0; ; 2026-06-02 03:17:06 UTC; windows"
       }
     },
-    "corpcor": {
-      "Source": "CRAN",
-      "Repository": "https://cran.rstudio.com",
-      "description": {
-        "Package": "corpcor",
-        "Version": "1.6.10",
-        "Date": "2021-09-16",
-        "Title": "Efficient Estimation of Covariance and (Partial) Correlation",
-        "Author": "Juliane Schafer, Rainer Opgen-Rhein, Verena Zuber, Miika Ahdesmaki, \n A. Pedro Duarte Silva, and Korbinian Strimmer.",
-        "Maintainer": "Korbinian Strimmer <strimmerlab@gmail.com>",
-        "Depends": "R (>= 3.0.2)",
-        "Imports": "stats",
-        "Suggests": "",
-        "Description": "Implements a James-Stein-type shrinkage estimator for \n  the covariance matrix, with separate shrinkage for variances and correlations.  \n  The details of the method are explained in Schafer and Strimmer (2005) \n  <DOI:10.2202/1544-6115.1175> and Opgen-Rhein and Strimmer (2007) \n  <DOI:10.2202/1544-6115.1252>.  The approach is both computationally as well\n  as statistically very efficient, it is applicable to \"small n, large p\" data, \n  and always returns a positive definite and well-conditioned covariance matrix.  \n  In addition to inferring the covariance matrix the package also provides \n  shrinkage estimators for partial correlations and partial variances.  \n  The inverse of the covariance and correlation matrix \n  can be efficiently computed, as well as any arbitrary power of the \n  shrinkage correlation matrix.  Furthermore, functions are available for fast \n  singular value decomposition, for computing the pseudoinverse, and for \n  checking the rank and positive definiteness of a matrix.",
-        "License": "GPL (>= 3)",
-        "URL": "https://strimmerlab.github.io/software/corpcor/",
-        "NeedsCompilation": "no",
-        "Packaged": "2021-09-16 14:05:52 UTC; strimmer",
-        "Repository": "CRAN",
-        "Date/Publication": "2021-09-16 15:30:08 UTC",
-        "Built": "R 4.6.1; ; 2026-08-19 11:48:23 UTC; windows",
-        "RemoteType": "standard",
-        "RemoteRef": "corpcor",
-        "RemotePkgRef": "corpcor",
-        "RemoteRepos": "https://cran.rstudio.com",
-        "RemoteReposName": "CRAN",
-        "RemotePkgPlatform": "x86_64-w64-mingw32",
-        "RemoteSha": "1.6.10"
-      }
-    },
     "cpp11": {
       "Source": "CRAN",
       "Repository": "https://cran.rstudio.com",
@@ -7468,6 +7438,9 @@
     }
   },
   "files": {
+    ".playwright-mcp/console-2026-11-01T17-35-36-263Z.log": {
+      "checksum": "0a8577156de007a35b5910d08f044a0c"
+    },
     ".Renviron.example": {
       "checksum": "5dcb5d4c3a8c87a75d0cd295236f58b6"
     },
@@ -7493,7 +7466,7 @@
       "checksum": "0fff42fc19c5ba3db39076dd97ba707e"
     },
     "global.R": {
-      "checksum": "4b4fd9195a60e70db63b0b757fcd18d1"
+      "checksum": "f8d734f6cdd0501adac10c63eeeca5e9"
     },
     "images/main_dash.png": {
       "checksum": "1cb4b944b86447c55ab80cffc7876dc5"
@@ -7511,49 +7484,46 @@
       "checksum": "0e954adf95909bdeb2581f41cab1d7aa"
     },
     "R/data_bls.R": {
-      "checksum": "07ad412ebe50ace8f78a4879566ae8bf"
+      "checksum": "38bc467acc9c8693e9ab914827216f97"
     },
     "R/data_census.R": {
-      "checksum": "14f36f478eb62f2bdca2421a2f9f87ef"
+      "checksum": "e503813606fd27722349cbe2a4f66a5c"
     },
     "R/data_fred.R": {
-      "checksum": "30ce9cbcd63b7df0530a34abeb2f1dbd"
+      "checksum": "0583ef7ca29d88958882013b192ee5f4"
     },
     "R/data_markets.R": {
-      "checksum": "ce7733e892873dae5e2fa18163ebdff5"
+      "checksum": "b48b4adf716d71e29b4bfa67b831cd27"
     },
     "R/data_news.R": {
       "checksum": "db77731de193cb91d5725a99422fdd92"
     },
     "R/forecasting.R": {
-      "checksum": "37c90a7d6d7e5da2ea05cd361c8569a0"
+      "checksum": "ee58eebf253f07d7bf62fb9f8cfc6af2"
     },
     "R/llm_insights.R": {
-      "checksum": "52827866fe17f4473e96e5317ffe5d5a"
+      "checksum": "95a5e55ff3f279cb14a91eb37491d1ca"
     },
     "R/synopsis_tier1.R": {
-      "checksum": "8e61e9b70a53efbf231af176ca584191"
+      "checksum": "c2f0474652fb6c07661b932d1200e172"
     },
     "R/synopsis_tier2.R": {
       "checksum": "a8feb2eaf4a310c598f7468d6f1a65ba"
     },
     "R/synopsis_tier3.R": {
-      "checksum": "f72f866b296bd68f12f4cbfe1e81affb"
-    },
-    "R/synopsis_tier3_fixed.R": {
-      "checksum": "8cfa841e984ca3467085270845e74e4c"
+      "checksum": "7c9f6dbb515cef77921eefff339e6532"
     },
     "README.md": {
-      "checksum": "2924a6b3a0de209e3b9eb028087f9661"
+      "checksum": "f39d7e5ff82ee898c9e2389a13b090d5"
     },
     "server.R": {
-      "checksum": "e4281905c342a755d121f2b9f3dee416"
+      "checksum": "f6cf3309045e444bb71cf5593c23fdbe"
     },
     "ui.R": {
-      "checksum": "39eaeef5506394848eab97dc7026a547"
+      "checksum": "4c4479a06b040411119dbef592ae2739"
     },
     "www/custom.css": {
-      "checksum": "86595f3f57b27d8c8263aa6aa38109be"
+      "checksum": "659f1c588a93f949f58fe8e8fc268081"
     }
   },
   "users": null
