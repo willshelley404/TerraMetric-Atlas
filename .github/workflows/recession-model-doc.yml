@@ -67,9 +67,20 @@ jobs:
             any::knitr
             any::rmarkdown
 
-      - uses: quarto-dev/quarto-actions/setup@v2
-        with:
-          version: 1.9.38
+      # Not quarto-actions/setup: it apt-installs a .deb, and the runner image
+      # already ships a newer Quarto, so apt refuses the "downgrade" (exit 100).
+      # A tarball in $HOME is independent of whatever the image has.
+      - name: Install Quarto 1.9.38
+        run: |
+          V=1.9.38
+          curl -fsSL -o "$RUNNER_TEMP/quarto.tar.gz" \
+            "https://github.com/quarto-dev/quarto-cli/releases/download/v${V}/quarto-${V}-linux-amd64.tar.gz"
+          mkdir -p "$HOME/quarto"
+          tar -xzf "$RUNNER_TEMP/quarto.tar.gz" -C "$HOME/quarto" --strip-components=1
+          echo "$HOME/quarto/bin" >> "$GITHUB_PATH"
+
+      - name: Show Quarto version
+        run: quarto --version
 
       - name: Fit the model and snapshot the output
         run: Rscript docs/build_recession_snapshot.R
