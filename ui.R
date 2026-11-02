@@ -49,8 +49,7 @@ ui <- dashboardPage(
       menuItem("Markets",        tabName = "markets",     icon = icon("chart-line")),
       menuItem("Metro Map",      tabName = "metro",       icon = icon("map-marked-alt")),
       menuItem("Forecasting",    tabName = "forecasting", icon = icon("magic")),
-      menuItem("AI Insights",    tabName = "ai",          icon = icon("robot")),
-      menuItem("Settings",       tabName = "settings",    icon = icon("cog"))
+      menuItem("AI Insights",    tabName = "ai",          icon = icon("robot"))
     ),
     div(style = "padding:14px 16px; border-top:1px solid #2a3042; margin-top:10px;",
       div(style = "font-size:10px;color:#6b7585;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;",
@@ -537,46 +536,6 @@ ui <- dashboardPage(
                             type=4, color="#00b4d8", color.background="#161b27", size=0.5)
               )
             )
-          )
-        )
-      ),
-
-      # ══════════════════════════════════════════════════════
-      # SETTINGS TAB
-      # ══════════════════════════════════════════════════════
-      tabItem("settings",
-        box(title = "Configuration", status = "primary", solidHeader = TRUE, width = 12,
-          h4(style = "color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;",
-             "Data Settings"),
-          fluidRow(
-            column(4, sliderInput("cfg_lookback", "Data Lookback (years):",
-                                  min=2, max=10, value=7, step=1)),
-            column(4, sliderInput("cfg_news_days", "News Display Window (days):",
-                                  min=1, max=7, value=4, step=1)),
-            column(4, sliderInput("cfg_forecast_horizon", "Forecast Horizon (months):",
-                                  min=6, max=24, value=18, step=3))
-          ),
-          hr(style="border-color:#2a3042;"),
-          h4(style="color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;",
-             "LLM Settings"),
-          fluidRow(
-            column(4, selectInput("cfg_llm_provider", "Default Provider:",
-              choices = setNames(names(LLM_PROVIDERS),
-                                 vapply(names(LLM_PROVIDERS),
-                                        function(x) LLM_PROVIDERS[[x]]$display_name, character(1))),
-              selected = ACTIVE_PROVIDER %||% "gemini")),
-            column(4, uiOutput("cfg_llm_model_ui")),
-            column(4,
-              div(style="margin-top:28px;",
-                actionButton("cfg_apply", "Apply & Refresh Data",
-                             class="btn-primary-custom", icon=icon("sync-alt"))))
-          ),
-          hr(style="border-color:#2a3042;"),
-          h4(style="color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;",
-             "News Sources"),
-          div(style="background:#1e2640;border-radius:6px;padding:12px;color:#9aa3b2;font-size:12px;line-height:2;",
-            icon("globe", style="color:#00b4d8;"), " Sources tried in order: ",
-            tags$b("NewsAPI"), " → ", tags$b("MediaStack"), " → ", tags$b("GDELT")
           )
         )
       )

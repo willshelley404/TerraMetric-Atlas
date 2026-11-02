@@ -62,8 +62,8 @@ server <- function(input, output, session) {
 
   # ── Core data loader function ─────────────────────────────────────────────────
   load_all_data <- function() {
-    lookback <- isolate(input$cfg_lookback) %||% 7
-    news_days <- isolate(input$cfg_news_days) %||% 4
+    lookback <- 7 # years of FRED history
+    news_days <- 4 # days of news
 
     # FRED
     tryCatch(
@@ -1519,34 +1519,6 @@ server <- function(input, output, session) {
         ))
       )
     }
-  })
-
-  # ── Settings: model selector updates with provider ────────────────────────────
-  output$cfg_llm_model_ui <- renderUI({
-    prov <- input$cfg_llm_provider %||% ACTIVE_PROVIDER %||% "gemini"
-    models <- if (prov %in% names(LLM_PROVIDERS)) {
-      LLM_PROVIDERS[[prov]]$models
-    } else {
-      character(0)
-    }
-    selectInput(
-      "cfg_llm_model",
-      "Default Model:",
-      choices = models,
-      selected = models[1]
-    )
-  })
-
-  # Apply & Refresh from settings
-  observeEvent(input$cfg_apply, {
-    w$show()
-    load_all_data()
-    w$hide()
-    showNotification(
-      "Settings applied. Data refreshed.",
-      type = "message",
-      duration = 4
-    )
   })
 
   # ═══════════════════════════════════════════════════════════════════════════
