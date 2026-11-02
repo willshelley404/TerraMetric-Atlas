@@ -20,21 +20,17 @@ NEWS_API_KEY=your_newsapi_key_here
 MEDIASTACK_API_KEY=your_mediastack_key_here
 
 # ── LLM Providers (only one required) ────────────────────────────────────────
-# Groq — https://console.groq.com  (fastest free tier)
-# Models: llama-3.3-70b-versatile (knowledge ~Dec 2024), llama-3.1-8b-instant
-GROQ_API_KEY=your_groq_api_key_here
-
-# OpenRouter — https://openrouter.ai  (access to many free models)
-# Free models: deepseek/deepseek-r1:free (~Jan 2025), deepseek/deepseek-chat:free
-OPENROUTER_API_KEY=your_openrouter_api_key_here
-
-# Google Gemini — https://aistudio.google.com/apikey  (free tier via AI Studio)
-# Models: gemini-2.0-flash (~early 2025 knowledge, fast)
+# Google Gemini — https://aistudio.google.com/apikey  (free tier via AI Studio, default)
+# Models: gemini-3.1-flash-lite (fast, reliable, default), gemini-3.7-flash (heavier)
 GEMINI_API_KEY=your_gemini_api_key_here
 
+# Groq — https://console.groq.com  (fastest free tier, alternative)
+# Models: openai/gpt-oss-120b (best quality), qwen/qwen3.6-27b, openai/gpt-oss-20b
+GROQ_API_KEY=your_groq_api_key_here
+
 # ── Provider override (optional — auto-detected if not set) ──────────────────
-# Values: "groq", "openrouter", "gemini"
-LLM_PROVIDER=groq
+# Values: "gemini", "groq"
+LLM_PROVIDER=gemini
 
 # ── News cache ────────────────────────────────────────────────────────────────
 # Leave blank → uses ./cache/ (auto-created, works locally)

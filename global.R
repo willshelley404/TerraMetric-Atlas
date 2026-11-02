@@ -141,7 +141,7 @@ LLM_PROVIDERS <- list(
       "gemini-3.1-flash-lite",  # fast, reliable — default
       "gemini-3.7-flash"        # higher quality, slower/heavier
     ),
-    display_name  = "Google Gemini (Flash-Lite)"
+    display_name  = "Google Gemini"
   )
 )
 
