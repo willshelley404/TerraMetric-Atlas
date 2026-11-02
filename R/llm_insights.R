@@ -35,12 +35,46 @@ call_llm <- function(messages, provider=NULL, model=NULL,
     c(list(list(role="system", content=system)), messages)
   } else messages
 
-  # Manual retry loop — avoids httr2 req_retry() API version differences
-  # Retries up to 3 times with backoff, only on 429 (rate limit)
-  max_tries  <- 3L
-  last_error <- NULL
+  res <- llm_request(pname, model, full_msgs, max_tokens, temperature)
+  if (res$ok || !res$transient) return(res$text)
 
-  for (attempt in seq_len(max_tries)) {
+  # Transient failure (429 / 5xx) persisted through retries — fall back to the
+  # provider's other models, then to any other provider with a key configured.
+  for (cand in llm_fallbacks(pname, model)) {
+    message(sprintf("[LLM] %s/%s unavailable — falling back to %s/%s",
+                    pname, model, cand$provider, cand$model))
+    alt <- llm_request(cand$provider, cand$model, full_msgs, max_tokens, temperature, tries = 2L)
+    if (alt$ok) {
+      return(paste0(alt$text, "
+
+*Note: ", cfg$display_name, " (", model,
+                    ") was temporarily unavailable; answered by ",
+                    LLM_PROVIDERS[[cand$provider]]$display_name, " (", cand$model, ").*"))
+    }
+  }
+  res$text
+}
+
+#' Alternative (provider, model) pairs to try when the requested one is down
+llm_fallbacks <- function(pname, model) {
+  out <- list()
+  for (m in setdiff(LLM_PROVIDERS[[pname]]$models, model))
+    out[[length(out) + 1]] <- list(provider = pname, model = m)
+  for (p in setdiff(names(LLM_PROVIDERS), pname)) {
+    if (nchar(Sys.getenv(LLM_PROVIDERS[[p]]$key_env)) > 0)
+      out[[length(out) + 1]] <- list(provider = p, model = LLM_PROVIDERS[[p]]$default_model)
+  }
+  head(out, 3)
+}
+
+#' One provider/model request with retry on transient errors (429, 500-504).
+#' Returns list(ok, text, transient).
+llm_request <- function(pname, model, full_msgs, max_tokens, temperature, tries = 3L) {
+  cfg     <- LLM_PROVIDERS[[pname]]
+  api_key <- Sys.getenv(cfg$key_env)
+  fail <- function(text, transient = FALSE) list(ok = FALSE, text = text, transient = transient)
+
+  for (attempt in seq_len(tries)) {
     result <- tryCatch({
       resp <- request(paste0(cfg$base_url, "/chat/completions")) %>%
         req_headers(
@@ -66,28 +100,30 @@ call_llm <- function(messages, provider=NULL, model=NULL,
         if (is.null(content) || nchar(trimws(content)) == 0)
           content <- body$choices[[1]]$message$reasoning_content %||%
                      "Model returned an empty response."
-        return(content)
+        list(ok = TRUE, text = content, transient = FALSE)
       } else if (!is.null(body$error)) {
-        # Non-retryable API error — return immediately
-        return(paste0("**API error (", cfg$display_name, "):** ", body$error$message))
+        fail(paste0("**API error (", cfg$display_name, "):** ", body$error$message))
+      } else {
+        fail(paste0("Unexpected response from ", cfg$display_name, ". Try Groq."))
       }
-      return(paste0("Unexpected response from ", cfg$display_name, ". Try Groq."))
-
     }, error = function(e) {
-      msg <- conditionMessage(e)
-      if (grepl("429", msg) && attempt < max_tries) {
-        wait <- 5 * 2^(attempt - 1)   # 5s, 10s, 20s
-        message(sprintf("[LLM] 429 rate limit on attempt %d — waiting %ds", attempt, wait))
+      # httr2 colours messages with ANSI escapes, which render as junk in the UI
+      msg <- gsub("\033\\[[0-9;]*m", "", conditionMessage(e))
+      transient <- grepl("\\b(429|500|502|503|504)\\b", msg)
+      if (transient && attempt < tries) {
+        wait <- if (grepl("429", msg)) 5 * 2^(attempt - 1) else 2 * 2^(attempt - 1)
+        message(sprintf("[LLM] transient error on attempt %d (%s) — waiting %ds", attempt, msg, wait))
         Sys.sleep(wait)
         return("__RETRY__")
       }
-      # All other errors or final attempt — classify with if/else (avoids dplyr scalar warning)
       guidance <- if (grepl("resolve|Could not resolve|resolve hostname", msg, ignore.case=TRUE)) {
         paste0(" — **DNS/network error.** The server cannot reach `", cfg$base_url, "`.",
                " On Posit Connect, enable outbound connections in App Settings,",
                " or ask your admin to allowlist the LLM hostname.")
       } else if (grepl("429", msg)) {
-        " — **Rate limited.** Wait 60 seconds and retry, or switch to Groq."
+        " — **Rate limited.** Wait 60 seconds and retry, or switch provider."
+      } else if (grepl("\\b(500|502|503|504)\\b", msg)) {
+        " — **Provider temporarily unavailable/overloaded.** Retry in a minute or switch provider."
       } else if (grepl("404", msg)) {
         " — **Model not found.** Select a different model from the dropdown."
       } else if (grepl("400", msg)) {
@@ -101,13 +137,12 @@ call_llm <- function(messages, provider=NULL, model=NULL,
       } else {
         ""
       }
-      paste0("**LLM call failed (", cfg$display_name, "):** ", msg, guidance)
+      fail(paste0("**LLM call failed (", cfg$display_name, "):** ", msg, guidance), transient)
     })
 
     if (!identical(result, "__RETRY__")) return(result)
   }
-
-  paste0("**LLM call failed (", cfg$display_name, "):** Max retries exceeded after rate limiting.")
+  fail(paste0("**LLM call failed (", cfg$display_name, "):** retries exhausted."), TRUE)
 }
 
 # ── Context builders ────────────────────────────────────────────────────────────
