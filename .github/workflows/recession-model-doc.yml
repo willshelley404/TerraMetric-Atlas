@@ -1,0 +1,99 @@
+# Rebuilds docs/recession_model.qmd from fresh FRED data every month and
+# publishes it to GitHub Pages.
+#
+# One-time setup (repo Settings):
+#   1. Secrets and variables > Actions > New repository secret: FRED_API_KEY
+#   2. Pages > Build and deployment > Source: "GitHub Actions"
+# Scheduled workflows only run from the default branch (main).
+# Site URL: https://<owner>.github.io/<repo>/
+name: Recession model document
+
+on:
+  schedule:
+    # 16th of each month, 14:00 UTC. By then the prior month's jobs report, CPI,
+    # sentiment and fed funds are normally out, so the model scores that month.
+    - cron: "0 14 16 * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: recession-model-doc
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Require FRED_API_KEY
+        run: |
+          if [ -z "$FRED_API_KEY" ]; then
+            echo "::error::Repository secret FRED_API_KEY is not set"; exit 1
+          fi
+
+      - uses: r-lib/actions/setup-r@v2
+        with:
+          use-public-rspm: true
+
+      - uses: r-lib/actions/setup-r-dependencies@v2
+        with:
+          cache-version: 1
+          packages: |
+            any::glmnet
+            any::zoo
+            any::lubridate
+            any::fredr
+            any::dplyr
+            any::tidyr
+            any::ggplot2
+            any::scales
+            any::gt
+            any::htmltools
+            any::patchwork
+            any::knitr
+            any::rmarkdown
+
+      - uses: quarto-dev/quarto-actions/setup@v2
+        with:
+          version: 1.9.38
+
+      - name: Fit the model and snapshot the output
+        run: Rscript docs/build_recession_snapshot.R
+
+      - name: Render the document
+        run: quarto render docs/recession_model.qmd
+
+      - name: Stage the site
+        run: |
+          mkdir -p _site
+          cp docs/recession_model.html _site/index.html
+          test -s _site/index.html
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      # Raw snapshot kept for 90 days in case a month needs auditing
+      - uses: actions/upload-artifact@v4
+        with:
+          name: recession-model-snapshot
+          path: docs/recession_model_snapshot.rds
+          retention-days: 90
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
