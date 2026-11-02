@@ -1,8 +1,13 @@
-# Rebuilds docs/recession_model.qmd from fresh FRED data every month and
-# publishes it to GitHub Pages.
+# Rebuilds docs/recession_model.qmd from fresh FRED data every month,
+# publishes it to GitHub Pages, and emails the result.
 #
 # One-time setup (repo Settings):
-#   1. Secrets and variables > Actions > New repository secret: FRED_API_KEY
+#   1. Secrets and variables > Actions > New repository secret:
+#        FRED_API_KEY    FRED API key
+#        SMTP_USER       Gmail address the email is sent from
+#        SMTP_PASSWORD   a Gmail *app password* (not the account password)
+#        NOTIFY_EMAIL    recipient address
+#      The three email secrets are optional; without them the notify job skips.
 #   2. Pages > Build and deployment > Source: "GitHub Actions"
 # Scheduled workflows only run from the default branch (main).
 # Site URL: https://<owner>.github.io/<repo>/
@@ -25,6 +30,10 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      month: ${{ steps.headline.outputs.month }}
+      prob: ${{ steps.headline.outputs.prob }}
+      tier: ${{ steps.headline.outputs.tier }}
     env:
       FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
     steps:
@@ -65,6 +74,10 @@ jobs:
       - name: Fit the model and snapshot the output
         run: Rscript docs/build_recession_snapshot.R
 
+      - name: Read the headline for the notification
+        id: headline
+        run: Rscript docs/headline.R >> "$GITHUB_OUTPUT"
+
       - name: Render the document
         run: quarto render docs/recession_model.qmd
 
@@ -94,6 +107,32 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    outputs:
+      page_url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+
+  # Emails the result (success or failure). Skips quietly until the three
+  # email secrets exist.
+  notify:
+    needs: [build, deploy]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+      - name: Send email
+        env:
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          NOTIFY_EMAIL: ${{ secrets.NOTIFY_EMAIL }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          DEPLOY_RESULT: ${{ needs.deploy.result }}
+          MONTH: ${{ needs.build.outputs.month }}
+          PROB: ${{ needs.build.outputs.prob }}
+          TIER: ${{ needs.build.outputs.tier }}
+          SITE_URL: ${{ needs.deploy.outputs.page_url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 .github/scripts/notify_email.py
