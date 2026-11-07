@@ -36,39 +36,33 @@ fetch_fred <- function(
   )
 }
 
-#' Fetch all configured FRED series
-#' Daily series (DGS*, T10Y2Y, VIXCLS etc.) get extended history automatically
-fetch_all_fred <- function(lookback_years = 7, progress_cb = NULL) {
-  # Daily series benefit from much longer history for context
-  LONG_HISTORY_IDS <- c(
-    "DGS10",
-    "DGS2",
-    "DGS1MO",
-    "DGS3MO",
-    "DGS6MO",
-    "DGS1",
-    "DGS3",
-    "DGS5",
-    "DGS7",
-    "DGS20",
-    "DGS30",
-    "T10Y2Y",
-    "FEDFUNDS",
-    "MORTGAGE30US",
-    "VIXCLS",
-    "DCOILWTICO",
-    "DTWEXBGS",
-    "ICSA",
-    "LNS11300060"
-  ) # weekly claims + prime-age LFPR need history
+#' Series that have always been fetched with >= 15y of history (daily/weekly
+#' series where context matters for the models).
+FRED_LONG_HISTORY_IDS <- c(
+  "DGS10", "DGS2", "DGS1MO", "DGS3MO", "DGS6MO", "DGS1", "DGS3", "DGS5",
+  "DGS7", "DGS20", "DGS30", "T10Y2Y", "FEDFUNDS", "MORTGAGE30US", "VIXCLS",
+  "DCOILWTICO", "DTWEXBGS", "ICSA", "LNS11300060"
+) # weekly claims + prime-age LFPR need history
 
+#' Fetch all configured FRED series
+#' @param lookback_years   History window (years) used when `start_date` is NULL;
+#'   long-history series get at least 15y.
+#' @param start_date       If given, every series is fetched from this date
+#'   (e.g. 1990-01-01 so charts can zoom out); overrides `lookback_years`.
+fetch_all_fred <- function(lookback_years = 7, start_date = NULL, progress_cb = NULL) {
   start_default <- as.Date(Sys.Date() - years(lookback_years))
   start_long <- as.Date(Sys.Date() - years(max(lookback_years, 15)))
   result <- list()
 
   for (i in seq_along(FRED_IDS)) {
     sid <- FRED_IDS[i]
-    start <- if (sid %in% LONG_HISTORY_IDS) start_long else start_default
+    start <- if (!is.null(start_date)) {
+      as.Date(start_date)
+    } else if (sid %in% FRED_LONG_HISTORY_IDS) {
+      start_long
+    } else {
+      start_default
+    }
     if (!is.null(progress_cb)) {
       progress_cb(i, length(FRED_IDS), sid)
     }
@@ -76,6 +70,22 @@ fetch_all_fred <- function(lookback_years = 7, progress_cb = NULL) {
     Sys.sleep(0.08)
   }
   result
+}
+
+#' Trim a fetch_all_fred() result to the window the models were built on
+#' (lookback_years, or 15y for long-history series). Charts use the full
+#' history; synopses, KPIs, forecasts and the LLM context use this, so deepening
+#' the chart history does not change model fits or runtime.
+trim_fred_history <- function(dlist, lookback_years = 7) {
+  cut_default <- as.Date(Sys.Date() - years(lookback_years))
+  cut_long <- as.Date(Sys.Date() - years(max(lookback_years, 15)))
+  purrr::imap(dlist, function(df, sid) {
+    if (is.null(df)) {
+      return(NULL)
+    }
+    cutoff <- if (sid %in% FRED_LONG_HISTORY_IDS) cut_long else cut_default
+    df[df$date >= cutoff, , drop = FALSE]
+  })
 }
 
 #' Latest value in a series

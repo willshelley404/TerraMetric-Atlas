@@ -82,6 +82,11 @@ FRED_CFG <- list(
 )
 
 FRED_IDS <- names(FRED_CFG)
+# How far back FRED history is fetched for charts: FRED's own floor, i.e.
+# everything available (series start between 1913 and 2023). Charts open on the
+# last 7 years (see dark_theme `default_years`) and the date slider / "All" zoom
+# out to the start of each series. Measured: ~206K rows total, ~22s to fetch.
+FRED_HISTORY_START <- as.Date("1776-07-04")
 
 # ── BLS Series ─────────────────────────────────────────────────────────────────
 BLS_IDS <- c(
@@ -167,14 +172,101 @@ CLR <- list(
 )
 
 # ── Plotly Dark Theme Helper ───────────────────────────────────────────────────
-dark_theme <- function(p, title=NULL, x="", y="") {
+# Plotly does not rescale the y-axis when the x window changes (rangeslider /
+# range buttons), so a -20M COVID bar keeps flattening a 1Y view. This handler
+# refits each y-axis to the points visible in the current x window. Bars and
+# filled areas keep 0 in view. `x` = optional initial c(start, end) window.
+DATE_RANGE_JS <- "
+function(el, x, cfg) {
+  function ms(v) { return Date.parse(String(v).replace(' ', 'T')); }
+  function refit() {
+    var lay = el._fullLayout, xr = lay.xaxis.range;
+    if (!xr) return;
+    var lo = ms(xr[0]), hi = ms(xr[1]), fit = {}, upd = {};
+    el._fullData.forEach(function(t) {
+      if (!t.visible || t.visible === 'legendonly' || !t.x || !t.y) return;
+      var ax = t.yaxis || 'y', f = fit[ax] = fit[ax] || {min: Infinity, max: -Infinity};
+      for (var i = 0; i < t.x.length; i++) {
+        var xv = ms(t.x[i]), yv = t.y[i];
+        if (xv >= lo && xv <= hi && yv !== null && isFinite(yv)) {
+          if (yv < f.min) f.min = yv;
+          if (yv > f.max) f.max = yv;
+        }
+      }
+      if (t.type === 'bar' || t.fill === 'tozeroy') { f.min = Math.min(f.min, 0); f.max = Math.max(f.max, 0); }
+    });
+    Object.keys(fit).forEach(function(ax) {
+      var f = fit[ax];
+      if (!isFinite(f.min) || !isFinite(f.max)) return;
+      var pad = (f.max - f.min) * 0.08 || Math.abs(f.max) * 0.05 || 1;
+      upd[(ax === 'y' ? 'yaxis' : 'yaxis' + ax.slice(1)) + '.range'] = [f.min - pad, f.max + pad];
+    });
+    if (Object.keys(upd).length) Plotly.relayout(el, upd);  // only yaxis keys -> no handler loop
+  }
+  el.on('plotly_relayout', function(ev) {
+    var k = Object.keys(ev).join(' ');
+    if (/xaxis\\.(range|autorange)/.test(k)) refit();
+  });
+  var win = cfg.range;
+  if (!win && cfg.years) {  // default window: last N years of the latest data point
+    var last = -Infinity;
+    el._fullData.forEach(function(t) { (t.x || []).forEach(function(v) { var m = ms(v); if (m > last) last = m; }); });
+    if (isFinite(last)) {
+      var a = new Date(last), b = new Date(last);
+      a.setFullYear(a.getFullYear() - cfg.years);
+      b.setDate(b.getDate() + 15);
+      win = [a.toISOString().slice(0, 10), b.toISOString().slice(0, 10)];
+    }
+  }
+  if (win) Plotly.relayout(el, {'xaxis.range': win});  // handler refits y
+  else refit();
+}
+"
+
+#' Dark plotly theme. `date_range` controls the time-axis navigation:
+#'   "slider"  – quick buttons (1Y/3Y/5Y/All) + draggable range slider (default)
+#'   "buttons" – quick buttons only (for small/overview charts)
+#'   "none"    – plain axis (non-time-series charts)
+#' The chart opens on the last `default_years` of data (the slider/buttons zoom
+#' out to the full history). `x_range` = c(start, end) Dates overrides that, so a
+#' chart can open past an outlier (e.g. 2020) while "All" still shows it.
+dark_theme <- function(p, title=NULL, x="", y="", date_range=c("slider","buttons","none"), x_range=NULL, default_years=7) {
+  date_range <- match.arg(date_range)
+  xaxis <- list(title=x, gridcolor="#2a3042", zerolinecolor="#3a4052", color="#9aa3b2")
+  if (date_range != "none") {
+    xaxis$rangeselector <- list(
+      buttons = list(
+        list(count=1, label="1Y", step="year", stepmode="backward"),
+        list(count=3, label="3Y", step="year", stepmode="backward"),
+        list(count=5, label="5Y", step="year", stepmode="backward"),
+        list(count=10, label="10Y", step="year", stepmode="backward"),
+        list(count=20, label="20Y", step="year", stepmode="backward"),
+        list(step="all", label="All")
+      ),
+      x = 0, y = 1.02, xanchor = "left", yanchor = "bottom",
+      font = list(color="#cccccc", size=11),
+      bgcolor = "#1f2536", activecolor = "#00b4d8",
+      bordercolor = "#3a4052", borderwidth = 1
+    )
+    if (date_range == "slider") {
+      xaxis$rangeslider <- list(
+        visible = TRUE, thickness = 0.1,
+        bgcolor = "#161b27", bordercolor = "#3a4052", borderwidth = 1
+      )
+    }
+  }
+  cfg <- list(
+    range = if (!is.null(x_range)) as.list(format(as.Date(x_range), "%Y-%m-%d")) else NULL,
+    years = if (is.null(x_range)) default_years else NULL
+  )
+  p <- if (date_range != "none") htmlwidgets::onRender(p, DATE_RANGE_JS, cfg) else p
   p %>%
     layout(
       title         = if (!is.null(title)) list(text=title, font=list(color="#e0e0e0",size=14)) else NULL,
       paper_bgcolor = "rgba(0,0,0,0)",
       plot_bgcolor  = "rgba(0,0,0,0)",
       font          = list(color="#cccccc", family="Inter,Segoe UI,system-ui"),
-      xaxis         = list(title=x, gridcolor="#2a3042", zerolinecolor="#3a4052", color="#9aa3b2"),
+      xaxis         = xaxis,
       yaxis         = list(title=y, gridcolor="#2a3042", zerolinecolor="#3a4052", color="#9aa3b2"),
       legend        = list(font=list(color="#cccccc"), bgcolor="rgba(0,0,0,0)"),
       margin        = list(t=45, r=20, b=50, l=60),
