@@ -368,7 +368,7 @@ server <- function(input, output, session) {
       fillcolor = "rgba(0,180,216,0.1)",
       hovertemplate = "%{x|%b %Y}: %{y:.1f}%<extra></extra>"
     ) %>%
-      dark_theme(y = "%")
+      dark_theme(y = "%", date_range = "buttons")
   })
 
   output$ov_cpi <- renderPlotly({
@@ -418,7 +418,7 @@ server <- function(input, output, session) {
         showlegend = TRUE,
         hoverinfo = "none"
       ) %>%
-      dark_theme(y = "%")
+      dark_theme(y = "%", date_range = "buttons")
   })
 
   output$ov_rates <- renderPlotly({
@@ -445,7 +445,7 @@ server <- function(input, output, session) {
           )
       }
     }
-    p %>% dark_theme(y = "%")
+    p %>% dark_theme(y = "%", date_range = "buttons")
   })
 
   output$ov_market <- renderPlotly({
@@ -490,7 +490,7 @@ server <- function(input, output, session) {
         showlegend = FALSE,
         hoverinfo = "none"
       ) %>%
-      dark_theme(y = "Indexed (100 = 1Y ago)")
+      dark_theme(y = "Indexed (100 = 1Y ago)", date_range = "none")
   })
 
   # ═══════════════════════════════════════════════════════════════════════════
@@ -535,7 +535,12 @@ server <- function(input, output, session) {
       name = "MoM Change (K)",
       hovertemplate = "%{x|%b %Y}: %{y:+,.0f}K<extra></extra>"
     ) %>%
-      dark_theme(y = "K Jobs")
+      # Open on the last 5 years so the 2020 COVID swing (-20M / +4M) doesn't
+      # flatten the recent bars; "All" / the slider still reach back to it.
+      dark_theme(
+        y = "K Jobs",
+        x_range = c(max(df$date) %m-% years(5), max(df$date) + 15)
+      )
   })
 
   output$lab_jolts <- renderPlotly({
@@ -879,9 +884,13 @@ server <- function(input, output, session) {
     if (is.null(rv$fred_data$MORTGAGE30US) || is.null(rv$fred_data$HOUST)) {
       return(empty_plot("Data unavailable"))
     }
+    # Mortgage rate is weekly, starts are monthly (1st of month): average the
+    # weekly rate by month, else the exact-date join below matches almost nothing.
     mort <- rv$fred_data$MORTGAGE30US %>%
-      tail(120) %>%
-      dplyr::select(date, mort = value)
+      mutate(date = lubridate::floor_date(date, "month")) %>%
+      group_by(date) %>%
+      summarise(mort = mean(value, na.rm = TRUE), .groups = "drop") %>%
+      tail(120)
     start <- rv$fred_data$HOUST %>% tail(120) %>% dplyr::select(date, starts = value)
     df <- inner_join(mort, start, by = "date") %>%
       filter(!is.na(mort), !is.na(starts))
@@ -902,15 +911,9 @@ server <- function(input, output, session) {
         yaxis = "y2",
         hovertemplate = "%{x|%b %Y}: %{y:,.0f}K<extra></extra>"
       ) %>%
+      dark_theme(y = "Mortgage Rate (%)") %>%
       layout(
-        paper_bgcolor = "rgba(0,0,0,0)",
-        plot_bgcolor = "rgba(0,0,0,0)",
-        font = list(color = "#cccccc"),
-        yaxis = list(
-          title = "Mortgage Rate (%)",
-          gridcolor = "#2a3042",
-          color = "#e94560"
-        ),
+        yaxis = list(color = "#e94560"),
         yaxis2 = list(
           title = "Housing Starts (K)",
           overlaying = "y",
@@ -1066,7 +1069,7 @@ server <- function(input, output, session) {
         showlegend = FALSE,
         hoverinfo = "none"
       ) %>%
-      dark_theme(y = "Indexed (100 = Start)")
+      dark_theme(y = "Indexed (100 = Start)", date_range = "none") # has its own lookback slider
   })
 
   output$mkt_sector_heat <- renderPlotly({
@@ -1129,7 +1132,7 @@ server <- function(input, output, session) {
           hovertemplate = "%{x|%b %d}: %{y:.1f}<extra></extra>"
         )
     }
-    p %>% dark_theme(y = "Indexed (100=1Y ago)")
+    p %>% dark_theme(y = "Indexed (100=1Y ago)", date_range = "none") # rebased to 1Y window
   })
 
   output$mkt_yield_curve <- renderPlotly({
@@ -1190,7 +1193,7 @@ server <- function(input, output, session) {
       hovertemplate = "%{x}: %{y:.2f}%<extra></extra>",
       name = "Yield Curve"
     ) %>%
-      dark_theme(y = "%")
+      dark_theme(y = "%", date_range = "none")
   })
 
   output$mkt_corr <- renderPlotly({
