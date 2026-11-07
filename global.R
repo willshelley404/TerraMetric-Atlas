@@ -82,6 +82,11 @@ FRED_CFG <- list(
 )
 
 FRED_IDS <- names(FRED_CFG)
+# How far back FRED history is fetched for charts: FRED's own floor, i.e.
+# everything available (series start between 1913 and 2023). Charts open on the
+# last 7 years (see dark_theme `default_years`) and the date slider / "All" zoom
+# out to the start of each series. Measured: ~206K rows total, ~22s to fetch.
+FRED_HISTORY_START <- as.Date("1776-07-04")
 
 # ── BLS Series ─────────────────────────────────────────────────────────────────
 BLS_IDS <- c(
@@ -172,7 +177,7 @@ CLR <- list(
 # refits each y-axis to the points visible in the current x window. Bars and
 # filled areas keep 0 in view. `x` = optional initial c(start, end) window.
 DATE_RANGE_JS <- "
-function(el, x, initRange) {
+function(el, x, cfg) {
   function ms(v) { return Date.parse(String(v).replace(' ', 'T')); }
   function refit() {
     var lay = el._fullLayout, xr = lay.xaxis.range;
@@ -202,7 +207,18 @@ function(el, x, initRange) {
     var k = Object.keys(ev).join(' ');
     if (/xaxis\\.(range|autorange)/.test(k)) refit();
   });
-  if (initRange) Plotly.relayout(el, {'xaxis.range': initRange});  // handler refits y
+  var win = cfg.range;
+  if (!win && cfg.years) {  // default window: last N years of the latest data point
+    var last = -Infinity;
+    el._fullData.forEach(function(t) { (t.x || []).forEach(function(v) { var m = ms(v); if (m > last) last = m; }); });
+    if (isFinite(last)) {
+      var a = new Date(last), b = new Date(last);
+      a.setFullYear(a.getFullYear() - cfg.years);
+      b.setDate(b.getDate() + 15);
+      win = [a.toISOString().slice(0, 10), b.toISOString().slice(0, 10)];
+    }
+  }
+  if (win) Plotly.relayout(el, {'xaxis.range': win});  // handler refits y
   else refit();
 }
 "
@@ -211,9 +227,10 @@ function(el, x, initRange) {
 #'   "slider"  – quick buttons (1Y/3Y/5Y/All) + draggable range slider (default)
 #'   "buttons" – quick buttons only (for small/overview charts)
 #'   "none"    – plain axis (non-time-series charts)
-#' `x_range` optionally sets the initial visible window, c(start, end) as Dates,
-#' so a chart can open past an outlier (e.g. 2020) while "All" still shows it.
-dark_theme <- function(p, title=NULL, x="", y="", date_range=c("slider","buttons","none"), x_range=NULL) {
+#' The chart opens on the last `default_years` of data (the slider/buttons zoom
+#' out to the full history). `x_range` = c(start, end) Dates overrides that, so a
+#' chart can open past an outlier (e.g. 2020) while "All" still shows it.
+dark_theme <- function(p, title=NULL, x="", y="", date_range=c("slider","buttons","none"), x_range=NULL, default_years=7) {
   date_range <- match.arg(date_range)
   xaxis <- list(title=x, gridcolor="#2a3042", zerolinecolor="#3a4052", color="#9aa3b2")
   if (date_range != "none") {
@@ -222,6 +239,8 @@ dark_theme <- function(p, title=NULL, x="", y="", date_range=c("slider","buttons
         list(count=1, label="1Y", step="year", stepmode="backward"),
         list(count=3, label="3Y", step="year", stepmode="backward"),
         list(count=5, label="5Y", step="year", stepmode="backward"),
+        list(count=10, label="10Y", step="year", stepmode="backward"),
+        list(count=20, label="20Y", step="year", stepmode="backward"),
         list(step="all", label="All")
       ),
       x = 0, y = 1.02, xanchor = "left", yanchor = "bottom",
@@ -236,8 +255,11 @@ dark_theme <- function(p, title=NULL, x="", y="", date_range=c("slider","buttons
       )
     }
   }
-  init <- if (!is.null(x_range)) as.list(format(as.Date(x_range), "%Y-%m-%d")) else NULL
-  p <- if (date_range != "none") htmlwidgets::onRender(p, DATE_RANGE_JS, init) else p
+  cfg <- list(
+    range = if (!is.null(x_range)) as.list(format(as.Date(x_range), "%Y-%m-%d")) else NULL,
+    years = if (is.null(x_range)) default_years else NULL
+  )
+  p <- if (date_range != "none") htmlwidgets::onRender(p, DATE_RANGE_JS, cfg) else p
   p %>%
     layout(
       title         = if (!is.null(title)) list(text=title, font=list(color="#e0e0e0",size=14)) else NULL,

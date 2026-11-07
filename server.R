@@ -22,7 +22,8 @@ server <- function(input, output, session) {
 
   # ── Reactive State ────────────────────────────────────────────────────────────
   rv <- reactiveValues(
-    fred_data = NULL,
+    fred_data = NULL, # full history (FRED_HISTORY_START →) — charts only
+    fred_model = NULL, # trimmed to the ~7y window models/synopses were built on
     bls_data = NULL,
     mkt_data = NULL,
     mkt_returns = NULL,
@@ -62,15 +63,19 @@ server <- function(input, output, session) {
 
   # ── Core data loader function ─────────────────────────────────────────────────
   load_all_data <- function() {
-    lookback <- 7 # years of FRED history
+    lookback <- 7 # years of history for models, BLS, markets, and default chart window
     news_days <- 4 # days of news
 
     # FRED
     tryCatch(
       {
-        rv$fred_data <- fetch_all_fred(lookback_years = lookback)
+        # Charts get history back to FRED_HISTORY_START (opened on the last
+        # `lookback` years; the date slider zooms out). Everything model-ish
+        # keeps the original window so fits/synopses don't change.
+        rv$fred_data <- fetch_all_fred(start_date = FRED_HISTORY_START)
         rv$fred_data <- patch_wti_realtime(rv$fred_data) # ← bridge the FRED lag
-        rv$kpis <- build_kpis(rv$fred_data)
+        rv$fred_model <- trim_fred_history(rv$fred_data, lookback)
+        rv$kpis <- build_kpis(rv$fred_model)
       },
       error = function(e) message("FRED load error: ", e$message)
     )
@@ -132,10 +137,10 @@ server <- function(input, output, session) {
     if (
       input$tabs == "forecasting" &&
         is.null(rv$forecasts) &&
-        !is.null(rv$fred_data)
+        !is.null(rv$fred_model)
     ) {
       withProgress(message = "Running ensemble forecasts (Prophet · ARIMA · ETS)…", value = 0, {
-        rv$forecasts <- run_all_forecasts(rv$fred_data, horizon_months = 18)
+        rv$forecasts <- run_all_forecasts(rv$fred_model, horizon_months = 18)
         incProgress(1)
       })
     }
@@ -355,7 +360,7 @@ server <- function(input, output, session) {
 
   output$ov_unemp <- renderPlotly({
     req(rv$fred_data, rv$fred_data$UNRATE)
-    df <- rv$fred_data$UNRATE %>% tail(84)
+    df <- rv$fred_data$UNRATE
     plot_ly(
       df,
       x = ~date,
@@ -377,8 +382,7 @@ server <- function(input, output, session) {
     if (!is.null(rv$fred_data$CPIAUCNS) && nrow(rv$fred_data$CPIAUCNS) > 12) {
       cpi_yoy <- rv$fred_data$CPIAUCNS %>%
         yoy_change() %>%
-        filter(!is.na(yoy)) %>%
-        tail(84)
+        filter(!is.na(yoy))
       plots[["CPI YoY"]] <- list(
         x = cpi_yoy$date,
         y = cpi_yoy$yoy,
@@ -388,8 +392,7 @@ server <- function(input, output, session) {
     if (!is.null(rv$fred_data$CPILFENS) && nrow(rv$fred_data$CPILFENS) > 12) {
       core_yoy <- rv$fred_data$CPILFENS %>%
         yoy_change() %>%
-        filter(!is.na(yoy)) %>%
-        tail(84)
+        filter(!is.na(yoy))
       plots[["Core CPI YoY"]] <- list(
         x = core_yoy$date,
         y = core_yoy$yoy,
@@ -499,7 +502,7 @@ server <- function(input, output, session) {
 
   output$lab_unemp <- renderPlotly({
     req(rv$fred_data$UNRATE)
-    df <- rv$fred_data$UNRATE %>% tail(120)
+    df <- rv$fred_data$UNRATE
     plot_ly(
       df,
       x = ~date,
@@ -518,7 +521,6 @@ server <- function(input, output, session) {
   output$lab_payrolls <- renderPlotly({
     req(rv$fred_data$PAYEMS)
     df <- rv$fred_data$PAYEMS %>%
-      tail(120) %>%
       mutate(
         mom = c(NA, diff(value)),
         col = if_else(is.na(mom) | mom >= 0, "#2dce89", "#e94560")
@@ -547,7 +549,7 @@ server <- function(input, output, session) {
     req(rv$fred_data)
     p <- plot_ly()
     if (!is.null(rv$fred_data$JTSJOL)) {
-      df <- rv$fred_data$JTSJOL %>% tail(84)
+      df <- rv$fred_data$JTSJOL
       p <- p %>%
         add_lines(
           data = df,
@@ -559,7 +561,7 @@ server <- function(input, output, session) {
         )
     }
     if (!is.null(rv$fred_data$JTSQUL)) {
-      df <- rv$fred_data$JTSQUL %>% tail(84)
+      df <- rv$fred_data$JTSQUL
       p <- p %>%
         add_lines(
           data = df,
@@ -577,8 +579,7 @@ server <- function(input, output, session) {
     req(rv$fred_data$CES0500000003)
     df <- rv$fred_data$CES0500000003 %>%
       yoy_change() %>%
-      filter(!is.na(yoy)) %>%
-      tail(84)
+      filter(!is.na(yoy))
     plot_ly(
       df,
       x = ~date,
@@ -644,13 +645,15 @@ server <- function(input, output, session) {
   output$inf_cpi <- renderPlotly({
     req(rv$fred_data)
     p <- plot_ly()
+    xmin <- Sys.Date() # earliest plotted point, for the 2% reference line
     for (pair in list(
       list("CPIAUCNS", "CPI YoY", "#e94560"),
       list("CPILFENS", "Core CPI YoY", "#f4a261")
     )) {
       df <- rv$fred_data[[pair[[1]]]]
       if (!is.null(df) && nrow(df) > 12) {
-        d <- df %>% yoy_change() %>% filter(!is.na(yoy)) %>% tail(84)
+        d <- df %>% yoy_change() %>% filter(!is.na(yoy))
+        xmin <- min(xmin, d$date)
         p <- p %>%
           add_lines(
             data = d,
@@ -664,7 +667,7 @@ server <- function(input, output, session) {
     }
     p %>%
       add_segments(
-        x = as.Date("2018-01-01"),
+        x = xmin,
         xend = Sys.Date(),
         y = 2,
         yend = 2,
@@ -678,6 +681,7 @@ server <- function(input, output, session) {
   output$inf_pce <- renderPlotly({
     req(rv$fred_data)
     p <- plot_ly()
+    xmin <- Sys.Date() # earliest plotted point, for the 2% reference line
     # Both are price INDICES — compute YoY % for each
     for (pair in list(
       list("PCEPI", "PCE YoY", "#7c5cbf"),
@@ -685,7 +689,8 @@ server <- function(input, output, session) {
     )) {
       df <- rv$fred_data[[pair[[1]]]]
       if (!is.null(df) && nrow(df) > 12) {
-        d <- df %>% yoy_change() %>% filter(!is.na(yoy)) %>% tail(84)
+        d <- df %>% yoy_change() %>% filter(!is.na(yoy))
+        xmin <- min(xmin, d$date)
         p <- p %>%
           add_lines(
             data = d,
@@ -700,7 +705,7 @@ server <- function(input, output, session) {
     # Fed 2% target line
     p %>%
       add_segments(
-        x = as.Date("2018-01-01"),
+        x = xmin,
         xend = Sys.Date(),
         y = 2,
         yend = 2,
@@ -721,7 +726,7 @@ server <- function(input, output, session) {
     )) {
       df <- rv$fred_data[[pair[[1]]]]
       if (!is.null(df) && nrow(df) > 12) {
-        d <- df %>% yoy_change() %>% filter(!is.na(yoy)) %>% tail(84)
+        d <- df %>% yoy_change() %>% filter(!is.na(yoy))
         p <- p %>%
           add_lines(
             data = d,
@@ -749,7 +754,7 @@ server <- function(input, output, session) {
     )
     p <- plot_ly()
     for (s in unique(rv$infl_panel$series)) {
-      d <- rv$infl_panel %>% filter(series == s) %>% tail(84)
+      d <- rv$infl_panel %>% filter(series == s)
       p <- p %>%
         add_lines(
           data = d,
@@ -835,7 +840,7 @@ server <- function(input, output, session) {
     req(rv$fred_data)
     p <- plot_ly()
     if (!is.null(rv$fred_data$HOUST)) {
-      df <- rv$fred_data$HOUST %>% tail(120)
+      df <- rv$fred_data$HOUST
       p <- p %>%
         add_lines(
           data = df,
@@ -847,7 +852,7 @@ server <- function(input, output, session) {
         )
     }
     if (!is.null(rv$fred_data$PERMIT)) {
-      df <- rv$fred_data$PERMIT %>% tail(120)
+      df <- rv$fred_data$PERMIT
       p <- p %>%
         add_lines(
           data = df,
@@ -863,7 +868,7 @@ server <- function(input, output, session) {
 
   output$hous_mortgage <- renderPlotly({
     req(rv$fred_data$MORTGAGE30US)
-    df <- rv$fred_data$MORTGAGE30US %>% tail(240)
+    df <- rv$fred_data$MORTGAGE30US
     plot_ly(
       df,
       x = ~date,
@@ -889,9 +894,8 @@ server <- function(input, output, session) {
     mort <- rv$fred_data$MORTGAGE30US %>%
       mutate(date = lubridate::floor_date(date, "month")) %>%
       group_by(date) %>%
-      summarise(mort = mean(value, na.rm = TRUE), .groups = "drop") %>%
-      tail(120)
-    start <- rv$fred_data$HOUST %>% tail(120) %>% dplyr::select(date, starts = value)
+      summarise(mort = mean(value, na.rm = TRUE), .groups = "drop")
+    start <- rv$fred_data$HOUST %>% dplyr::select(date, starts = value)
     df <- inner_join(mort, start, by = "date") %>%
       filter(!is.na(mort), !is.na(starts))
 
@@ -939,8 +943,7 @@ server <- function(input, output, session) {
     req(rv$fred_data$RSAFS)
     df <- rv$fred_data$RSAFS %>%
       yoy_change() %>%
-      filter(!is.na(yoy)) %>%
-      tail(84)
+      filter(!is.na(yoy))
     plot_ly(
       df,
       x = ~date,
@@ -955,7 +958,7 @@ server <- function(input, output, session) {
 
   output$con_sent <- renderPlotly({
     req(rv$fred_data$UMCSENT)
-    df <- rv$fred_data$UMCSENT %>% tail(120)
+    df <- rv$fred_data$UMCSENT
     plot_ly(
       df,
       x = ~date,
@@ -975,8 +978,7 @@ server <- function(input, output, session) {
     req(rv$fred_data$INDPRO)
     df <- rv$fred_data$INDPRO %>%
       yoy_change() %>%
-      filter(!is.na(yoy)) %>%
-      tail(84)
+      filter(!is.na(yoy))
     plot_ly(
       df,
       x = ~date,
@@ -1216,7 +1218,7 @@ server <- function(input, output, session) {
       return(empty_plot("Insufficient data for correlation"))
     }
 
-    cor_mat <- fred_correlation_matrix(rv$fred_data, sids)
+    cor_mat <- fred_correlation_matrix(rv$fred_model, sids)
     labs <- sapply(sids, function(s) FRED_CFG[[s]]$label %||% s)
 
     plot_ly(
@@ -1531,10 +1533,10 @@ server <- function(input, output, session) {
   observeEvent(
     input$fcst_horizon,
     {
-      req(rv$fred_data)
+      req(rv$fred_model)
       withProgress(message = "Re-running ensemble forecasts…", value = 0, {
         rv$forecasts <- run_all_forecasts(
-          rv$fred_data,
+          rv$fred_model,
           horizon_months = input$fcst_horizon
         )
         incProgress(1)
@@ -1728,7 +1730,7 @@ server <- function(input, output, session) {
       result <- tryCatch(
         generate_insights(
           kpis = rv$kpis,
-          fred_data = rv$fred_data,
+          fred_data = rv$fred_model,
           mkt_returns = rv$mkt_returns,
           news_df = rv$news_data,
           outlook = tryCatch(growth_outlook(), error = function(e) NULL),
@@ -1834,9 +1836,9 @@ server <- function(input, output, session) {
   # ═══════════════════════════════════════════════════════════════════════════
 
   output$synopsis_panel <- renderUI({
-    req(rv$fred_data, rv$kpis)
+    req(rv$fred_model, rv$kpis)
     blocks <- tryCatch(
-      build_synopsis(rv$fred_data, rv$kpis),
+      build_synopsis(rv$fred_model, rv$kpis),
       error = function(e) {
         message("[Synopsis] ", e$message)
         NULL
@@ -1847,9 +1849,9 @@ server <- function(input, output, session) {
 
   # Shared so the panel and the LLM prompts see the same model run
   growth_outlook <- reactive({
-    req(rv$fred_data, rv$kpis)
+    req(rv$fred_model, rv$kpis)
     tryCatch(
-      build_growth_outlook(rv$fred_data, rv$kpis, rv$mkt_returns),
+      build_growth_outlook(rv$fred_model, rv$kpis, rv$mkt_returns),
       error = function(e) {
         message("[Growth outlook] ", e$message)
         NULL
@@ -1864,10 +1866,10 @@ server <- function(input, output, session) {
   # Tab-level synopsis panels (render on demand when data is available)
   .tab_synopsis <- function(fn) {
     renderUI({
-      if (is.null(rv$fred_data) || is.null(rv$kpis)) {
+      if (is.null(rv$fred_model) || is.null(rv$kpis)) {
         return(NULL)
       }
-      tryCatch(fn(rv$fred_data, rv$kpis), error = function(e) {
+      tryCatch(fn(rv$fred_model, rv$kpis), error = function(e) {
         message("[Tab synopsis] ", e$message)
         NULL
       })
