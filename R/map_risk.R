@@ -251,9 +251,13 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
   ifelse(is.na(n), NA_character_, paste0(n, suf))
 }
 
+# J is the mean of two percentiles, so it is an index, not itself a percentile.
+.job_pressure_text <- function(j)
+  sprintf("%.0f/100 (mean of Stress now and Stress ahead percentiles)", 100 * j)
+
 .job_pressure_line <- function(j) {
   ifelse(is.na(j), "Job pressure: missing (BLS/FRED unavailable)",
-         sprintf("Job pressure: %s percentile", .ordinal(100 * j)))
+         paste0("Job pressure: ", .job_pressure_text(j)))
 }
 
 #' TRUE where a value's margin of error is flagged: any of the layer's noisy columns
@@ -603,7 +607,7 @@ reset_to_us <- function(map, county_layers, layer_id) {
     if (level == "tract" && !is.na(hh)) line(sprintf(
       "Rent-burdened renter households: %s (ACS estimate)", .risk_fmt(hh, "n"))),
     line(if (is.na(j)) "County job pressure: missing (BLS/FRED unavailable)" else
-      sprintf("County job pressure: %s percentile", .ordinal(100 * j))))
+      paste0("County job pressure: ", .job_pressure_text(j))))
 }
 
 # ── Side panel: full component breakdown for the selected county or tract ────
@@ -619,7 +623,7 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
   rk <- function(p, hiw) { r <- rank_label(p, ""); if (is.na(r)) "—" else trimws(r) }  # value terms
   td <- function(...) tg$td(style = "padding:3px 10px 3px 0;", ...)
 
-  noisy_labels <- character(0)
+  noisy_labels <- noisy_ids <- character(0)
   rows <- lapply(ids, function(id) {
     cfg <- RISK_LAYERS[[id]]
     v <- as.numeric(get(cfg$col))
@@ -632,7 +636,9 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
     }
     moe <- get(paste0(cfg$col, "_moe"))
     if (level == "tract" && !is.na(v) && !is.na(moe)) vt <- sprintf("%s ± %.1f", vt, moe)
-    if (level == "tract" && .noisy_flags(a, cfg)) noisy_labels <<- c(noisy_labels, cfg$label)
+    if (level == "tract" && .noisy_flags(a, cfg)) {
+      noisy_labels <<- c(noisy_labels, cfg$label); noisy_ids <<- c(noisy_ids, id)
+    }
     when <- if (identical(status[[id]], "unavailable")) "unavailable" else
       if (is.na(asof[[id]])) "loading" else asof[[id]]
     pcts <- if (level == "county") list(td(rk(get(paste0("pct_", cfg$col)), cfg$higher_is_worse))) else
@@ -675,8 +681,11 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
                                           attr(county_layers, "acs_year")),
     if (length(noisy_labels)) tg$div(
       style = sprintf("color:%s;margin-top:8px;", c$warn),
-      sprintf("Dashed outline: the margin of error is larger than the value for %s.",
-              paste(noisy_labels, collapse = ", "))),
+      if (any(vapply(RISK_LAYERS[noisy_ids], function(l) identical(l$lens, "assistance"), TRUE)))
+        sprintf("Dashed outline: the margin of error is larger than the value for an input (rent burden or poverty) to: %s.",
+                paste(noisy_labels, collapse = ", "))
+      else sprintf("Dashed outline: the margin of error is larger than the value for %s.",
+                   paste(noisy_labels, collapse = ", "))),
     if (length(missing_states)) tg$div(
       style = sprintf("color:%s;margin-top:8px;", c$warn),
       paste("Tract data unavailable for:",

@@ -7489,6 +7489,9 @@
     "data/risk_seed/laus_metro_n393.rds": {
       "checksum": "661ec348179e226ab20d78717311235f"
     },
+    "data/risk_seed/lodes_year_v1.rds": {
+      "checksum": "eede4a8b4b5e2d37c77e193d451cdbc8"
+    },
     "data/risk_seed/pep_county_2025.rds": {
       "checksum": "6f1b43fea83ac16a60e7a3691ff1d70a"
     },
@@ -7529,7 +7532,7 @@
       "checksum": "db77731de193cb91d5725a99422fdd92"
     },
     "R/data_risk.R": {
-      "checksum": "1d723600eb175457d6c6a7654f2bf19c"
+      "checksum": "c8fd2a70d2e571e32183d4fd96c2520b"
     },
     "R/forecasting.R": {
       "checksum": "ee58eebf253f07d7bf62fb9f8cfc6af2"
@@ -7538,10 +7541,10 @@
       "checksum": "c37f4cdab97c3a296a61934b099c6baa"
     },
     "R/map_risk.R": {
-      "checksum": "3a910af6fe3425aff25338f27827d5d1"
+      "checksum": "d890a69358018f32353e1e806c6e38a0"
     },
     "R/risk_metrics.R": {
-      "checksum": "f91b6d40df6b6d082f059b21baff0d79"
+      "checksum": "561949e397c2f5c3df1464d2947efb6c"
     },
     "R/synopsis_tier1.R": {
       "checksum": "c2f0474652fb6c07661b932d1200e172"
@@ -7556,10 +7559,10 @@
       "checksum": "f39d7e5ff82ee898c9e2389a13b090d5"
     },
     "server.R": {
-      "checksum": "66c190f50d9c2fcc0318ce24c470bdd7"
+      "checksum": "a229198b3b2a155abe340b79efbfbc40"
     },
     "ui.R": {
-      "checksum": "c6f00c48ac4515aa946a6234830fac6b"
+      "checksum": "98211c1f938652b339b2c3cbc71f2803"
     },
     "www/custom.css": {
       "checksum": "659f1c588a93f949f58fe8e8fc268081"

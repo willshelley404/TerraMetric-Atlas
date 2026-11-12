@@ -116,6 +116,10 @@ test_that("county tooltip shows drivers and flags missing job pressure", {
   tip2 <- as.character(.county_tooltips(l[l$GEOID == "13295", ], "assist_score",
                                         RISK_LAYERS$assist_score, "x"))
   expect_true(grepl("Job pressure: missing (BLS/FRED unavailable)", tip2, fixed = TRUE))
+  j <- job_pressure(al_layers())[al_layers()$GEOID == "13295"]
+  expect_true(grepl(sprintf("Job pressure: %.0f/100 (mean of Stress now and Stress ahead percentiles)", 100 * j),
+                    tip, fixed = TRUE))
+  expect_false(grepl("percentile<", tip, fixed = TRUE))
 })
 
 test_that("tract tooltip shows 4 drivers with workers last", {
@@ -183,7 +187,8 @@ test_that("side panel names the industry source and count caveat", {
   h <- al_panel_tract()
   for (s in c("Industry mix source: LODES 2024", "not a layoff forecast",
               "Exposure-weighted workers: 1,234", "Rent-burdened renter households: 210",
-              "ACS estimate", "County job pressure: 82nd percentile"))
+              "ACS estimate",
+              "County job pressure: 82/100 (mean of Stress now and Stress ahead percentiles)"))
     expect_true(grepl(s, h, fixed = TRUE), info = s)
   # Extra blocks are divs; the table keeps one row per tract layer plus the header.
   tract_layers <- sum(vapply(RISK_LAYERS, function(l) "tract" %in% l$levels, TRUE))
@@ -229,6 +234,13 @@ test_that("assistance side panel works under the app's %||%", {
   expect_s3_class(risk_side_panel(l[l$GEOID == "13295", ], "county", l), "shiny.tag")
   expect_equal(attr(l, "sector_weights"), fx_weights())
   expect_false(is.null(al_tract_labels(al_tracts())))
+})
+
+test_that("assistance side panel words the dashed-outline note as inputs", {
+  h <- al_panel_tract()
+  expect_true(grepl("margin of error is larger than the value for an input (rent burden or poverty) to: Assistance need score",
+                    h, fixed = TRUE))
+  expect_false(grepl("larger than the value for Assistance", h, fixed = TRUE))
 })
 
 test_that("tract legend of a binned layer uses its bin labels", {

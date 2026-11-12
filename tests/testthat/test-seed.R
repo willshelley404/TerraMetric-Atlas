@@ -72,7 +72,7 @@ test_that("risk_seed_update copies seedable cache entries, largest LAUS pull onl
   cache <- tempfile("cache"); dir.create(cache)
   seed <- tempfile("seed")
   for (f in c("acs_year_v2", "county_shapes_2024", "cbsa_xwalk_2023", "county_acs_2024",
-              "laus_county_n3", "laus_county_n3144", "tracts_v3_13_2024"))
+              "laus_county_n3", "laus_county_n3144", "tracts_v4_13_2024"))
     saveRDS(list(value = f, fetched_at = Sys.time()), file.path(cache, paste0(f, ".rds")))
   got <- risk_seed_update(cache_dir = cache, seed_dir = seed)
   expect_setequal(got, c("acs_year_v2.rds", "county_shapes_2024.rds", "cbsa_xwalk_2023.rds",
@@ -85,11 +85,22 @@ test_that("seed update copies Phase 2 keys, newest LAUS of each kind", {
   seed <- tempfile("seed")
   all <- c("pep_county_2024", "pep_county_2025", "laus_metro_n393", "laus_metro_n390",
            "laus_county_n3144", "fred_sectors_v1", "county_ind_2024", "laus_areas_v1",
-           "pep_vintage_v1", "tracts_v3_47_2024")
+           "pep_vintage_v1", "tracts_v4_47_2024")
   for (f in all)
     saveRDS(list(value = f, fetched_at = Sys.time()), file.path(cache, paste0(f, ".rds")))
   got <- risk_seed_update(cache_dir = cache, seed_dir = seed)
-  skipped <- c("pep_county_2024", "laus_metro_n390", "tracts_v3_47_2024")
+  skipped <- c("pep_county_2024", "laus_metro_n390", "tracts_v4_47_2024")
   expect_setequal(got, paste0(setdiff(all, skipped), ".rds"))
   expect_setequal(list.files(seed), got)
+})
+
+test_that("seed update copies the LODES year probe, never LODES or tract-industry data", {
+  cache <- tempfile("cache"); dir.create(cache)
+  seed <- tempfile("seed")
+  all <- c("lodes_year_v1", "lodes_rac_47_2022", "tract_ind_47_2024", "tracts_v4_47_2024")
+  for (f in all)
+    saveRDS(list(value = f, fetched_at = Sys.time()), file.path(cache, paste0(f, ".rds")))
+  got <- risk_seed_update(cache_dir = cache, seed_dir = seed)
+  expect_equal(got, "lodes_year_v1.rds")
+  expect_equal(list.files(seed), "lodes_year_v1.rds")
 })
