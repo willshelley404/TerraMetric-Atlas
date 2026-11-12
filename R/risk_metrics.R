@@ -174,6 +174,9 @@ tract_moe_flags <- function(df, cfg = RISK_CFG) {
   }
 }
 
+# Columns whose state rank comes from a state-frame twin, not the frame value.
+.ST_RANK_SRC <- c(assist_score = "assist_score_st", assist_cushion = "assist_cushion_st")
+
 rank_tracts <- function(tracts_all, county_base, frame_counties, vars) {
   cb <- .plain_df(county_base)
   fr <- .tract_frame(frame_counties[1], cb)
@@ -181,7 +184,9 @@ rank_tracts <- function(tracts_all, county_base, frame_counties, vars) {
   in_frame <- tracts_all$county_geoid %in% frame_counties
   for (v in intersect(vars, names(tracts_all))) {
     x <- tracts_all[[v]]
-    tracts_all[[paste0("st_pct_", v)]] <- stats::ave(x, st, FUN = pct_rank)
+    src <- unname(.ST_RANK_SRC[v])
+    sx <- if (!is.na(src) && src %in% names(tracts_all)) tracts_all[[src]] else x
+    tracts_all[[paste0("st_pct_", v)]] <- stats::ave(sx, st, FUN = pct_rank)
     lm <- rep(NA_real_, length(x))
     lm[in_frame] <- pct_rank(x[in_frame])
     tracts_all[[paste0("lm_pct_", v)]] <- lm
@@ -194,16 +199,39 @@ rank_tracts <- function(tracts_all, county_base, frame_counties, vars) {
 
 #' Tracts for the labor market around a clicked county, ranked within that
 #' market and within each tract's state. States that fail to load are reported.
+#' `fetch_jobs(state_fips, acs_geoids)` returns that state's job table (attr "source")
+#' or NULL; `sources` maps each loaded state to its source text. The assistance
+#' columns are ranked on top of `vars`, so the drill-down works before the layers
+#' are registered.
 tracts_for_county <- function(county_geoid, county_base, fetch = fetch_state_tracts,
+                              fetch_jobs = .tract_jobs,
+                              weights = attr(county_base, "sector_weights"),
                               vars = .tract_vars()) {
   cb <- .plain_df(county_base)
   fr <- .tract_frame(county_geoid, cb)
   states <- unique(c(substr(county_geoid, 1, 2), substr(fr$counties, 1, 2)))
   got <- lapply(states, function(s) tryCatch(fetch(s), error = function(e) NULL))
   failed <- vapply(got, is.null, logical(1))
-  out <- list(tracts = NULL, frame_label = fr$label, missing_states = states[failed])
+  out <- list(tracts = NULL, frame_label = fr$label, missing_states = states[failed],
+              sources = character(0))
   if (all(failed)) return(out)
-  ranked <- rank_tracts(do.call(rbind, got[!failed]), cb, fr$counties, vars)
+  ok <- states[!failed]
+  got <- got[!failed]
+  jobs <- lapply(seq_along(ok), function(i) {
+    j <- tryCatch(fetch_jobs(ok[i], got[[i]]$GEOID), error = function(e) NULL)
+    if (is.null(j)) return(NULL)
+    src <- attr(j, "source")
+    j <- tibble::as_tibble(as.data.frame(j))
+    j$assist_source <- rep(if (is.null(src)) NA_character_ else src, nrow(j))
+    j
+  })
+  out$sources <- stats::setNames(
+    vapply(jobs, function(j) if (is.null(j)) NA_character_ else j$assist_source[1], ""), ok)
+  jobs_all <- if (all(vapply(jobs, is.null, logical(1)))) NULL else dplyr::bind_rows(jobs)
+  tr <- assistance_tracts(do.call(rbind, got), jobs_all, weights, county_base, fr$counties)
+  rank_vars <- union(vars, c("assist_score", "assist_exposure", "assist_cushion",
+                             "assist_workers"))
+  ranked <- rank_tracts(tr, cb, fr$counties, rank_vars)
   out$tracts <- ranked[ranked$county_geoid %in% fr$counties, ]
   out
 }
@@ -619,4 +647,74 @@ assistance_score <- function(exposure, cushion_inputs, J, group, cfg = RISK_CFG)
   score <- round(100 * ((pct_exposure / 100) * (pct_cushion / 100) * J)^(1 / 3), 1)
   tibble::tibble(pct_exposure = pct_exposure, cushion = cushion,
                  pct_cushion = pct_cushion, score = score)
+}
+
+# ── Assistance in the tract drill-down ───────────────────────────────────────
+#' Job table for one state: LODES when available, else ACS resident industry, else
+#' NULL. attr "source" carries the text shown beside the score.
+.tract_jobs <- function(state_fips, acs_geoids) {
+  lodes <- fetch_lodes_rac(state_fips)
+  if (!is.null(lodes)) {
+    yr <- attr(lodes, "lodes_year")   # read before remap: `[` drops attributes
+    jobs <- lodes_group_jobs(lodes_ct_remap(lodes, acs_geoids))
+    attr(jobs, "source") <- if (is.null(yr)) "LODES" else sprintf("LODES %s", yr)
+    return(jobs)
+  }
+  ind <- fetch_state_tract_industry(state_fips)
+  if (is.null(ind)) return(NULL)
+  y <- attr(ind, "acs_year")
+  why <- if (state_fips %in% RISK_CFG$lodes_exclude_states) "incomplete for this state" else
+    "unavailable"
+  jobs <- acs_group_jobs(ind)
+  attr(jobs, "source") <- sprintf("ACS %d\u2013%d (LODES %s)", y - 4, y, why)
+  jobs
+}
+
+#' Add the assistance columns to tracts (all loaded states, any frame).
+#' `jobs`: bound job tables (GEOID, jobs_*, shares, optional assist_source) or NULL.
+#' Exposure and workers do not depend on the frame, so every tract gets them; the
+#' cushion percentile and score rank within the frame (tracts in `frame_counties`,
+#' NA elsewhere), and the `_st` twins rank within each state. NULL `weights` blanks
+#' every numeric assist_* column.
+assistance_tracts <- function(tracts, jobs, weights, county_layers, frame_counties) {
+  n <- nrow(tracts)
+  na <- rep(NA_real_, n)
+  idx <- if (is.null(jobs)) rep(NA_integer_, n) else match(tracts$GEOID, jobs$GEOID)
+  jb <- tibble::tibble(GEOID = tracts$GEOID, jobs_total = na)
+  for (col in .JOB_COLS) jb[[col]] <- na
+  jb$low_wage_share <- na
+  jb$young_share <- na
+  if (!is.null(jobs)) {
+    for (col in setdiff(names(jb), "GEOID")) {
+      if (col %in% names(jobs)) jb[[col]] <- jobs[[col]][idx]
+    }
+  }
+  e <- exposure_from_jobs(jb, weights)
+  tracts$exposure <- e$exposure
+  tracts$exp_workers <- e$exp_workers
+  tracts$weak_share <- e$weak_share
+  tracts$low_wage_share <- jb$low_wage_share
+  tracts$young_share <- jb$young_share
+  tracts$assist_source <- if (!is.null(jobs) && "assist_source" %in% names(jobs))
+    jobs$assist_source[idx] else rep(NA_character_, n)
+  tracts$job_pressure <- job_pressure(county_layers)[match(tracts$county_geoid,
+                                                           county_layers$GEOID)]
+
+  col_or_na <- function(v) if (v %in% names(tracts)) as.numeric(tracts[[v]]) else na
+  cushion_in <- data.frame(low_wage_share = tracts$low_wage_share,
+                           young_share = tracts$young_share,
+                           rent_burden_rate = col_or_na("rent_burden_rate"),
+                           poverty_rate = col_or_na("poverty_rate"))
+  frame_grp <- ifelse(tracts$county_geoid %in% frame_counties, "frame", NA_character_)
+  fr <- assistance_score(e$exposure, cushion_in, tracts$job_pressure, frame_grp)
+  st <- assistance_score(e$exposure, cushion_in, tracts$job_pressure,
+                         substr(tracts$GEOID, 1, 2))
+  blank <- is.null(weights)
+  tracts$assist_score <- fr$score
+  tracts$assist_exposure <- round(100 * e$exposure, 1)
+  tracts$assist_cushion <- if (blank) na else fr$pct_cushion
+  tracts$assist_workers <- e$exp_workers
+  tracts$assist_score_st <- st$score
+  tracts$assist_cushion_st <- if (blank) na else st$pct_cushion
+  tracts
 }

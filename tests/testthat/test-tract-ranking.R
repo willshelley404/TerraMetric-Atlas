@@ -18,6 +18,8 @@ rk_tracts <- function(county, pov) {
                                   crs = 4326))
 }
 
+rk_no_jobs <- function(state_fips, acs_geoids) NULL
+
 rk_fetch <- function(missing = character()) {
   states <- list(
     "47" = rk_tracts("47065", c(10, 20)),
@@ -28,7 +30,8 @@ rk_fetch <- function(missing = character()) {
 }
 
 test_that("metro tracts rank across state lines", {
-  r <- tracts_for_county("47065", rk_county_base(), fetch = rk_fetch(), vars = "poverty_rate")
+  r <- tracts_for_county("47065", rk_county_base(), fetch = rk_fetch(),
+                         fetch_jobs = rk_no_jobs, vars = "poverty_rate")
   expect_equal(r$frame_label, "in Chattanooga metro")
   expect_setequal(r$tracts$county_geoid, c("47065", "13295"))
   t <- r$tracts[order(r$tracts$poverty_rate), ]
@@ -38,7 +41,8 @@ test_that("metro tracts rank across state lines", {
 })
 
 test_that("state rank uses whole state", {
-  r <- tracts_for_county("13295", rk_county_base(), fetch = rk_fetch(), vars = "poverty_rate")
+  r <- tracts_for_county("13295", rk_county_base(), fetch = rk_fetch(),
+                         fetch_jobs = rk_no_jobs, vars = "poverty_rate")
   ga <- r$tracts[r$tracts$county_geoid == "13295", ]
   ga_all <- c(30, 40, 5, 50, 12, NA, 22)
   expected <- pct_rank(ga_all)[1:2]
@@ -50,7 +54,8 @@ test_that("state rank uses whole state", {
 })
 
 test_that("non-CBSA tracts rank within state non-CBSA frame", {
-  r <- tracts_for_county("13001", rk_county_base(), fetch = rk_fetch(), vars = "poverty_rate")
+  r <- tracts_for_county("13001", rk_county_base(), fetch = rk_fetch(),
+                         fetch_jobs = rk_no_jobs, vars = "poverty_rate")
   expect_equal(r$frame_label, "in non-metro Georgia")
   expect_setequal(unique(r$tracts$county_geoid), c("13001", "13003"))
   has <- !is.na(r$tracts$poverty_rate)
@@ -60,7 +65,7 @@ test_that("non-CBSA tracts rank within state non-CBSA frame", {
 
 test_that("missing state is reported, others still ranked", {
   r <- tracts_for_county("47065", rk_county_base(), fetch = rk_fetch(missing = "13"),
-                         vars = "poverty_rate")
+                         fetch_jobs = rk_no_jobs, vars = "poverty_rate")
   expect_equal(r$missing_states, "13")
   expect_equal(unique(r$tracts$county_geoid), "47065")
   expect_equal(sort(r$tracts$lm_pct_poverty_rate), c(0, 100))
@@ -68,7 +73,7 @@ test_that("missing state is reported, others still ranked", {
 
 test_that("all states missing returns NULL tracts", {
   r <- tracts_for_county("47065", rk_county_base(), fetch = rk_fetch(missing = c("13", "47")),
-                         vars = "poverty_rate")
+                         fetch_jobs = rk_no_jobs, vars = "poverty_rate")
   expect_null(r$tracts)
   expect_setequal(r$missing_states, c("47", "13"))
 })

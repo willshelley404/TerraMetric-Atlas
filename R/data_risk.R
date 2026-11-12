@@ -429,7 +429,7 @@ fetch_state_tracts <- function(state_fips, year = NULL) {
     year <- risk_acs_year()
   }
   # Bump the "v" in the key whenever the tract columns change, so old disk copies are ignored.
-  risk_cached(sprintf("tracts_v3_%s_%d", state_fips, year), 30, function() {
+  risk_cached(sprintf("tracts_v4_%s_%d", state_fips, year), 30, function() {
     tidycensus::get_acs(geography = "tract", state = state_fips, variables = ACS_VARS,
                         year = year, survey = "acs5", output = "wide",
                         geometry = TRUE, cb = TRUE) |>
@@ -439,9 +439,31 @@ fetch_state_tracts <- function(state_fips, year = NULL) {
       dplyr::transmute(GEOID, tract_name = gsub("; ", ", ", NAME),
                        county_geoid = substr(GEOID, 1, 5),
                        dplyr::across(dplyr::all_of(.ACS_METRIC_COLS)),
+                       rent_burdened_hh = rb_30_34E + rb_35_39E + rb_40_49E + rb_50_plusE,
                        dplyr::across(dplyr::ends_with("_moe")),
                        dplyr::across(dplyr::starts_with("noisy")))
   })
+}
+
+#' Employed residents by industry group per tract in one state (ACS C24030), cached 30
+#' days. Same shape as fetch_county_industry(); the ACS fallback when LODES is missing.
+fetch_state_tract_industry <- function(state_fips, year = NULL) {
+  if (is.null(year)) year <- risk_acs_year()
+  if (is.null(year)) return(NULL)
+  out <- risk_cached(sprintf("tract_ind_%s_%d", state_fips, year), 30, fetch_fn = function() {
+    vars <- c("C24030_001", RISK_SECTORS$acs_m, RISK_SECTORS$acs_f)
+    raw <- tidycensus::get_acs(geography = "tract", state = state_fips, variables = vars,
+                               year = year, survey = "acs5", output = "wide")
+    est <- function(v) raw[[paste0(v, "E")]]
+    res <- tibble::tibble(GEOID = raw$GEOID, emp_total = est("C24030_001"))
+    for (i in seq_len(nrow(RISK_SECTORS))) {
+      res[[paste0("emp_", RISK_SECTORS$group[i])]] <-
+        est(RISK_SECTORS$acs_m[i]) + est(RISK_SECTORS$acs_f[i])
+    }
+    res
+  })
+  if (!is.null(out)) attr(out, "acs_year") <- year
+  out
 }
 
 # ── Census PEP county estimates (migration) ──────────────────────────────────
