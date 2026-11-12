@@ -7538,7 +7538,7 @@
       "checksum": "c37f4cdab97c3a296a61934b099c6baa"
     },
     "R/map_risk.R": {
-      "checksum": "5ac97b99b6cdc2b0033e83e11ea9fffd"
+      "checksum": "4a8f870a631efe0fbbc2f8ab314b17b9"
     },
     "R/risk_metrics.R": {
       "checksum": "c699cd05e5c558f8e44cf92dedcb6c6f"
@@ -7556,7 +7556,7 @@
       "checksum": "f39d7e5ff82ee898c9e2389a13b090d5"
     },
     "server.R": {
-      "checksum": "7f6c68c642943a5ca23fa5d5a93a896b"
+      "checksum": "fcfef0b51db669b436f848fd75b1f4d3"
     },
     "ui.R": {
       "checksum": "c6f00c48ac4515aa946a6234830fac6b"

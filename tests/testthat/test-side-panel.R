@@ -34,3 +34,15 @@ test_that("side panel reports missing states", {
   h <- as.character(risk_side_panel(l[l$GEOID == "13295", ], "county", l, missing_states = "13"))
   expect_true(grepl("Tract data unavailable for: Georgia", h, fixed = TRUE))
 })
+
+test_that("a quiet (None) Stress now flag is not shown in the panel row or tooltip", {
+  l <- build_county_layers(fx_county_base(), fx_momentum())
+  h <- as.character(risk_side_panel(l[l$GEOID == "13295", ], "county", l))
+  expect_true(grepl("a year ago", h, fixed = TRUE))
+  expect_false(grepl("· None", h, fixed = TRUE))
+  expect_true(grepl("Sahm-style trigger",
+                    as.character(risk_side_panel(l[l$GEOID == "09110", ], "county", l)), fixed = TRUE))
+  tip <- as.character(.county_tooltips(l[l$GEOID == "13295", ], "stress_now",
+                                       RISK_LAYERS$stress_now, "Sep 2026"))
+  expect_false(grepl("· None", tip, fixed = TRUE))
+})

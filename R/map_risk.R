@@ -141,6 +141,8 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 
 # Display text for the Stress now flag column (values stay Trigger/Rising/None).
 .flag_text <- function(flag) ifelse(flag %in% "Trigger", "Sahm-style trigger", flag)
+# Only a raised flag is worth showing; "None" is the quiet default.
+.flag_shown <- function(flag) flag %in% c("Rising", "Trigger")
 
 #' digits applies to "pp" (layers may set `digits` in RISK_LAYERS; default 1). Values that
 #' round to zero print as +0.0 / +0.00, never a signed zero.
@@ -208,7 +210,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
   }
   vtxt <- .risk_fmt(d[[cfg$col]], cfg$fmt, cfg$digits %||% 1)
   if (id == "stress_now") {
-    has_flag <- !is.na(vtxt) & !is.na(d$flag)
+    has_flag <- !is.na(vtxt) & .flag_shown(d$flag)
     vtxt[has_flag] <- paste0(vtxt[has_flag], " · ", .flag_text(d$flag[has_flag]))
   }
   pct <- d[[paste0("pct_", cfg$col)]]
@@ -479,7 +481,9 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
     v <- as.numeric(get(cfg$col))
     vt <- .risk_fmt(v, cfg$fmt, cfg$digits %||% 1)
     if (id == "stress_now" && !is.na(v)) {
-      vt <- sprintf("%s · %s (%.1f%% now vs %.1f%% a year ago)", vt, .flag_text(get("flag")),
+      fl <- get("flag")
+      vt <- sprintf("%s%s (%.1f%% now vs %.1f%% a year ago)", vt,
+                    if (.flag_shown(fl)) paste0(" · ", .flag_text(fl)) else "",
                     get("rate_now"), get("rate_yr_ago"))
     }
     moe <- get(paste0(cfg$col, "_moe"))

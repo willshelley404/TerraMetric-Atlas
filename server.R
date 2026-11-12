@@ -1348,7 +1348,7 @@ server <- function(input, output, session) {
       })
       if (!is.null(mm)) {
         risk_set_parts(metro_momentum = mm)
-        risk_rebuild()
+        risk_rebuild(redraw = FALSE)   # the Stress ahead step below redraws once
       }
     }, error = function(e) message("[Risk] Metro unemployment step failed: ", conditionMessage(e)))
 
