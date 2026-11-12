@@ -1317,61 +1317,69 @@ server <- function(input, output, session) {
 
   observeEvent(rv$laus_go, {
     req(rv$risk_base)
-    # A throw anywhere in this half must not leave Stress now "loading" or block Stress ahead.
+    # Each part sets its inputs and rebuilds without drawing; ONE redraw at the end
+    # (the browser decodes queued 4 MB frames back to back, so extra redraws delay the map).
+    # A throw anywhere must not leave Stress now / Stress ahead "loading", hence `finally`.
     tryCatch({
-      laus <- withProgress(message = "County unemployment (BLS)…", value = 0.4, {
-        tryCatch(fetch_laus_county(rv$risk_base$GEOID), error = function(e) {
-          message("[Risk] LAUS failed: ", conditionMessage(e)); NULL
+      tryCatch({
+        laus <- withProgress(message = "County unemployment (BLS)…", value = 0.4, {
+          tryCatch(fetch_laus_county(rv$risk_base$GEOID), error = function(e) {
+            message("[Risk] LAUS failed: ", conditionMessage(e)); NULL
+          })
         })
-      })
-      mom <- if (!is.null(laus) && nrow(laus) > 0) laus_momentum(laus) else NULL
-      risk_set_parts(momentum = mom, laus_stale = isTRUE(attr(laus, "stale")),
-                     laus_partial = isTRUE(attr(laus, "partial")), laus_loading = FALSE)
-      risk_rebuild()
-    }, error = function(e) {
-      message("[Risk] County unemployment step failed: ", conditionMessage(e))
-      risk_set_parts(laus_loading = FALSE)
-    })
-
-    # Metro unemployment (8 more BLS calls). Own tryCatch: a failure only drops the metro line.
-    tryCatch({
-      mm <- withProgress(message = "Metro unemployment (BLS)…", value = 0.4, {
-        tryCatch({
-          a <- fetch_laus_areas()
-          if (is.null(a)) NULL else {
-            ml <- fetch_laus_metro(a$series_id)
-            if (!is.null(ml) && nrow(ml) > 0) laus_momentum(ml) else NULL
-          }
-        }, error = function(e) {
-          message("[Risk] Metro LAUS failed: ", conditionMessage(e)); NULL
-        })
-      })
-      if (!is.null(mm)) {
-        risk_set_parts(metro_momentum = mm)
-        risk_rebuild(redraw = FALSE)   # the Stress ahead step below redraws once
-      }
-    }, error = function(e) message("[Risk] Metro unemployment step failed: ", conditionMessage(e)))
-
-    # Stress ahead: FRED sector payrolls x ACS industry mix (both cached; each NULL on failure).
-    sa <- withProgress(message = "Sector payrolls and industry mix…", value = 0.4, {
-      quiet <- function(f, ...) tryCatch(f(...), error = function(e) {
-        message("[Risk] Stress ahead input failed: ", conditionMessage(e)); NULL
-      })
-      fred <- quiet(fetch_fred_sectors)
-      ind <- quiet(fetch_county_industry, attr(rv$risk_base, "acs_year"))
-      if (is.null(fred) || is.null(ind)) NULL else tryCatch({
-        w <- sector_weights(fred)
-        s <- stress_ahead(ind, w)
-        attr(s, "weights") <- w
-        attr(s, "stale") <- isTRUE(attr(fred, "stale")) || isTRUE(attr(ind, "stale"))
-        s
+        mom <- if (!is.null(laus) && nrow(laus) > 0) laus_momentum(laus) else NULL
+        risk_set_parts(momentum = mom, laus_stale = isTRUE(attr(laus, "stale")),
+                       laus_partial = isTRUE(attr(laus, "partial")), laus_loading = FALSE)
+        risk_rebuild(redraw = FALSE)
       }, error = function(e) {
-        message("[Risk] Stress ahead failed: ", conditionMessage(e)); NULL
+        message("[Risk] County unemployment step failed: ", conditionMessage(e))
+        risk_set_parts(laus_loading = FALSE)
       })
+
+      # Metro unemployment (8 more BLS calls). Own tryCatch: a failure only drops the metro line.
+      tryCatch({
+        mm <- withProgress(message = "Metro unemployment (BLS)…", value = 0.4, {
+          tryCatch({
+            a <- fetch_laus_areas()
+            if (is.null(a)) NULL else {
+              ml <- fetch_laus_metro(a$series_id)
+              if (!is.null(ml) && nrow(ml) > 0) laus_momentum(ml) else NULL
+            }
+          }, error = function(e) {
+            message("[Risk] Metro LAUS failed: ", conditionMessage(e)); NULL
+          })
+        })
+        if (!is.null(mm)) {
+          risk_set_parts(metro_momentum = mm)
+          risk_rebuild(redraw = FALSE)
+        }
+      }, error = function(e) message("[Risk] Metro unemployment step failed: ", conditionMessage(e)))
+
+      # Stress ahead: FRED sector payrolls x ACS industry mix (both cached; each NULL on failure).
+      sa <- withProgress(message = "Sector payrolls and industry mix…", value = 0.4, {
+        quiet <- function(f, ...) tryCatch(f(...), error = function(e) {
+          message("[Risk] Stress ahead input failed: ", conditionMessage(e)); NULL
+        })
+        fred <- quiet(fetch_fred_sectors)
+        ind <- quiet(fetch_county_industry, attr(rv$risk_base, "acs_year"))
+        if (is.null(fred) || is.null(ind)) NULL else tryCatch({
+          w <- sector_weights(fred)
+          s <- stress_ahead(ind, w)
+          attr(s, "weights") <- w
+          attr(s, "stale") <- isTRUE(attr(fred, "stale")) || isTRUE(attr(ind, "stale"))
+          s
+        }, error = function(e) {
+          message("[Risk] Stress ahead failed: ", conditionMessage(e)); NULL
+        })
+      })
+      risk_set_parts(stress_ahead = sa,
+                     loading = setdiff(rv$risk_parts$loading, "stress_ahead"))
+      risk_rebuild(redraw = FALSE)
+    }, finally = {
+      risk_set_parts(laus_loading = FALSE,
+                     loading = setdiff(rv$risk_parts$loading, "stress_ahead"))
+      risk_rebuild()
     })
-    risk_set_parts(stress_ahead = sa,
-                   loading = setdiff(rv$risk_parts$loading, "stress_ahead"))
-    risk_rebuild()
   })
 
   # Rendered once when the county base is ready; later updates go through the proxy.
