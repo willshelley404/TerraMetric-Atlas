@@ -157,7 +157,8 @@ All formulas below are **my calls**. Constants live in one named config list so 
 - **Counts** for budgeting:
   - **Exposure-weighted workers** `Σ_s jobs_ts × w_s`, labeled as an index-like headcount, not a layoff forecast;
   - rent-burdened households (ACS).
-- **Noise flag:** if a tract's ACS poverty or rent-burden MOE is above 50% of the estimate, hatch or outline it and say so in the popup.
+- **Noise flag (revised during build, 2026-11-12):** flags are **per layer**. A tract is outlined on the poverty layer when its poverty MOE exceeds the estimate itself (90% MOE / estimate > 1.0, i.e. CV above about 61%, "very unreliable"), and likewise for rent burden on its own layer. Other layers carry no flag. The popup says so, and the side panel always shows ± MOE.
+  - **Why the original rule changed:** the original "above 50% of the estimate" rule flagged 67% of Chattanooga-metro tracts, which carries no information. The median tract rent-burden MOE in TN+GA is ±22 pp. The revised rule flags about 6% of tracts on poverty and about 16% on rent burden.
 
 ### 9.5 Credit lens (county)
 

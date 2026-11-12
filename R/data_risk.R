@@ -194,3 +194,24 @@ fetch_county_base <- function(year = NULL) {
   attr(out, "fetched_at") <- attr(shapes, "fetched_at")
   out
 }
+
+# ── Tracts: one state at a time, ACS values + shapes + MOE flags ─────────────
+fetch_state_tracts <- function(state_fips, year = NULL) {
+  if (is.null(year)) {
+    year <- as.integer(risk_cached("acs_year", 30, function() .best_acs_year(2024)))
+  }
+  # Bump the "v" in the key whenever the tract columns change, so old disk copies are ignored.
+  risk_cached(sprintf("tracts_v2_%s_%d", state_fips, year), 30, function() {
+    tidycensus::get_acs(geography = "tract", state = state_fips, variables = ACS_VARS,
+                        year = year, survey = "acs5", output = "wide",
+                        geometry = TRUE, cb = TRUE) |>
+      .derive_metrics() |>
+      tract_moe_flags() |>
+      sf::st_transform(4326) |>
+      dplyr::transmute(GEOID, tract_name = gsub("; ", ", ", NAME),
+                       county_geoid = substr(GEOID, 1, 5),
+                       dplyr::across(dplyr::all_of(.ACS_METRIC_COLS)),
+                       poverty_rate_moe, rent_burden_rate_moe,
+                       noisy_poverty_rate, noisy_rent_burden_rate, noisy)
+  })
+}
