@@ -59,3 +59,34 @@ laus_momentum <- function(laus, cfg = RISK_CFG) {
     ) %>%
     dplyr::select(fips, ref_month, rate_now, rate_yr_ago, momentum_pp, flag)
 }
+
+# ── County layers: join Stress now, add national percentiles, status/as-of ───
+build_county_layers <- function(county_base, momentum, laus_stale = FALSE) {
+  out <- county_base
+  if (is.null(momentum)) {
+    out$ref_month <- as.Date(NA); out$rate_now <- NA_real_; out$rate_yr_ago <- NA_real_
+    out$momentum_pp <- NA_real_; out$flag <- NA_character_
+  } else {
+    out <- dplyr::left_join(out, dplyr::rename(momentum, GEOID = fips), by = "GEOID")
+  }
+  for (id in names(RISK_LAYERS)) {
+    col <- RISK_LAYERS[[id]]$col
+    out[[paste0("pct_", col)]] <- pct_rank(out[[col]])
+  }
+
+  yr <- attr(county_base, "acs_year")
+  ids <- names(RISK_LAYERS)
+  status <- stats::setNames(rep("ok", length(ids)), ids)
+  asof <- stats::setNames(rep(sprintf("ACS %d–%d", yr - 4, yr), length(ids)), ids)
+  if (is.null(momentum)) {
+    status[["stress_now"]] <- "unavailable"
+    asof[["stress_now"]] <- NA_character_
+  } else {
+    asof[["stress_now"]] <- format(max(momentum$ref_month, na.rm = TRUE), "%b %Y")
+    if (isTRUE(laus_stale)) status[["stress_now"]] <- "stale"
+  }
+  attr(out, "layer_status") <- status
+  attr(out, "asof") <- asof
+  attr(out, "acs_year") <- yr
+  out
+}

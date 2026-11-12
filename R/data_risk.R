@@ -130,3 +130,67 @@ fetch_laus_county <- function(fips, years = 3, key = Sys.getenv("BLS_API_KEY"),
     parse_bls_laus(unlist(results[ok], recursive = FALSE))
   })
 }
+
+# ── County base: shapes + CBSA crosswalk + ACS county metrics ────────────────
+#' County → CBSA (metro and micro) by each county's point on surface. CBSAs are
+#' unions of counties, so this is exact; planar CRS avoids lon/lat warnings.
+county_cbsa_xwalk <- function(counties_sf, cbsa_sf) {
+  pts <- sf::st_transform(counties_sf[, "GEOID"], 5070)
+  sf::st_agr(pts) <- "constant"
+  pts <- sf::st_point_on_surface(pts)
+  cb <- sf::st_transform(cbsa_sf, 5070) |>
+    dplyr::transmute(cbsa_geoid = GEOID,
+                     cbsa_name = sub(",.*$", "", NAME),
+                     cbsa_type = dplyr::case_when(LSAD == "M1" ~ "metro",
+                                                  LSAD == "M2" ~ "micro area",
+                                                  TRUE ~ NA_character_))
+  j <- suppressWarnings(sf::st_join(pts, cb, join = sf::st_within, left = TRUE))
+  j <- sf::st_drop_geometry(j)
+  tibble::as_tibble(j[!duplicated(j$GEOID), c("GEOID", "cbsa_geoid", "cbsa_name", "cbsa_type")])
+}
+
+.ACS_METRIC_COLS <- c("pop", "med_age", "unemp_rate", "lfp_rate", "poverty_rate",
+                      "vacancy_rate", "rent_burden_rate", "bachelors_plus_rate",
+                      "med_income", "per_cap_income", "med_home_val", "med_rent")
+
+#' All US counties (50 states + DC) with names, state, CBSA and ACS context metrics.
+fetch_county_base <- function(year = NULL) {
+  if (is.null(year)) {
+    year <- as.integer(risk_cached("acs_year", 30, function() .best_acs_year(2024)))
+  }
+  shapes <- risk_cached("county_shapes_2024", 90, function() {
+    tigris::counties(cb = TRUE, resolution = "20m", year = 2024, progress_bar = FALSE) |>
+      sf::st_transform(4326) |>
+      dplyr::filter(as.integer(STATEFP) <= 56) |>
+      dplyr::transmute(GEOID, name = paste0(NAMELSAD, ", ", STUSPS),
+                       state_fips = STATEFP, state_abbr = STUSPS, state_name = STATE_NAME)
+  })
+  if (is.null(shapes)) return(NULL)
+  xwalk <- risk_cached("cbsa_xwalk_2023", 90, function() {
+    cbsa <- tigris::core_based_statistical_areas(cb = TRUE, resolution = "20m",
+                                                 year = 2023, progress_bar = FALSE)
+    county_cbsa_xwalk(shapes, cbsa)
+  })
+  acs <- risk_cached(sprintf("county_acs_%d", year), 30, function() {
+    tidycensus::get_acs(geography = "county", variables = ACS_VARS, year = year,
+                        survey = "acs5", output = "wide") |>
+      .derive_metrics() |>
+      dplyr::select(GEOID, dplyr::all_of(.ACS_METRIC_COLS))
+  })
+
+  out <- shapes
+  if (!is.null(xwalk)) {
+    out <- dplyr::left_join(out, xwalk, by = "GEOID")
+  } else {
+    out$cbsa_geoid <- NA_character_; out$cbsa_name <- NA_character_
+    out$cbsa_type <- NA_character_
+  }
+  if (!is.null(acs)) {
+    out <- dplyr::left_join(out, tibble::as_tibble(acs), by = "GEOID")
+  } else {
+    for (col in .ACS_METRIC_COLS) out[[col]] <- NA_real_
+  }
+  attr(out, "acs_year") <- year
+  attr(out, "fetched_at") <- attr(shapes, "fetched_at")
+  out
+}
