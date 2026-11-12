@@ -10,3 +10,4 @@ docs/recession_model_snapshot.rds
 
 # Superpowers brainstorm/ledger scratch
 .superpowers/
+.claude/worktrees/
