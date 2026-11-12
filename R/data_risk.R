@@ -3,15 +3,28 @@
 # ─────────────────────────────────────────────────────────────────────────────
 
 # ── Cache: process memory + .rds on disk, per-key TTL, stale-on-error ────────
+# Lookup order: memory -> disk cache -> starter copy shipped in the repo
+# (data/risk_seed/, see risk_seed_update()) -> fetch. A stale starter copy is
+# served at once while a background R process (callr) refreshes the disk cache.
 .RISK_CACHE_ENV <- new.env(parent = emptyenv())
+.RISK_BG_JOBS <- new.env(parent = emptyenv())
 
 risk_cache_dir <- function() {
+  opt <- getOption("risk.cache_dir")
+  if (!is.null(opt) && nzchar(opt)) return(opt)
   d <- tryCatch({
     p <- tools::R_user_dir("TerraMetricAtlas", "cache")
     dir.create(p, recursive = TRUE, showWarnings = FALSE)
     if (dir.exists(p)) p else NULL
   }, error = function(e) NULL)
   d %||% tempdir()
+}
+
+#' Starter-copy directory (relative to the app root); option risk.seed_dir = ""
+#' disables it (the background refresher does this so it always fetches).
+risk_seed_dir <- function() {
+  d <- getOption("risk.seed_dir", file.path("data", "risk_seed"))
+  if (is.null(d) || !nzchar(d)) NULL else d
 }
 
 risk_cache_clear_memory <- function() {
@@ -23,7 +36,18 @@ risk_cache_clear_memory <- function() {
   v <- entry$value
   attr(v, "fetched_at") <- entry$fetched_at
   attr(v, "stale") <- stale
+  attr(v, "seed") <- isTRUE(entry$seed)
   v
+}
+
+.risk_seed_entry <- function(key, seed_dir) {
+  if (is.null(seed_dir)) return(NULL)
+  path <- file.path(seed_dir, paste0(key, ".rds"))
+  if (!file.exists(path)) return(NULL)
+  e <- tryCatch(readRDS(path), error = function(e) NULL)
+  if (is.null(e) || is.null(e$value)) return(NULL)
+  e$seed <- TRUE
+  e
 }
 
 #' Return a cached value, refreshing it via fetch_fn() when older than ttl_days.
@@ -31,8 +55,11 @@ risk_cache_clear_memory <- function() {
 #' A value may carry attr "ttl_days" to shorten its own lifetime (e.g. a partial
 #' pull). fail_ttl_days > 0 remembers a failure with no fallback in process
 #' memory, so later sessions skip the fetch until it expires.
+#' bg = list(id, fn, args): when a stale starter copy is all there is, serve it
+#' and refresh by running fn(args) in a background R process instead of blocking.
 risk_cached <- function(key, ttl_days, fetch_fn, cache_dir = risk_cache_dir(),
-                        now = Sys.time(), fail_ttl_days = 0) {
+                        now = Sys.time(), fail_ttl_days = 0, seed_dir = risk_seed_dir(),
+                        bg = NULL, bg_start = .risk_bg_start) {
   path <- file.path(cache_dir, paste0(key, ".rds"))
   age <- function(t) as.numeric(difftime(now, t, units = "days"))
   fresh <- function(e) !is.null(e) && !is.null(e$value) &&
@@ -44,10 +71,24 @@ risk_cached <- function(key, ttl_days, fetch_fn, cache_dir = risk_cache_dir(),
   if (fresh(entry)) return(.risk_cache_out(entry, FALSE))
   if (is.null(entry) && !is.null(failed_at) && age(failed_at) < fail_ttl_days) return(NULL)
 
-  if (is.null(entry) && file.exists(path)) {
-    entry <- tryCatch(readRDS(path), error = function(e) NULL)
-    if (!is.null(entry)) assign(key, entry, envir = .RISK_CACHE_ENV)
+  if ((is.null(entry) || isTRUE(entry$seed)) && file.exists(path)) {
+    disk <- tryCatch(readRDS(path), error = function(e) NULL)
+    if (!is.null(disk)) { entry <- disk; assign(key, entry, envir = .RISK_CACHE_ENV) }
     if (fresh(entry)) return(.risk_cache_out(entry, FALSE))
+  }
+
+  if (is.null(entry)) {
+    entry <- .risk_seed_entry(key, seed_dir)
+    if (!is.null(entry)) {
+      assign(key, entry, envir = .RISK_CACHE_ENV)
+      if (fresh(entry)) return(.risk_cache_out(entry, FALSE))
+    }
+  }
+
+  if (!is.null(bg) && isTRUE(entry$seed)) {
+    bg_failed <- .RISK_CACHE_ENV[[paste0(key, "__bgfail")]]
+    if (is.null(bg_failed) || age(bg_failed) >= 1 / 24) bg_start(bg, key)
+    return(.risk_cache_out(entry, TRUE))
   }
 
   value <- tryCatch(fetch_fn(), error = function(e) {
@@ -66,6 +107,74 @@ risk_cached <- function(key, ttl_days, fetch_fn, cache_dir = risk_cache_dir(),
   if (!is.null(entry)) return(.risk_cache_out(entry, TRUE))
   if (fail_ttl_days > 0) assign(fail_key, now, envir = .RISK_CACHE_ENV)
   NULL
+}
+
+# ── Background refresh of stale starter copies (separate R process) ──────────
+#' Start (or join) background job bg$id, which runs bg$fn(bg$args) in a fresh R
+#' process with the starter copy disabled, so it fetches and writes the disk cache.
+.risk_bg_start <- function(bg, key) {
+  job <- .RISK_BG_JOBS[[bg$id]]
+  if (!is.null(job)) {
+    job$keys <- union(job$keys, key)
+    assign(bg$id, job, envir = .RISK_BG_JOBS)
+    return(invisible(job))
+  }
+  if (!requireNamespace("callr", quietly = TRUE) || !requireNamespace("later", quietly = TRUE)) {
+    return(invisible(NULL))
+  }
+  message(sprintf("[risk cache] background refresh started: %s", bg$id))
+  proc <- callr::r_bg(function(app_dir, fn, args, cache_dir) {
+    setwd(app_dir)
+    options(risk.seed_dir = "", risk.cache_dir = cache_dir, tigris_use_cache = TRUE)
+    suppressPackageStartupMessages({ library(dplyr); library(sf) })   # sf: joins on shapes
+    for (f in c("data_census.R", "data_risk.R", "risk_metrics.R", "map_risk.R")) {
+      source(file.path("R", f))
+    }
+    invisible(do.call(fn, args))
+    TRUE
+  }, args = list(app_dir = getwd(), fn = bg$fn, args = bg$args, cache_dir = risk_cache_dir()))
+  assign(bg$id, list(proc = proc, keys = key), envir = .RISK_BG_JOBS)
+  later::later(function() .risk_bg_poll(), 2)
+  invisible(NULL)
+}
+
+#' For each finished background job: promote the fresh disk copies into memory,
+#' or, if the job wrote nothing, hold off restarting that key for an hour.
+.risk_bg_poll <- function(cache_dir = risk_cache_dir(), reschedule = TRUE) {
+  for (id in ls(.RISK_BG_JOBS)) {
+    job <- .RISK_BG_JOBS[[id]]
+    if (isTRUE(tryCatch(job$proc$is_alive(), error = function(e) FALSE))) next
+    rm(list = id, envir = .RISK_BG_JOBS)
+    for (k in job$keys) {
+      p <- file.path(cache_dir, paste0(k, ".rds"))
+      e <- if (file.exists(p)) tryCatch(readRDS(p), error = function(e) NULL) else NULL
+      if (!is.null(e) && !isTRUE(e$seed)) {
+        assign(k, e, envir = .RISK_CACHE_ENV)
+        message(sprintf("[risk cache] background refresh done: %s", k))
+      } else {
+        assign(paste0(k, "__bgfail"), Sys.time(), envir = .RISK_CACHE_ENV)
+        message(sprintf("[risk cache] background refresh wrote nothing: %s", k))
+      }
+    }
+  }
+  if (reschedule && length(ls(.RISK_BG_JOBS))) later::later(function() .risk_bg_poll(), 2)
+  invisible(NULL)
+}
+
+#' Copy the seedable entries of the local cache into the repo's starter copy.
+#' Run before a deploy:  Rscript -e "source('global.R'); risk_seed_update()"
+risk_seed_update <- function(cache_dir = risk_cache_dir(),
+                             seed_dir = file.path("data", "risk_seed")) {
+  files <- list.files(cache_dir, pattern = "[.]rds$")
+  keep <- grepl("^(acs_year_v2|county_shapes_\\d+|cbsa_xwalk_\\d+|county_acs_\\d+)[.]rds$", files)
+  laus <- grep("^laus_county_n\\d+[.]rds$", files, value = TRUE)
+  if (length(laus)) {
+    n <- as.integer(sub("^laus_county_n(\\d+)[.]rds$", "\\1", laus))
+    keep <- keep | files == laus[which.max(n)]
+  }
+  dir.create(seed_dir, recursive = TRUE, showWarnings = FALSE)
+  file.copy(file.path(cache_dir, files[keep]), file.path(seed_dir, files[keep]), overwrite = TRUE)
+  files[keep]
 }
 
 # ── ACS year: newest 5-year release available, from the calendar ────────────
@@ -89,7 +198,9 @@ risk_cached <- function(key, ttl_days, fetch_fn, cache_dir = risk_cache_dir(),
 #' is not cached (falls back to current year - 2 for this call only).
 risk_acs_year <- function(probe = .acs_probe_census, cache_dir = risk_cache_dir(),
                           today = Sys.Date()) {
-  y <- risk_cached("acs_year_v2", 30, cache_dir = cache_dir, fetch_fn = function() {
+  y <- risk_cached("acs_year_v2", 30, cache_dir = cache_dir,
+                   bg = list(id = "acs_year", fn = "risk_acs_year", args = list()),
+                   fetch_fn = function() {
     .probe_acs_year(.acs_preferred_year(today), probe)
   })
   if (is.null(y)) as.integer(format(today, "%Y")) - 2L else as.integer(y)
@@ -159,7 +270,9 @@ fetch_laus_county <- function(fips, years = 3, key = Sys.getenv("BLS_API_KEY"),
                               perform_one = httr2::req_perform) {
   # Key carries the county count so a partial pull never stands in for the full set.
   risk_cached(sprintf("laus_county_n%d", length(fips)), 7, cache_dir = cache_dir,
-              fail_ttl_days = 1 / 24, fetch_fn = function() {
+              fail_ttl_days = 1 / 24,
+              bg = list(id = "laus", fn = "fetch_laus_county", args = list(fips = fips)),
+              fetch_fn = function() {
     if (!nzchar(key)) { message("[LAUS] BLS_API_KEY not set"); return(NULL) }
     end_year <- as.integer(format(Sys.Date(), "%Y"))
     chunks <- split(laus_series_ids(fips), ceiling(seq_along(fips) / 50))
@@ -212,7 +325,8 @@ fetch_county_base <- function(year = NULL) {
   if (is.null(year)) {
     year <- risk_acs_year()
   }
-  shapes <- risk_cached("county_shapes_2024", 90, function() {
+  bg <- list(id = "county_base", fn = "fetch_county_base", args = list(year = year))
+  shapes <- risk_cached("county_shapes_2024", 90, bg = bg, fetch_fn = function() {
     tigris::counties(cb = TRUE, resolution = "20m", year = 2024, progress_bar = FALSE) |>
       sf::st_transform(4326) |>
       dplyr::filter(as.integer(STATEFP) <= 56) |>
@@ -220,12 +334,12 @@ fetch_county_base <- function(year = NULL) {
                        state_fips = STATEFP, state_abbr = STUSPS, state_name = STATE_NAME)
   })
   if (is.null(shapes)) return(NULL)
-  xwalk <- risk_cached("cbsa_xwalk_2023", 90, function() {
+  xwalk <- risk_cached("cbsa_xwalk_2023", 90, bg = bg, fetch_fn = function() {
     cbsa <- tigris::core_based_statistical_areas(cb = TRUE, resolution = "20m",
                                                  year = 2023, progress_bar = FALSE)
     county_cbsa_xwalk(shapes, cbsa)
   })
-  acs <- risk_cached(sprintf("county_acs_%d", year), 30, function() {
+  acs <- risk_cached(sprintf("county_acs_%d", year), 30, bg = bg, fetch_fn = function() {
     tidycensus::get_acs(geography = "county", variables = ACS_VARS, year = year,
                         survey = "acs5", output = "wide") |>
       .derive_metrics() |>
