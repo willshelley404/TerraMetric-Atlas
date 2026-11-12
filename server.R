@@ -1267,7 +1267,7 @@ server <- function(input, output, session) {
     req(input$tabs == "metro", is.null(rv$county_layers), !isTRUE(rv$risk_failed))
     withProgress(message = "Loading regional data…", value = 0, {
       incProgress(0.05, detail = "Metro ACS…")
-      acs_year <- as.integer(risk_cached("acs_year", 30, function() .best_acs_year(2024)))
+      acs_year <- risk_acs_year()
       if (is.null(rv$metro_data)) rv$metro_data <- fetch_metro_acs(year = acs_year)
       incProgress(0.25, detail = "County shapes and ACS…")
       base <- tryCatch(fetch_county_base(), error = function(e) {
@@ -1294,7 +1294,8 @@ server <- function(input, output, session) {
       })
     })
     mom <- if (!is.null(laus) && nrow(laus) > 0) laus_momentum(laus) else NULL
-    rv$county_layers <- build_county_layers(rv$risk_base, mom, isTRUE(attr(laus, "stale")))
+    rv$county_layers <- build_county_layers(rv$risk_base, mom, isTRUE(attr(laus, "stale")),
+                                            laus_partial = isTRUE(attr(laus, "partial")))
     proxy <- leaflet::leafletProxy("risk_map")
     if (!is.null(rv$risk_tracts)) {
       add_tract_layer(proxy, rv$risk_tracts$tracts, input$risk_layer, rv$county_layers,
@@ -1328,14 +1329,16 @@ server <- function(input, output, session) {
     }
   })
 
-  risk_drill <- function(county_geoid) {
+  # zoom_geoids: what to fit the view to (the clicked county, or a CBSA's counties).
+  risk_drill <- function(county_geoid, zoom_geoids = county_geoid) {
     r <- withProgress(message = "Loading tracts…", value = 0.3, {
       tracts_for_county(county_geoid, rv$county_layers)
     })
     rv$risk_tracts <- r
     rv$risk_sel <- list(level = "county", geoid = county_geoid)
     add_tract_layer(leaflet::leafletProxy("risk_map"), r$tracts, input$risk_layer,
-                    rv$county_layers)
+                    rv$county_layers, fit = FALSE) %>%
+      fit_to_counties(rv$county_layers, zoom_geoids)
   }
 
   observeEvent(input$risk_map_shape_click, {
@@ -1364,7 +1367,7 @@ server <- function(input, output, session) {
     cl <- sf::st_drop_geometry(rv$county_layers)
     cl <- cl[!is.na(cl$cbsa_geoid) & cl$cbsa_geoid == input$risk_jump_metro, ]
     req(nrow(cl) > 0)
-    risk_drill(cl$GEOID[which.max(cl$pop)])
+    risk_drill(cl$GEOID[which.max(cl$pop)], zoom_geoids = cl$GEOID)
   })
 
   observeEvent(input$risk_back_us, {

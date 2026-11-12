@@ -28,28 +28,31 @@ rank_label <- function(pct, frame_label, higher_is_worse = TRUE) {
 }
 
 # ── Stress now: Sahm-style YoY unemployment momentum (spec §9.1) ─────────────
-#' County data is not seasonally adjusted, so the latest 3 months are compared
-#' with the same 3 months a year earlier. Each window needs laus_min_months.
+#' County data is not seasonally adjusted, so each of the latest 3 months is
+#' compared with the same calendar month a year earlier. Only months present in
+#' BOTH years count (pairwise), so a gap such as October 2025 (never collected)
+#' cannot compare 3 months against 2. At least laus_min_months pairs are needed.
 laus_momentum <- function(laus, cfg = RISK_CFG) {
   laus <- dplyr::filter(laus, !is.na(rate))
   counts <- dplyr::count(laus, date)
   ref <- max(counts$date[counts$n >= cfg$laus_min_coverage * max(counts$n)])
   back <- seq(ref, by = "-1 month", length.out = 15)
-  now_m <- back[1:3]
-  ago_m <- back[13:15]
+  pairs <- data.frame(now_date = back[1:3], ago_date = back[13:15])
 
-  laus %>%
+  now <- dplyr::inner_join(laus, pairs, by = c(date = "now_date"))
+  paired <- dplyr::inner_join(now, dplyr::rename(laus, rate_ago = rate),
+                              by = c("fips", ago_date = "date"))
+  stats <- paired %>%
     dplyr::group_by(fips) %>%
-    dplyr::summarise(
-      n_now = sum(date %in% now_m),
-      n_ago = sum(date %in% ago_m),
-      rate_now = if (n_now > 0) mean(rate[date %in% now_m]) else NA_real_,
-      rate_yr_ago = if (n_ago > 0) mean(rate[date %in% ago_m]) else NA_real_,
-      .groups = "drop"
-    ) %>%
+    dplyr::summarise(n_pairs = dplyr::n(), rate_now = mean(rate),
+                     rate_yr_ago = mean(rate_ago), .groups = "drop")
+
+  tibble::tibble(fips = unique(laus$fips)) %>%
+    dplyr::left_join(stats, by = "fips") %>%
     dplyr::mutate(
-      rate_now    = ifelse(n_now >= cfg$laus_min_months, round(rate_now, 2), NA_real_),
-      rate_yr_ago = ifelse(n_ago >= cfg$laus_min_months, round(rate_yr_ago, 2), NA_real_),
+      ok = !is.na(n_pairs) & n_pairs >= cfg$laus_min_months,
+      rate_now    = ifelse(ok, round(rate_now, 2), NA_real_),
+      rate_yr_ago = ifelse(ok, round(rate_yr_ago, 2), NA_real_),
       momentum_pp = round(rate_now - rate_yr_ago, 2),
       flag = dplyr::case_when(
         is.na(momentum_pp) ~ NA_character_,
@@ -74,22 +77,45 @@ tract_moe_flags <- function(df, cfg = RISK_CFG) {
     df[[col]][!is.finite(df[[col]])] <- NA
   }
   finite_or_na <- function(x) ifelse(is.finite(x), x, NA_real_)
-  pov_moe <- suppressWarnings(100 * tidycensus::moe_prop(
-    df$poverty_countE, df$poverty_universeE, df$poverty_countM, df$poverty_universeM))
-  rb_num <- df$rb_30_34E + df$rb_35_39E + df$rb_40_49E + df$rb_50_plusE
-  rb_num_moe <- sqrt(df$rb_30_34M^2 + df$rb_35_39M^2 + df$rb_40_49M^2 + df$rb_50_plusM^2)
-  rb_moe <- suppressWarnings(100 * tidycensus::moe_prop(
-    rb_num, df$rent_burden_universeE - df$rb_not_computedE, rb_num_moe,
-    df$rent_burden_universeM))
-  df$poverty_rate_moe <- ifelse(is.na(df$poverty_rate), NA_real_, finite_or_na(pov_moe))
-  df$rent_burden_rate_moe <- ifelse(is.na(df$rent_burden_rate), NA_real_, finite_or_na(rb_moe))
+  col <- function(n) if (n %in% names(df)) df[[n]] else rep(NA_real_, nrow(df))
+  pooled <- function(stems) {   # sum of several bins and their root-sum-of-squares MOE
+    list(e = Reduce(`+`, lapply(paste0(stems, "E"), col)),
+         m = sqrt(Reduce(`+`, lapply(paste0(stems, "M"), function(n) col(n)^2))))
+  }
+  rate_moe <- function(num, num_moe, den, den_moe) {
+    suppressWarnings(100 * tidycensus::moe_prop(num, den, num_moe, den_moe))
+  }
+  rb <- pooled(c("rb_30_34", "rb_35_39", "rb_40_49", "rb_50_plus"))
+  ba <- pooled(c("bachelors", "masters", "professional", "doctorate"))
+  moes <- list(
+    unemp_rate = rate_moe(col("unemployedE"), col("unemployedM"),
+                          col("labor_forceE"), col("labor_forceM")),
+    lfp_rate = rate_moe(col("labor_forceE"), col("labor_forceM"),
+                        col("total_popE"), col("total_popM")),
+    poverty_rate = rate_moe(col("poverty_countE"), col("poverty_countM"),
+                            col("poverty_universeE"), col("poverty_universeM")),
+    vacancy_rate = rate_moe(col("vacant_unitsE"), col("vacant_unitsM"),
+                            col("housing_unitsE"), col("housing_unitsM")),
+    rent_burden_rate = rate_moe(rb$e, rb$m, col("rent_burden_universeE") - col("rb_not_computedE"),
+                                col("rent_burden_universeM")),
+    bachelors_plus_rate = rate_moe(ba$e, ba$m, col("education_total_25plusE"),
+                                   col("education_total_25plusM")),
+    med_income = col("median_hh_incomeM"),
+    med_home_val = col("median_home_valueM"),
+    med_rent = col("median_rentM")
+  )
   over <- function(moe, est) {
     r <- moe / est > cfg$moe_flag_ratio
     !is.na(r) & r
   }
-  df$noisy_poverty_rate <- over(df$poverty_rate_moe, df$poverty_rate)
-  df$noisy_rent_burden_rate <- over(df$rent_burden_rate_moe, df$rent_burden_rate)
-  df$noisy <- df$noisy_poverty_rate | df$noisy_rent_burden_rate
+  df$noisy <- rep(FALSE, nrow(df))
+  for (v in names(moes)) {
+    if (!v %in% names(df)) next
+    m <- ifelse(is.na(df[[v]]), NA_real_, finite_or_na(moes[[v]]))
+    df[[paste0(v, "_moe")]] <- m
+    df[[paste0("noisy_", v)]] <- over(m, df[[v]])
+    df$noisy <- df$noisy | df[[paste0("noisy_", v)]]
+  }
   df
 }
 
@@ -151,7 +177,7 @@ tracts_for_county <- function(county_geoid, county_base, fetch = fetch_state_tra
 #' laus_loading = TRUE marks Stress now as still loading (progressive tab load:
 #' the map draws from shapes + ACS first, BLS fills in when it arrives).
 build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
-                                laus_loading = FALSE) {
+                                laus_loading = FALSE, laus_partial = FALSE) {
   out <- county_base
   if (is.null(momentum)) {
     out$ref_month <- as.Date(NA); out$rate_now <- NA_real_; out$rate_yr_ago <- NA_real_
@@ -173,6 +199,7 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
     asof[["stress_now"]] <- NA_character_
   } else {
     asof[["stress_now"]] <- format(max(momentum$ref_month, na.rm = TRUE), "%b %Y")
+    if (isTRUE(laus_partial)) status[["stress_now"]] <- "partial"
     if (isTRUE(laus_stale)) status[["stress_now"]] <- "stale"
   }
   attr(out, "layer_status") <- status

@@ -138,7 +138,8 @@ RISK_LAYERS <- c(
   sub <- if (identical(status, "unavailable")) "unavailable" else
     if (identical(status, "loading")) "loading county unemployment from BLS…" else
       paste0(if (!is.null(scope)) paste0(scope, " · "), cfg$source, ", ", asof,
-             if (identical(status, "stale")) " (stale)")
+             if (identical(status, "stale")) " (stale)",
+             if (identical(status, "partial")) " (partial: some counties missing, retrying later)")
   paste0(head, "<br><small style='font-weight:400;'>", htmltools::htmlEscape(sub), "</small>")
 }
 
@@ -238,6 +239,15 @@ add_tract_layer <- function(map, tracts, layer_id, county_layers, fit = TRUE) {
                        title = .legend_title(cfg, "ok", asof,
                                              scope = paste("tracts", tracts$frame_label[1]))) |>
     fit_to()
+}
+
+#' Zoom to the given counties (the clicked county, or a CBSA's counties), so the
+#' view does not depend on the tract frame or on tracts loading at all.
+fit_to_counties <- function(map, county_layers, geoids) {
+  sel <- county_layers[county_layers$GEOID %in% geoids, ]
+  if (nrow(sel) == 0) return(map)
+  bb <- as.numeric(sf::st_bbox(sel))
+  leaflet::fitBounds(map, bb[1], bb[2], bb[3], bb[4])
 }
 
 reset_to_us <- function(map, county_layers, layer_id) {

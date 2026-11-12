@@ -63,6 +63,22 @@ test_that("thin latest month is not the reference month", {
   expect_equal(m$momentum_pp[m$fips == "A0001"], 0.6)
 })
 
+test_that("October 2025 gap does not bias momentum (months compared pairwise)", {
+  mos <- seq(as.Date("2024-07-01"), as.Date("2026-10-01"), by = "month")
+  seas <- c(0.3, 0.1, -0.2, -0.4, -0.1, 0.2, 0.5, 0.4, 0.1, 1.5, -0.3, 0)  # Jan..Dec, Oct high
+  mk <- function(f, amp) {
+    d <- data.frame(fips = f, date = mos, rate = 4 + amp * seas[as.integer(format(mos, "%m"))])
+    d[d$date != as.Date("2025-10-01"), ]                                  # shutdown gap
+  }
+  x <- rbind(mk("A0001", 1), mk("B0001", 3),
+             do.call(rbind, lapply(sprintf("99%03d", 1:20), mk, amp = 1)))
+  m <- laus_momentum(x)
+  expect_equal(unique(m$ref_month), as.Date("2026-10-01"))
+  expect_equal(m$momentum_pp[m$fips == "A0001"], 0)
+  expect_equal(m$momentum_pp[m$fips == "B0001"], 0)
+  expect_equal(m$flag[m$fips == "B0001"], "None")
+})
+
 test_that("trigger at 1.0 pp", {
   m <- laus_momentum(laus_fixture())
   expect_equal(m$flag[m$fips == "D0001"], "Trigger")

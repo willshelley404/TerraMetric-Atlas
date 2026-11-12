@@ -56,6 +56,11 @@ test_that("county-only layer still zooms to the frame when drilling in", {
   expect_false(is.null(m$x$fitBounds))
 })
 
+test_that("fit_to_counties zooms to the given counties, not the whole frame", {
+  m <- fit_to_counties(build_risk_county_map(fx_layers(), "poverty_rate"), fx_layers(), "13295")
+  expect_equal(unlist(m$x$fitBounds)[1:4], c(34, -85, 35, -84), tolerance = 1e-6)
+})
+
 test_that("county-only layer adds no tracts", {
   m <- add_tract_layer(build_risk_county_map(fx_layers(), "stress_now"),
                        fx_tracts(), "stress_now", fx_layers())

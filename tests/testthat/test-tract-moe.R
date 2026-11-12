@@ -21,6 +21,20 @@ test_that("noisy flag when MOE exceeds the estimate itself", {
   expect_equal(x$noisy, c(TRUE, FALSE, FALSE))
 })
 
+test_that("every tract layer gets a MOE and a noise flag", {
+  x <- tract_moe_flags(.derive_metrics(tract_wide(
+    labor_forceE = 50, unemployedE = 2, unemployedM = 10, labor_forceM = 5,
+    median_hh_incomeE = 50000, median_hh_incomeM = 60000)))
+  for (v in .tract_vars()) {
+    expect_true(paste0(v, "_moe") %in% names(x), info = v)
+    expect_true(paste0("noisy_", v) %in% names(x), info = v)
+  }
+  expect_true(x$noisy_unemp_rate)      # 4% with a ~20 pp MOE
+  expect_true(x$noisy_med_income)      # $50k +/- $60k
+  expect_equal(x$med_income_moe, 60000)
+  expect_true(x$noisy)
+})
+
 test_that("noisy flags are per variable", {
   x <- tract_moe_flags(.derive_metrics(tract_wide(
     poverty_universeE = 100, poverty_countE = 10, poverty_universeM = 20, poverty_countM = 12)))

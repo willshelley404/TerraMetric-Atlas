@@ -24,6 +24,14 @@ test_that("stale LAUS marks Stress now stale", {
   expect_equal(attr(l, "layer_status")[["stress_now"]], "stale")
 })
 
+test_that("partial LAUS marks Stress now partial in status and legend", {
+  l <- build_county_layers(fx_county_base(), fx_momentum(), laus_partial = TRUE)
+  expect_equal(attr(l, "layer_status")[["stress_now"]], "partial")
+  m <- build_risk_county_map(l, "stress_now")
+  title <- Filter(function(cl) cl$method == "addLegend", m$x$calls)[[1]]$args[[1]]$title
+  expect_true(grepl("partial", title, fixed = TRUE))
+})
+
 test_that("pct columns exist for every layer", {
   l <- build_county_layers(fx_county_base(), fx_momentum())
   cols <- vapply(RISK_LAYERS, `[[`, "", "col")
