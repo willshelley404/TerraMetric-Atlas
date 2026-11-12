@@ -80,7 +80,7 @@
     - `id_col` is `"FIPSCode"` (strip the `'` characters) or `"CBSACode"`;
     - drops the National row and rows with no id;
     - `date` comes from the `YYYY-MM` column names.
-  - **`cfpb_county_components(county_ids, cbsa_of, state_of, county90, county3089, metro90, metro3089) -> tibble(GEOID, dq90, dq3089_chg, cfpb_source, cfpb_month)`:**
+  - **`cfpb_county_components(county_ids, cbsa_of, cbsa_type_of, state_of, county90, county3089, metro90, metro3089) -> tibble(GEOID, dq90, dq3089_chg, cfpb_source, cfpb_month)`** (as built). Callers pass named arguments. The state non-metro row applies only to counties with no CBSA or a micro-area CBSA. A metro CBSA absent from CFPB's metro file gives NA.
     - `dq90` is the latest month;
     - `dq3089_chg` = 30–89 latest − 30–89 12 months earlier (pp);
     - **lookup order:** the county row (`cfpb_source = "county"`), then the county's CBSA row if `cbsa_of` is a metro code present in the metro file (`"metro"`), then the `{state}-non` row (`"state non-metro"`), else NA.
