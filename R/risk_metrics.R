@@ -17,7 +17,9 @@ RISK_CFG <- list(
   peak_lead_months    = 6,    # a payroll peak can precede the NBER start
   trough_lag_months   = 24,   # payrolls keep falling after the NBER end
   w_structural        = 0.5,
-  w_current           = 0.5
+  w_current           = 0.5,
+  # LODES has no usable coverage here: AK is thin, MI is missing from LODES8.
+  lodes_exclude_states = c("02", "26")
 )
 
 # FRED payroll series and ACS C24030 detail lines per industry group. `cns` are
@@ -482,4 +484,28 @@ stress_ahead <- function(ind, weights) {
   attr(out, "acs_year") <- attr(ind, "acs_year")
   attr(out, "partial") <- partial
   out
+}
+
+# ── LODES residence-area workers (Phase 3 assistance lens) ───────────────────
+#' Sum a block-level RAC table (h_geocode, C000, CA01, CE01, CNS01..CNS20) to
+#' tracts. GEOID is the first 11 characters of h_geocode (must be character).
+aggregate_lodes_rac <- function(blocks) {
+  cols <- c("C000", "CA01", "CE01", sprintf("CNS%02d", 1:20))
+  b <- as.data.frame(blocks)
+  b$GEOID <- substr(as.character(b$h_geocode), 1, 11)
+  out <- stats::aggregate(b[cols], by = list(GEOID = b$GEOID), FUN = sum, na.rm = TRUE)
+  tibble::as_tibble(out[order(out$GEOID), c("GEOID", cols)])
+}
+
+#' LODES still keys Connecticut tracts by the old counties (09001-09015); ACS uses
+#' planning regions (091xx). Match on the 6-digit tract code, skip "99" water
+#' tracts, and drop CT rows with no ACS match. Other states pass through.
+lodes_ct_remap <- function(lodes, acs_geoids) {
+  ct <- acs_geoids[startsWith(acs_geoids, "09") & substr(acs_geoids, 6, 7) != "99"]
+  is_ct <- startsWith(lodes$GEOID, "09")
+  hit <- match(substr(lodes$GEOID, 6, 11), substr(ct, 6, 11))
+  new <- lodes$GEOID
+  new[is_ct] <- ct[hit[is_ct]]
+  lodes$GEOID <- new
+  lodes[!(is_ct & is.na(lodes$GEOID)), , drop = FALSE]
 }

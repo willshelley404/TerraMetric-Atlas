@@ -561,3 +561,92 @@ fetch_county_industry <- function(year = NULL) {
   if (!is.null(out)) attr(out, "acs_year") <- year
   out
 }
+
+# ── LODES RAC: workers by residence tract and industry (Phase 3) ─────────────
+.lodes_url <- function(st_abbr, year) {
+  st <- tolower(st_abbr)
+  sprintf("https://lehd.ces.census.gov/data/lodes/LODES8/%s/rac/%s_rac_S000_JT00_%d.csv.gz",
+          st, st, as.integer(year))
+}
+
+#' 200 means the file exists; an unpublished year is a clean 404.
+.lodes_head_ok <- function(url) {
+  resp <- httr2::request(url) |>
+    httr2::req_method("HEAD") |>
+    httr2::req_user_agent(.RISK_UA) |>
+    httr2::req_timeout(30) |>
+    httr2::req_error(is_error = \(r) FALSE) |>
+    httr2::req_perform()
+  httr2::resp_status(resp) == 200L
+}
+
+#' Newest LODES year (current year - 1 down to - 5) with a published Delaware
+#' file, cached 30 days. A failed probe (NULL) is not cached.
+lodes_latest_year <- function(probe = .lodes_head_ok, today = Sys.Date(),
+                              cache_dir = risk_cache_dir()) {
+  y <- risk_cached("lodes_year_v1", 30, cache_dir = cache_dir,
+                   bg = list(id = "lodes_year", fn = "lodes_latest_year", args = list()),
+                   fetch_fn = function() {
+    for (yr in as.integer(format(today, "%Y")) - 1:5) {
+      if (isTRUE(tryCatch(probe(.lodes_url("de", yr)), error = function(e) FALSE))) {
+        return(as.integer(yr))
+      }
+    }
+    NULL
+  })
+  if (is.null(y)) NULL else as.integer(y)
+}
+
+#' lehdr (tract level) names the residence tract h_tract; give it the block
+#' table's h_geocode so both sources feed aggregate_lodes_rac().
+.lodes_as_blocks <- function(x) {
+  x <- as.data.frame(x)
+  if (!"h_geocode" %in% names(x) && "h_tract" %in% names(x)) x$h_geocode <- x$h_tract
+  x
+}
+
+#' Block-level RAC table for one state-year. Prefers lehdr when installed, else
+#' downloads the gzip straight from the LEHD server. h_geocode stays character
+#' (a numeric read drops the leading zero of states 01-09).
+.lodes_download <- function(st_abbr, year) {
+  if (requireNamespace("lehdr", quietly = TRUE)) {
+    viaL <- tryCatch(suppressMessages(lehdr::grab_lodes(
+      state = st_abbr, year = year, lodes_type = "rac", job_type = "JT00",
+      segment = "S000", agg_geo = "tract")), error = function(e) NULL)
+    if (is.data.frame(viaL) && nrow(viaL) > 0 &&
+        any(c("h_geocode", "h_tract") %in% names(viaL))) return(.lodes_as_blocks(viaL))
+  }
+  f <- tempfile(fileext = ".csv.gz")
+  on.exit(unlink(f), add = TRUE)
+  httr2::request(.lodes_url(st_abbr, year)) |>
+    httr2::req_user_agent(.RISK_UA) |>
+    httr2::req_timeout(300) |>
+    httr2::req_perform(path = f)
+  # fread cannot open .gz without R.utils (not a dependency): decompress via gzfile.
+  con <- gzfile(f, "rt")
+  on.exit(close(con), add = TRUE, after = FALSE)
+  data.table::fread(text = readLines(con), colClasses = list(character = "h_geocode"),
+                    data.table = FALSE)
+}
+
+#' LODES RAC (all jobs, all segments) by residence tract for one state, cached 90
+#' days. NULL for states LODES does not cover (RISK_CFG$lodes_exclude_states),
+#' when no year is published, or when the download fails. `download(st, year)`
+#' is injectable for tests.
+fetch_lodes_rac <- function(state_fips, year = NULL, cache_dir = risk_cache_dir(),
+                            download = .lodes_download) {
+  if (state_fips %in% RISK_CFG$lodes_exclude_states) return(NULL)
+  if (is.null(year)) year <- lodes_latest_year(cache_dir = cache_dir)
+  if (is.null(year)) return(NULL)
+  year <- as.integer(year)
+  risk_cached(sprintf("lodes_rac_%s_%d", state_fips, year), 90, cache_dir = cache_dir,
+              fetch_fn = function() {
+    fips <- unique(tigris::fips_codes[, c("state_code", "state")])
+    st <- tolower(fips$state[match(state_fips, fips$state_code)])
+    if (is.na(st)) stop("unknown state FIPS ", state_fips)
+    out <- aggregate_lodes_rac(download(st, year))
+    attr(out, "lodes_year") <- year
+    out
+  })
+}
+
