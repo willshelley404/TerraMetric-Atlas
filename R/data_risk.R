@@ -166,11 +166,15 @@ risk_cached <- function(key, ttl_days, fetch_fn, cache_dir = risk_cache_dir(),
 risk_seed_update <- function(cache_dir = risk_cache_dir(),
                              seed_dir = file.path("data", "risk_seed")) {
   files <- list.files(cache_dir, pattern = "[.]rds$")
-  keep <- grepl("^(acs_year_v2|county_shapes_\\d+|cbsa_xwalk_\\d+|county_acs_\\d+)[.]rds$", files)
-  laus <- grep("^laus_county_n\\d+[.]rds$", files, value = TRUE)
-  if (length(laus)) {
-    n <- as.integer(sub("^laus_county_n(\\d+)[.]rds$", "\\1", laus))
-    keep <- keep | files == laus[which.max(n)]
+  keep <- grepl(paste0("^(acs_year_v2|county_shapes_\\d+|cbsa_xwalk_\\d+|county_acs_\\d+|",
+                       "pep_vintage_v1|fred_sectors_v1|laus_areas_v1)[.]rds$"), files)
+  # Keys named <prefix><number>: keep only the highest number of each kind.
+  for (prefix in c("laus_county_n", "laus_metro_n", "pep_county_", "county_ind_")) {
+    m <- grep(sprintf("^%s\\d+[.]rds$", prefix), files, value = TRUE)
+    if (length(m)) {
+      n <- as.integer(sub("[.]rds$", "", substring(m, nchar(prefix) + 1L)))
+      keep <- keep | files == m[which.max(n)]
+    }
   }
   dir.create(seed_dir, recursive = TRUE, showWarnings = FALSE)
   file.copy(file.path(cache_dir, files[keep]), file.path(seed_dir, files[keep]), overwrite = TRUE)

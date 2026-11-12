@@ -79,3 +79,17 @@ test_that("risk_seed_update copies seedable cache entries, largest LAUS pull onl
                          "county_acs_2024.rds", "laus_county_n3144.rds"))
   expect_setequal(list.files(seed), got)
 })
+
+test_that("seed update copies Phase 2 keys, newest LAUS of each kind", {
+  cache <- tempfile("cache"); dir.create(cache)
+  seed <- tempfile("seed")
+  all <- c("pep_county_2024", "pep_county_2025", "laus_metro_n393", "laus_metro_n390",
+           "laus_county_n3144", "fred_sectors_v1", "county_ind_2024", "laus_areas_v1",
+           "pep_vintage_v1", "tracts_v3_47_2024")
+  for (f in all)
+    saveRDS(list(value = f, fetched_at = Sys.time()), file.path(cache, paste0(f, ".rds")))
+  got <- risk_seed_update(cache_dir = cache, seed_dir = seed)
+  skipped <- c("pep_county_2024", "laus_metro_n390", "tracts_v3_47_2024")
+  expect_setequal(got, paste0(setdiff(all, skipped), ".rds"))
+  expect_setequal(list.files(seed), got)
+})
