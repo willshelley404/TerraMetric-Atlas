@@ -34,6 +34,7 @@ server <- function(input, output, session) {
     risk_sel = NULL,      # list(level = "county"|"tract", geoid)
     risk_failed = FALSE,
     risk_base = NULL,     # county base before LAUS joins (progressive load)
+    risk_parts = list(),  # everything build_county_layers() takes besides the base
     risk_ready = FALSE,   # county map can render
     laus_go = NULL,       # set after the first map flush to start the BLS pull
     kpis = NULL,
@@ -1262,6 +1263,28 @@ server <- function(input, output, session) {
       )
   }
 
+  # Update components of rv$risk_parts (NULL values kept) and rebuild the layers.
+  risk_set_parts <- function(...) {
+    new <- list(...)
+    p <- rv$risk_parts
+    p[names(new)] <- new
+    rv$risk_parts <- p
+  }
+
+  # Rebuild county layers from rv$risk_parts and redraw the current layer. A later
+  # component (e.g. stress_ahead) is one risk_set_parts() call plus risk_rebuild().
+  risk_rebuild <- function(redraw = TRUE) {
+    rv$county_layers <- do.call(build_county_layers, c(list(rv$risk_base), rv$risk_parts))
+    if (!redraw) return(invisible())
+    proxy <- leaflet::leafletProxy("risk_map")
+    if (!is.null(rv$risk_tracts)) {
+      add_tract_layer(proxy, rv$risk_tracts$tracts, input$risk_layer, rv$county_layers,
+                      fit = FALSE)
+    } else {
+      .add_county_polygons(proxy, rv$county_layers, input$risk_layer, 0.82)
+    }
+  }
+
   # Tab entry: metro ACS (metro table + Metro AI) and the county base, once.
   observeEvent(input$tabs, {
     req(input$tabs == "metro", is.null(rv$county_layers), !isTRUE(rv$risk_failed))
@@ -1276,9 +1299,15 @@ server <- function(input, output, session) {
       if (is.null(base)) {
         rv$risk_failed <- TRUE
       } else {
-        incProgress(0.6, detail = "Drawing counties…")
+        incProgress(0.5, detail = "Census migration…")
+        pep <- tryCatch(fetch_pep_county(), error = function(e) {
+          message("[Risk] PEP failed: ", conditionMessage(e)); NULL
+        })
+        incProgress(0.7, detail = "Drawing counties…")
         rv$risk_base <- base
-        rv$county_layers <- build_county_layers(base, NULL, laus_loading = TRUE)
+        rv$risk_parts <- list(momentum = NULL, laus_stale = FALSE, laus_loading = TRUE,
+                              laus_partial = FALSE, migration = pep, loading = character(0))
+        risk_rebuild(redraw = FALSE)
         rv$risk_ready <- TRUE
       }
     })
@@ -1294,15 +1323,9 @@ server <- function(input, output, session) {
       })
     })
     mom <- if (!is.null(laus) && nrow(laus) > 0) laus_momentum(laus) else NULL
-    rv$county_layers <- build_county_layers(rv$risk_base, mom, isTRUE(attr(laus, "stale")),
-                                            laus_partial = isTRUE(attr(laus, "partial")))
-    proxy <- leaflet::leafletProxy("risk_map")
-    if (!is.null(rv$risk_tracts)) {
-      add_tract_layer(proxy, rv$risk_tracts$tracts, input$risk_layer, rv$county_layers,
-                      fit = FALSE)
-    } else {
-      .add_county_polygons(proxy, rv$county_layers, input$risk_layer, 0.82)
-    }
+    risk_set_parts(momentum = mom, laus_stale = isTRUE(attr(laus, "stale")),
+                   laus_partial = isTRUE(attr(laus, "partial")), laus_loading = FALSE)
+    risk_rebuild()
   })
 
   # Rendered once when the county base is ready; later updates go through the proxy.
@@ -1427,7 +1450,10 @@ server <- function(input, output, session) {
         rownames = FALSE
       ))
     }
+    mig <- if (!is.null(rv$county_layers)) cbsa_migration(rv$county_layers) else
+      data.frame(cbsa_geoid = character(0), mig_dom_rate = numeric(0))
     df <- rv$metro_data %>%
+      left_join(mig, by = c("GEOID" = "cbsa_geoid")) %>%
       transmute(
         Metro = metro,
         `Unemp Rate %` = round(unemp_rate, 1),
@@ -1435,7 +1461,8 @@ server <- function(input, output, session) {
         `LFP Rate %` = round(lfp_rate, 1),
         `Median Income` = scales::dollar(med_income, accuracy = 1),
         `Median Home` = scales::dollar(med_home_val, accuracy = 1),
-        Population = scales::comma(pop)
+        Population = scales::comma(pop),
+        `Net Dom. Migration /1k` = ifelse(is.na(mig_dom_rate), "—", sprintf("%+.1f", mig_dom_rate))
       ) %>%
       arrange(desc(as.numeric(gsub("[^0-9]", "", Population))))
 
@@ -1451,7 +1478,7 @@ server <- function(input, output, session) {
         color = styleInterval(c(4, 6), c("#2dce89", "#f4a261", "#e94560"))
       ) %>%
       formatStyle(
-        columns = seq_len(7),
+        columns = seq_len(8),
         backgroundColor = "#1e2640",
         color = "#d0d0d0"
       )

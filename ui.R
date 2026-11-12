@@ -303,7 +303,9 @@ ui <- dashboardPage(
                   icon("info-circle", style = "color:#00b4d8;"),
                   " Stress now: BLS county unemployment, latest 3 months vs. a year earlier.",
                   tags$br(),
-                  " Context layers: Census ACS 5-year estimates.", tags$br(),
+                  " Context layers: Census ACS 5-year estimates.",
+                  " Migration: Census PEP county components of change (per 1,000 residents).",
+                  tags$br(),
                   " Click a county to load its tracts, ranked within the metro and the state.",
                   tags$br(),
                   " Dashed outline: margin of error larger than the value."

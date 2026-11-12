@@ -105,3 +105,12 @@ test_that("side panel without PEP has no migration blocks", {
   expect_false(grepl("Population change", h, fixed = TRUE))
   expect_false(grepl("Net domestic migration:", h, fixed = TRUE))
 })
+
+test_that("CBSA migration is population-weighted", {
+  cl <- data.frame(cbsa_geoid = c("X", "X", "Y", NA),
+                   mig_dom_n = c(100, -50, NA, 5), pop_avg = c(10000, 40000, NA, 100))
+  m <- cbsa_migration(cl)
+  expect_equal(m$mig_dom_rate[m$cbsa_geoid == "X"], 1.0)
+  expect_true(is.na(m$mig_dom_rate[m$cbsa_geoid == "Y"]))
+  expect_false(NA %in% m$cbsa_geoid)
+})

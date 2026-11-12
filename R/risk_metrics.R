@@ -226,6 +226,19 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
   out
 }
 
+#' Net domestic migration per 1,000 residents for each CBSA, population-weighted
+#' over its counties. NA when none of its counties has data.
+cbsa_migration <- function(county_layers) {
+  d <- sf::st_drop_geometry(county_layers)
+  d <- d[!is.na(d$cbsa_geoid), , drop = FALSE]
+  d |>
+    dplyr::group_by(cbsa_geoid) |>
+    dplyr::summarise(
+      mig_dom_rate = if (all(is.na(mig_dom_n)) || all(is.na(pop_avg))) NA_real_ else
+        round(1000 * sum(mig_dom_n, na.rm = TRUE) / sum(pop_avg, na.rm = TRUE), 1),
+      .groups = "drop")
+}
+
 # ── Migration (Census PEP county estimates) ──────────────────────────────────
 #' 2025 -> "2024–25". PEP years run July to July.
 pep_year_label <- function(y) sprintf("%d\u2013%02d", as.integer(y) - 1L, as.integer(y) %% 100L)
