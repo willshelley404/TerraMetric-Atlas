@@ -82,7 +82,8 @@ test_that("tracts get assistance columns and ranks", {
   # Job pressure comes from the tract's own county.
   cl <- at_county_layers()
   jp <- job_pressure(cl)
-  expect_equal(t$job_pressure, jp[match(t$county_geoid, cl$GEOID)])
+  expect_equal(t$job_pressure, as.numeric(jp)[match(t$county_geoid, cl$GEOID)])
+  expect_equal(t$job_pressure_n, attr(jp, "n_inputs")[match(t$county_geoid, cl$GEOID)])
   # Frame rank is a percentile of the score across all six tracts.
   expect_equal(t$lm_pct_assist_score, pct_rank(t$assist_score))
 })
@@ -130,6 +131,22 @@ test_that("a failing jobs fetch does not break the drill-down", {
                          weights = attr(at_county_layers(), "sector_weights"))
   expect_equal(nrow(r$tracts), 6)
   expect_true(all(is.na(r$tracts$assist_score)))
+})
+
+test_that("failed tract and jobs fetches name the state and the reason", {
+  expect_message(
+    tracts_for_county("13295", at_county_layers(), fetch = at_fetch(),
+                      fetch_jobs = function(...) stop("boom"),
+                      weights = attr(at_county_layers(), "sector_weights")),
+    "[Risk] jobs 13 failed: boom", fixed = TRUE)
+  tr <- at_tracts()
+  bad_fetch <- function(state_fips, year = NULL) {
+    if (state_fips == "47") stop("census down") else tr[[state_fips]]
+  }
+  expect_message(
+    tracts_for_county("13295", at_county_layers(), fetch = bad_fetch,
+                      fetch_jobs = function(...) NULL),
+    "[Risk] tracts 47 failed: census down", fixed = TRUE)
 })
 
 test_that("state rank uses state-frame score", {

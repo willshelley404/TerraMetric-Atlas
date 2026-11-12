@@ -83,11 +83,18 @@ test_that("exposure is all NA when weights are NULL", {
 
 test_that("job pressure uses available signals, NA when none", {
   cl <- data.frame(pct_momentum_pp = c(80, NA, NA), pct_stress_ahead_pp = c(20, 40, NA))
-  expect_equal(job_pressure(cl), c(0.8, 0.6, NA))
+  jp <- job_pressure(cl)
+  expect_equal(as.numeric(jp), c(0.8, 0.6, NA))
+  expect_equal(attr(jp, "n_inputs"), c(2L, 1L, 0L))
+  expect_equal(attr(jp, "inputs"), c("both", "ahead", NA))
+  now_only <- job_pressure(data.frame(pct_momentum_pp = 30, pct_stress_ahead_pp = NA_real_))
+  expect_equal(attr(now_only, "inputs"), "now")
 })
 
 test_that("job pressure is NA when the columns are missing", {
-  expect_equal(job_pressure(data.frame(x = 1:2)), c(NA_real_, NA_real_))
+  jp <- job_pressure(data.frame(x = 1:2))
+  expect_equal(as.numeric(jp), c(NA_real_, NA_real_))
+  expect_equal(attr(jp, "n_inputs"), c(0L, 0L))
 })
 
 test_that("score is the geometric mean and needs all three", {

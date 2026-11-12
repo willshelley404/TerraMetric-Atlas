@@ -210,7 +210,10 @@ tracts_for_county <- function(county_geoid, county_base, fetch = fetch_state_tra
   cb <- .plain_df(county_base)
   fr <- .tract_frame(county_geoid, cb)
   states <- unique(c(substr(county_geoid, 1, 2), substr(fr$counties, 1, 2)))
-  got <- lapply(states, function(s) tryCatch(fetch(s), error = function(e) NULL))
+  got <- lapply(states, function(s) tryCatch(fetch(s), error = function(e) {
+    message("[Risk] tracts ", s, " failed: ", conditionMessage(e))
+    NULL
+  }))
   failed <- vapply(got, is.null, logical(1))
   out <- list(tracts = NULL, frame_label = fr$label, missing_states = states[failed],
               sources = character(0))
@@ -218,7 +221,10 @@ tracts_for_county <- function(county_geoid, county_base, fetch = fetch_state_tra
   ok <- states[!failed]
   got <- got[!failed]
   jobs <- lapply(seq_along(ok), function(i) {
-    j <- tryCatch(fetch_jobs(ok[i], got[[i]]$GEOID), error = function(e) NULL)
+    j <- tryCatch(fetch_jobs(ok[i], got[[i]]$GEOID), error = function(e) {
+      message("[Risk] jobs ", ok[i], " failed: ", conditionMessage(e))
+      NULL
+    })
     if (is.null(j)) return(NULL)
     src <- attr(j, "source")
     j <- tibble::as_tibble(as.data.frame(j))
@@ -286,7 +292,8 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
   # Not %||%: the app redefines it, and a data frame is not a scalar.
   weights <- if (!is.null(sector_weights)) sector_weights else
     if (is.null(stress_ahead)) NULL else attr(stress_ahead, "weights")
-  is_assist <- vapply(RISK_LAYERS, function(l) identical(l$lens, "assistance"), TRUE)
+  # Derived layers are computed below from the base percentiles (assistance now, credit later).
+  is_derived <- vapply(RISK_LAYERS, function(l) isTRUE(l$derived), TRUE)
   add_pct <- function(out, ids) {
     for (id in ids) {
       col <- RISK_LAYERS[[id]]$col
@@ -294,10 +301,15 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
     }
     out
   }
-  out <- add_pct(out, names(RISK_LAYERS)[!is_assist])
-  # The assistance score needs J, which needs the Stress now / ahead percentiles above.
+  out <- add_pct(out, names(RISK_LAYERS)[!is_derived])
+  # Job pressure needs the Stress now / ahead percentiles above; it does not need the
+  # sector weights, so it exists even when assistance is unavailable.
+  jp <- job_pressure(out)
+  out$job_pressure <- as.numeric(jp)
+  out$job_pressure_n <- attr(jp, "n_inputs")
+  out$job_pressure_from <- attr(jp, "inputs")
   out <- county_assistance(out, weights)
-  out <- add_pct(out, names(RISK_LAYERS)[is_assist])
+  out <- add_pct(out, names(RISK_LAYERS)[is_derived])
   out$pct_weak_share <- pct_rank(out$weak_share)
 
   yr <- attr(county_base, "acs_year")
@@ -329,7 +341,7 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
     sprintf("CES %s · ACS %d–%d", format(rm_sa, "%b %Y"), yr - 4, yr)
   # Assistance needs the county industry mix as well as the weights.
   ces <- if (is.null(weights)) NULL else attr(weights, "ref_month")
-  for (id in names(RISK_LAYERS)[is_assist]) {
+  for (id in names(RISK_LAYERS)[is_derived]) {
     status[[id]] <- if ("stress_ahead" %in% loading) "loading" else
       if (is.null(weights) || is.null(stress_ahead)) "unavailable" else "ok"
     asof[[id]] <- if (status[[id]] != "ok") NA_character_ else
@@ -346,7 +358,7 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
 
 #' County assistance values (national frame): exposure to weakening sectors from the
 #' county industry mix (jobs = share x emp_total), cushion from rent burden and poverty,
-#' and the job pressure J from the Stress now / ahead percentiles already on `out`.
+#' and the score from those plus `out$job_pressure` (set by build_county_layers).
 #' All NA when `weights` is NULL or the county shares are missing.
 county_assistance <- function(out, weights) {
   n <- nrow(out)
@@ -357,13 +369,13 @@ county_assistance <- function(out, weights) {
     jobs[[.JOB_COLS[i]]] <- as.numeric(d[[paste0("share_", RISK_SECTORS$group[i])]]) * total
   }
   e <- exposure_from_jobs(jobs, weights)
-  out$job_pressure <- job_pressure(d)
   out$exposure <- e$exposure
   out$exp_workers <- e$exp_workers
   out$weak_share <- e$weak_share
   s <- assistance_score(e$exposure, d[c("rent_burden_rate", "poverty_rate")],
                         out$job_pressure, rep("us", n))
-  blank <- is.null(weights)
+  # Without exposure the layers are "unavailable"; keep the cushion consistent with that.
+  blank <- is.null(weights) || all(is.na(e$exposure))
   out$assist_score <- s$score
   out$assist_exposure <- round(100 * e$exposure, 1)
   out$assist_cushion <- if (blank) rep(NA_real_, n) else s$pct_cushion
@@ -655,8 +667,11 @@ exposure_from_jobs <- function(jobs, weights) {
   out
 }
 
-#' County job pressure 0..1: mean of the available Stress-now percentile and the
-#' inverted Stress-ahead percentile (lower Stress ahead = more pressure).
+#' County job pressure, a 0..1 index (not a percentile): the mean of the available
+#' Stress-now percentile and the inverted Stress-ahead percentile (lower Stress ahead
+#' = more pressure), divided by 100. The Credit lens uses 100 * job_pressure as its
+#' component. Attributes: "n_inputs" (integer, 0-2 inputs used per county) and
+#' "inputs" ("both", "now", "ahead" or NA).
 job_pressure <- function(county_layers) {
   n <- nrow(county_layers)
   now <- if ("pct_momentum_pp" %in% names(county_layers))
@@ -665,6 +680,10 @@ job_pressure <- function(county_layers) {
     (100 - as.numeric(county_layers$pct_stress_ahead_pp)) / 100 else rep(NA_real_, n)
   out <- rowMeans(cbind(now, ahead), na.rm = TRUE)
   out[is.nan(out)] <- NA_real_
+  n <- as.integer(!is.na(now)) + as.integer(!is.na(ahead))
+  attr(out, "n_inputs") <- n
+  attr(out, "inputs") <- ifelse(n == 2L, "both", ifelse(n == 0L, NA_character_,
+                                                       ifelse(is.na(ahead), "now", "ahead")))
   out
 }
 
@@ -744,8 +763,11 @@ assistance_tracts <- function(tracts, jobs, weights, county_layers, frame_counti
   tracts$young_share <- jb$young_share
   tracts$assist_source <- if (!is.null(jobs) && "assist_source" %in% names(jobs))
     jobs$assist_source[idx] else rep(NA_character_, n)
-  tracts$job_pressure <- job_pressure(county_layers)[match(tracts$county_geoid,
-                                                           county_layers$GEOID)]
+  jp <- job_pressure(county_layers)
+  at <- match(tracts$county_geoid, county_layers$GEOID)
+  tracts$job_pressure <- as.numeric(jp)[at]
+  tracts$job_pressure_n <- attr(jp, "n_inputs")[at]
+  tracts$job_pressure_from <- attr(jp, "inputs")[at]
 
   col_or_na <- function(v) if (v %in% names(tracts)) as.numeric(tracts[[v]]) else na
   cushion_in <- data.frame(low_wage_share = tracts$low_wage_share,

@@ -100,6 +100,8 @@ risk_tooltip_html <- function(title, subtitle = NULL, value_text, rank_text = NU
 }
 
 # ── Layer registry ───────────────────────────────────────────────────────────
+# derived = TRUE: the column is computed inside build_county_layers from the base
+# percentiles (assistance now, credit later), so its percentile is added after them.
 RISK_LAYERS <- c(
   list(stress_now = list(
     label = "Stress now: unemployment vs. a year ago", col = "momentum_pp", fmt = "pp",
@@ -123,7 +125,7 @@ RISK_LAYERS <- c(
     asg <- function(label, col, fmt, source, ...) list(
       label = label, col = col, fmt = fmt, pal = "YlOrRd", rev = FALSE,
       higher_is_worse = TRUE, source = source, levels = c("county", "tract"),
-      lens = "assistance", noisy_cols = c("noisy_poverty_rate", "noisy_rent_burden_rate"),
+      lens = "assistance", derived = TRUE, noisy_cols = c("noisy_poverty_rate", "noisy_rent_burden_rate"),
       loading_text = "loading sector payrolls and county industry mix…", ...)
     src <- "LODES / ACS × CES sector weights"
     list(
@@ -243,13 +245,18 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 .drv_worse <- function(d, cols) lapply(cols, function(col)
   if (is.null(d[[col]])) NULL else as.numeric(d[[col]]) >= 50)
 
-# J is the mean of two percentiles, so it is an index, not itself a percentile.
-.job_pressure_text <- function(j)
-  sprintf("%.0f/100 (mean of Stress now and Stress ahead percentiles)", 100 * j)
+# J is the mean of the available percentiles, so it is an index, not itself a percentile.
+# n/from (job_pressure_n, job_pressure_from) say which inputs it rests on; NA = both.
+.job_pressure_text <- function(j, n = NA, from = NA) {
+  how <- ifelse(n %in% 1L & from %in% "ahead", "Stress ahead only — BLS unavailable",
+         ifelse(n %in% 1L & from %in% "now", "Stress now only — sector data unavailable",
+                "mean of Stress now and Stress ahead percentiles"))
+  sprintf("%.0f/100 (%s)", 100 * j, how)
+}
 
-.job_pressure_line <- function(j) {
+.job_pressure_line <- function(j, n = NA, from = NA) {
   ifelse(is.na(j), "Job pressure: missing (BLS/FRED unavailable)",
-         paste0("Job pressure: ", .job_pressure_text(j)))
+         paste0("Job pressure: ", .job_pressure_text(j, n, from)))
 }
 
 #' TRUE where a value's margin of error is flagged: any of the layer's noisy columns
@@ -304,8 +311,10 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
       .drv_text(d, c("weak_share", "rent_burden_rate", "poverty_rate")),
       .drv_worse(d, c("pct_weak_share", "pct_rent_burden_rate", "pct_poverty_rate")))
   } else ""
+  na_col <- function(col) if (is.null(d[[col]])) rep(NA, nrow(d)) else d[[col]]
   job_line <- if (identical(cfg$lens, "assistance")) .standing_html(.job_pressure_line(
-    if (is.null(d$job_pressure)) rep(NA_real_, nrow(d)) else d$job_pressure)) else ""
+    as.numeric(na_col("job_pressure")), na_col("job_pressure_n"),
+    na_col("job_pressure_from"))) else ""
   risk_tooltips_vec(title = d$name, subtitle = subs, value_text = vtxt,
                     rank_text = rank_label(pct, cfg$rank_frame %||% "nationally"),
                     footer = footer, drivers_html = drivers,
@@ -584,6 +593,7 @@ reset_to_us <- function(map, county_layers, layer_id) {
   mixed <- level == "tract" && length(unique(have)) > 1
   hh <- as.numeric(get("rent_burdened_hh"))
   j <- as.numeric(get("job_pressure"))
+  jn <- get("job_pressure_n"); jf <- get("job_pressure_from")
   tg$div(
     style = sprintf("margin-top:10px;border-top:1px solid %s;padding-top:8px;", c$border),
     tg$div(style = sprintf("color:%s;margin-bottom:4px;", c$muted), "Assistance score inputs"),
@@ -599,7 +609,7 @@ reset_to_us <- function(map, county_layers, layer_id) {
     if (level == "tract" && !is.na(hh)) line(sprintf(
       "Rent-burdened renter households: %s (ACS estimate)", .risk_fmt(hh, "n"))),
     line(if (is.na(j)) "County job pressure: missing (BLS/FRED unavailable)" else
-      paste0("County job pressure: ", .job_pressure_text(j))))
+      paste0("County job pressure: ", .job_pressure_text(j, jn, jf))))
 }
 
 # Dashed-outline notes, one sentence per group: assistance layers are only noisy through

@@ -61,12 +61,42 @@ test_that("county assistance computed when weights present, loading otherwise", 
 
 test_that("county assistance uses national percentiles and job pressure", {
   l <- al_layers()
-  expect_equal(l$job_pressure, job_pressure(l))
+  expect_equal(l$job_pressure, as.numeric(job_pressure(l)))
+  expect_equal(l$job_pressure_n, attr(job_pressure(l), "n_inputs"))
   d <- sf::st_drop_geometry(l)
   e <- assistance_score(d$exposure, d[c("rent_burden_rate", "poverty_rate")], d$job_pressure,
                         rep("us", nrow(d)))
   expect_equal(l$assist_score, e$score)
   expect_equal(l$assist_cushion, e$pct_cushion)
+})
+
+test_that("job pressure is built before, and independent of, county assistance", {
+  nw <- build_county_layers(fx_county_base(), fx_momentum())   # no weights, no Stress ahead
+  expect_true(all(is.na(nw$assist_score)))
+  expect_false(anyNA(nw$job_pressure))
+  expect_equal(nw$job_pressure, nw$pct_momentum_pp / 100)
+  expect_equal(unique(nw$job_pressure_n), 1L)
+  expect_equal(unique(nw$job_pressure_from), "now")
+  expect_equal(unique(al_layers()$job_pressure_n), 2L)
+  expect_equal(unique(al_layers()$job_pressure_from), "both")
+  na <- build_county_layers(fx_county_base(), NULL)
+  expect_true(all(is.na(na$job_pressure)))
+  expect_equal(unique(na$job_pressure_n), 0L)
+})
+
+test_that("derived layers are exactly the four assistance layers", {
+  der <- names(RISK_LAYERS)[vapply(RISK_LAYERS, function(l) isTRUE(l$derived), TRUE)]
+  expect_equal(der, c("assist_score", "assist_exposure", "assist_cushion", "assist_workers"))
+  l <- al_layers()
+  for (id in der) expect_true(paste0("pct_", RISK_LAYERS[[id]]$col) %in% names(l), info = id)
+})
+
+test_that("cushion is blank when exposure is unavailable, so values match the status", {
+  l <- build_county_layers(fx_county_base(), fx_momentum(), sector_weights = fx_weights())
+  expect_equal(attr(l, "layer_status")[["assist_cushion"]], "unavailable")
+  expect_true(all(is.na(l$assist_exposure)))
+  expect_true(all(is.na(l$assist_cushion)))
+  expect_true(all(is.na(l$pct_assist_cushion)))
 })
 
 test_that("stress_ahead keeps emp_total", {
@@ -120,6 +150,32 @@ test_that("county tooltip shows drivers and flags missing job pressure", {
   expect_true(grepl(sprintf("Job pressure: %.0f/100 (mean of Stress now and Stress ahead percentiles)", 100 * j),
                     tip, fixed = TRUE))
   expect_false(grepl("percentile<", tip, fixed = TRUE))
+})
+
+test_that("job pressure text names the inputs it rests on", {
+  both <- al_layers()
+  ahead <- build_county_layers(fx_county_base(), NULL, stress_ahead = fx_stress_ahead())
+  now <- build_county_layers(fx_county_base(), fx_momentum())
+  none <- build_county_layers(fx_county_base(), NULL)
+  tip <- function(l) as.character(.county_tooltips(l[l$GEOID == "13295", ], "assist_score",
+                                                   RISK_LAYERS$assist_score, "x"))
+  expect_true(grepl("(mean of Stress now and Stress ahead percentiles)", tip(both), fixed = TRUE))
+  expect_true(grepl("(Stress ahead only — BLS unavailable)", tip(ahead), fixed = TRUE))
+  expect_false(grepl("mean of", tip(ahead), fixed = TRUE))
+  expect_true(grepl("(Stress now only — sector data unavailable)", tip(now), fixed = TRUE))
+  expect_true(grepl("Job pressure: missing (BLS/FRED unavailable)", tip(none), fixed = TRUE))
+  # The tract side panel reads the same columns.
+  panel <- function(l) {
+    t <- sf::st_drop_geometry(al_tracts())[1, ]
+    t$job_pressure <- l$job_pressure[l$GEOID == "13295"]
+    t$job_pressure_n <- l$job_pressure_n[l$GEOID == "13295"]
+    t$job_pressure_from <- l$job_pressure_from[l$GEOID == "13295"]
+    as.character(risk_side_panel(t, "tract", l))
+  }
+  expect_true(grepl("(Stress ahead only — BLS unavailable)", panel(ahead), fixed = TRUE))
+  expect_true(grepl("(Stress now only — sector data unavailable)", panel(now), fixed = TRUE))
+  expect_true(grepl("(mean of Stress now and Stress ahead percentiles)", panel(both), fixed = TRUE))
+  expect_true(grepl("County job pressure: missing", panel(none), fixed = TRUE))
 })
 
 test_that("tract tooltip shows 4 drivers with workers last", {
