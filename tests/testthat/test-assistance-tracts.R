@@ -54,6 +54,7 @@ at_jobs <- function(source = "LODES 2024", wage = TRUE) {
 at_fetch_jobs <- function(jobs) {
   function(state_fips, acs_geoids) {
     out <- jobs[substr(jobs$GEOID, 1, 2) == state_fips, ]
+    out <- out[rev(seq_len(nrow(out))), ]   # row order differs from the tracts: only a GEOID join passes
     attr(out, "source") <- attr(jobs, "source")
     out
   }
@@ -77,6 +78,12 @@ test_that("tracts get assistance columns and ranks", {
   expect_true(all(t$assist_score >= 0 & t$assist_score <= 100))
   expect_equal(unique(t$assist_source), "LODES 2024")
   expect_equal(unname(r$sources[c("13", "47")]), c("LODES 2024", "LODES 2024"))
+  # Values follow the GEOID, not the row order of the job table (the stub reverses it).
+  jobs <- at_jobs()
+  e <- exposure_from_jobs(jobs, attr(at_county_layers(), "sector_weights"))
+  at <- match(t$GEOID, jobs$GEOID)
+  expect_equal(t$exposure, e$exposure[at])
+  expect_equal(t$low_wage_share, jobs$low_wage_share[at])
   expect_equal(t$assist_exposure, round(100 * t$exposure, 1))
   expect_equal(t$assist_workers, t$exp_workers)
   # Job pressure comes from the tract's own county.
@@ -104,7 +111,7 @@ test_that("no weights gives NA assistance, other columns intact", {
                          fetch_jobs = at_fetch_jobs(at_jobs()), weights = NULL)
   t <- r$tracts
   for (col in c("assist_score", "assist_exposure", "assist_cushion", "assist_workers",
-                "assist_score_st")) {
+                "assist_score_st", "assist_cushion_st")) {
     expect_true(all(is.na(t[[col]])), info = col)
   }
   expect_false(anyNA(t$poverty_rate))

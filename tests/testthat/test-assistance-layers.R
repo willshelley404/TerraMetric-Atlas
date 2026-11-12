@@ -192,6 +192,16 @@ test_that("tract tooltip shows 4 drivers with workers last", {
   expect_false(grepl("color:#ff6b6b;\">20.0%", lab2, fixed = TRUE))
 })
 
+test_that("a driver is red from the 50th percentile up, not below", {
+  tr <- al_tracts()
+  tr$weak_share <- c(41, 42)
+  tr$lm_pct_weak_share <- c(50, 49.9)
+  labs <- al_tract_labels(tr)$args[[7]]
+  expect_true(grepl("color:#ff6b6b;\">41.0%", as.character(labs[[1]]), fixed = TRUE))
+  expect_false(grepl("color:#ff6b6b;\">42.0%", as.character(labs[[2]]), fixed = TRUE))
+  expect_true(grepl("42.0%", as.character(labs[[2]]), fixed = TRUE))
+})
+
 test_that("an ACS tract (no wage band) omits the low-wage line but keeps workers", {
   lab <- as.character(al_tract_labels(al_tracts(low_wage = NA_real_))$args[[7]][[1]])
   expect_false(grepl("Low-wage", lab, fixed = TRUE))
