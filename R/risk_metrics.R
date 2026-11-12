@@ -192,6 +192,7 @@ rank_tracts <- function(tracts_all, county_base, frame_counties, vars) {
     tracts_all[[paste0("lm_pct_", v)]] <- lm
   }
   state_names <- stats::setNames(cb$state_name, cb$state_fips)
+  tracts_all$frame_n <- ifelse(in_frame, sum(in_frame), NA_integer_)
   tracts_all$frame_label <- fr$label
   tracts_all$state_label <- paste("in", unname(state_names[st]))
   tracts_all

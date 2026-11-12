@@ -322,3 +322,99 @@ test_that("tract legend of a binned layer uses its bin labels", {
   expect_equal(labs, RISK_LAYERS$assist_score$bin_labels)
   expect_true(grepl("tracts in Chattanooga metro", lg[[length(lg)]]$args[[1]]$title, fixed = TRUE))
 })
+
+# Last legend title and the tract labels of a tract-level map.
+al_tract_map <- function(layers, tr = al_tracts(), layer = "assist_score") {
+  m <- add_tract_layer(build_risk_county_map(layers, layer), tr, layer, layers)
+  lg <- Filter(function(cl) cl$method == "addLegend", m$x$calls)
+  pol <- Filter(function(cl) cl$method == "addPolygons" && identical(cl$args[[3]], "tracts"),
+                m$x$calls)[[1]]
+  list(title = lg[[length(lg)]]$args[[1]]$title,
+       labels = vapply(pol$args[[7]], as.character, ""))
+}
+
+test_that("tract legend and footers say unavailable, never NA, without sector weights", {
+  nw <- build_county_layers(fx_county_base(), fx_momentum())
+  r <- al_tract_map(nw)
+  expect_true(grepl("unavailable", r$title, fixed = TRUE))
+  expect_false(grepl("NA", r$title, fixed = TRUE))
+  for (lab in r$labels) {
+    expect_true(grepl("unavailable", lab, fixed = TRUE))
+    expect_false(grepl(", NA", lab, fixed = TRUE))
+  }
+})
+
+test_that("tract as-of does not depend on county assistance being available", {
+  # Weights present, county industry mix (Stress ahead) missing: county status is unavailable.
+  l <- build_county_layers(fx_county_base(), fx_momentum(), sector_weights = fx_weights())
+  expect_equal(attr(l, "layer_status")[["assist_score"]], "unavailable")
+  r <- al_tract_map(l)
+  asof <- "LODES 2024 / ACS 2020–2024 · CES Oct 2026"
+  expect_true(grepl(asof, r$title, fixed = TRUE))
+  for (lab in r$labels) {
+    expect_true(grepl(asof, lab, fixed = TRUE))
+    expect_false(grepl("NA", sub("NAME", "", lab), fixed = TRUE))
+  }
+  # ACS-only tracts drop the LODES part; a LODES-year mix lists each year.
+  tr <- al_tracts(); tr$assist_source <- "ACS 2020–2024 (LODES unavailable)"
+  expect_true(grepl("ACS 2020–2024 · CES Oct 2026", al_tract_map(l, tr)$title, fixed = TRUE))
+  tr$assist_source <- c("LODES 2023", "LODES 2024")
+  expect_true(grepl("LODES 2023/2024 / ACS 2020–2024", al_tract_map(l, tr)$title, fixed = TRUE))
+  # A non-assistance layer keeps the county as-of.
+  expect_true(grepl("Census ACS 5-yr, ACS 2020–2024", al_tract_map(l, layer = "poverty_rate")$title,
+                    fixed = TRUE))
+})
+
+test_that("a tract value that is NA names the missing piece", {
+  tr <- al_tracts()
+  tr$assist_score <- c(NA, 31); tr$assist_exposure <- c(NA, 40); tr$job_pressure <- c(NA, 0.8)
+  lab <- function(layer) al_tract_map(al_layers(), tr, layer)$labels
+  s <- lab("assist_score")
+  expect_true(grepl("Job pressure: missing (BLS/FRED unavailable)", s[1], fixed = TRUE))
+  expect_true(grepl("Industry mix: unavailable", s[1], fixed = TRUE))
+  expect_false(grepl("Industry mix: unavailable|Job pressure: missing", s[2]))
+  tr$assist_exposure <- c(NA, 40); tr$assist_score <- c(NA, 31); tr$job_pressure <- c(0.8, 0.8)
+  s2 <- lab("assist_score")
+  expect_true(grepl("Industry mix: unavailable", s2[1], fixed = TRUE))
+  expect_false(grepl("Job pressure: missing", s2[1], fixed = TRUE))
+  # Exposure layer depends on the industry mix only.
+  tr$job_pressure <- c(NA, NA)
+  e <- lab("assist_exposure")
+  expect_true(grepl("Industry mix: unavailable", e[1], fixed = TRUE))
+  expect_false(grepl("Job pressure", e[1], fixed = TRUE))
+})
+
+test_that("a state with no job table is named in the tract side panel", {
+  h <- al_panel_tract(sources = c("13" = "LODES 2024", "09" = NA_character_))
+  expect_true(grepl("Industry mix unavailable for: Connecticut", h, fixed = TRUE))
+  expect_false(grepl("Industry mix unavailable", al_panel_tract(sources = c("13" = "LODES 2024")),
+                     fixed = TRUE))
+  # Shown even when the clicked tract itself has no assistance values.
+  t <- sf::st_drop_geometry(al_tracts())[1, ]
+  t[c("assist_score", "assist_workers", "assist_source")] <- NA
+  h2 <- as.character(risk_side_panel(t, "tract", al_layers(), sources = c("13" = NA_character_)))
+  expect_true(grepl("Industry mix unavailable for: Georgia", h2, fixed = TRUE))
+})
+
+test_that("tract legend scope shows the frame size", {
+  r <- al_tract_map(al_layers())
+  expect_true(grepl("tracts in Chattanooga metro (n = 2)", r$title, fixed = TRUE))
+})
+
+test_that("a small tract frame says its ranks are coarse", {
+  small <- "Small comparison group (n = 2) — ranks are coarse."
+  r <- al_tract_map(al_layers())
+  for (lab in r$labels) expect_true(grepl(small, lab, fixed = TRUE))
+  # 5 tracts is enough.
+  big <- al_tracts()[rep(1:2, length.out = 5), ]
+  big$GEOID <- paste0("1329502", 1:5)
+  r5 <- al_tract_map(al_layers(), big)
+  for (lab in r5$labels) expect_false(grepl("Small comparison group", lab, fixed = TRUE))
+  # Side panel reads frame_n from the tract row.
+  t <- sf::st_drop_geometry(al_tracts())[1, ]
+  panel <- function(n) { t$frame_n <- n; as.character(risk_side_panel(t, "tract", al_layers())) }
+  expect_true(grepl("Small comparison group (n = 3) — ranks are coarse.", panel(3), fixed = TRUE))
+  expect_false(grepl("Small comparison group", panel(136), fixed = TRUE))
+  expect_false(grepl("Small comparison group",
+                     as.character(risk_side_panel(t, "tract", al_layers())), fixed = TRUE))
+})

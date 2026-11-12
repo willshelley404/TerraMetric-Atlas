@@ -77,3 +77,9 @@ test_that("all states missing returns NULL tracts", {
   expect_null(r$tracts)
   expect_setequal(r$missing_states, c("47", "13"))
 })
+
+test_that("tracts carry the size of their comparison frame", {
+  r <- tracts_for_county("47065", rk_county_base(), fetch = rk_fetch(),
+                         fetch_jobs = rk_no_jobs, vars = "poverty_rate")
+  expect_equal(unique(r$tracts$frame_n), nrow(r$tracts))
+})

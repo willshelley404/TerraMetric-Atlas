@@ -414,12 +414,35 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 }
 
 # ── Tract drill-down layer ───────────────────────────────────────────────────
-.tract_tooltips <- function(t, cfg, asof, noisy, county_layers) {
+# Frames smaller than this rank too coarsely to read as percentiles.
+.SMALL_FRAME <- 5
+
+.small_frame_text <- function(n) sprintf("Small comparison group (n = %d) — ranks are coarse.", as.integer(n))
+
+#' Standing lines for an assistance tract whose value is NA: what is missing. The score
+#' needs the industry mix and job pressure; the other layers only the industry mix.
+.assist_missing_html <- function(t, cfg) {
+  n <- nrow(t)
+  if (!identical(cfg$lens, "assistance")) return(rep("", n))
+  na_col <- function(col) if (is.null(t[[col]])) rep(NA_real_, n) else as.numeric(t[[col]])
+  no_val <- is.na(as.numeric(t[[cfg$col]]))
+  mix <- no_val & is.na(na_col("assist_exposure"))
+  jp <- if (identical(cfg$col, "assist_score")) no_val & is.na(na_col("job_pressure")) else
+    rep(FALSE, n)
+  paste0(.standing_html(ifelse(jp, "Job pressure: missing (BLS/FRED unavailable)", "")),
+         .standing_html(ifelse(mix, "Industry mix: unavailable", "")))
+}
+
+.tract_tooltips <- function(t, cfg, asof, noisy, county_layers, status = "ok") {
   vtxt <- .risk_fmt(as.numeric(t[[cfg$col]]), cfg$fmt, cfg$digits %||% 1)
   lm_pct <- t[[paste0("lm_pct_", cfg$col)]]
   lm <- rank_label(lm_pct, t$frame_label)
   st <- rank_label(t[[paste0("st_pct_", cfg$col)]], t$state_label)
-  footer <- paste0(cfg$source, ", ", asof, ifelse(noisy, " · High margin of error", ""))
+  footer <- paste0(
+    if (identical(status, "unavailable") || is.na(asof)) paste(cfg$source, "— unavailable") else
+      paste0(cfg$source, ", ", asof),
+    ifelse(noisy, " · High margin of error", ""))
+  small <- if (nrow(t) < .SMALL_FRAME) .standing_html(rep(.small_frame_text(nrow(t)), nrow(t))) else ""
   drivers <- if (identical(cfg$lens, "assistance")) {
     ins <- c("weak_share", "low_wage_share", "rent_burden_rate")
     risk_drivers_vec(
@@ -432,8 +455,34 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
   risk_tooltips_vec(title = t$tract_name, value_text = vtxt, rank_text = lm,
                     rank_sub = st, footer = footer, drivers_html = drivers,
                     rank_bad = .rank_bad(lm_pct, cfg, as.numeric(t[[cfg$col]])),
-                    standing = .standing_html(
-                      .metro_line_rows(t, county_layers, key = "county_geoid")))
+                    standing = paste0(
+                      .assist_missing_html(t, cfg),
+                      .standing_html(.metro_line_rows(t, county_layers, key = "county_geoid")),
+                      small))
+}
+
+#' Tract-layer status and as-of. Assistance tracts do not depend on county assistance:
+#' the as-of is built from the tracts' own job sources, the ACS span and the CES month,
+#' and is "unavailable" only without sector weights. Other layers use the county as-of.
+.tract_status_asof <- function(tracts, cfg, layer_id, county_layers) {
+  if (!identical(cfg$lens, "assistance")) {
+    return(list(status = "ok", asof = attr(county_layers, "asof")[[layer_id]]))
+  }
+  weights <- attr(county_layers, "sector_weights")
+  if (is.null(weights)) return(list(status = "unavailable", asof = NA_character_))
+  src <- if ("assist_source" %in% names(tracts)) as.character(tracts$assist_source) else character()
+  src <- unique(src[!is.na(src)])
+  lodes <- sub("^LODES\\s*", "", src[startsWith(src, "LODES")])
+  lodes <- lodes[nzchar(lodes)]
+  yr <- attr(county_layers, "acs_year")
+  ces <- attr(weights, "ref_month")
+  parts <- c(if (any(startsWith(src, "LODES")))
+               paste0("LODES", if (length(lodes)) paste0(" ", paste(sort(lodes), collapse = "/"))),
+             if (!is.null(yr)) sprintf("ACS %d–%d", yr - 4, yr))
+  if (!length(parts)) return(list(status = "unavailable", asof = NA_character_))
+  asof <- paste(parts, collapse = " / ")
+  if (length(ces) == 1 && !is.na(ces)) asof <- paste0(asof, format(ces, " · CES %b %Y"))
+  list(status = "ok", asof = asof)
 }
 
 # A binned layer keeps its own bin labels (no "80 – 101"); others use the palette's.
@@ -463,7 +512,7 @@ add_tract_layer <- function(map, tracts, layer_id, county_layers, fit = TRUE) {
   if (!"tract" %in% cfg$levels || !have) {
     return(fit_to(.add_county_polygons(map, county_layers, layer_id, 0.82)))
   }
-  asof <- attr(county_layers, "asof")[[layer_id]]
+  sa <- .tract_status_asof(tracts, cfg, layer_id, county_layers)
   vals <- as.numeric(tracts[[cfg$col]])
   pal <- .risk_palette(cfg, vals)
   noisy <- .noisy_flags(tracts, cfg)
@@ -475,15 +524,16 @@ add_tract_layer <- function(map, tracts, layer_id, county_layers, fit = TRUE) {
       fillColor = pal(vals), fillOpacity = 0.85,
       color = ifelse(noisy, .RISK_COL$warn, "#0f1117"),
       weight = ifelse(noisy, 1.5, 0.4), dashArray = ifelse(noisy, "4", NA),
-      label = .tract_tooltips(tracts, cfg, asof, noisy, county_layers),
+      label = .tract_tooltips(tracts, cfg, sa$asof, noisy, county_layers, sa$status),
       labelOptions = leaflet::labelOptions(
         style = list(background = "transparent", border = "none", padding = "0",
                      "box-shadow" = "none"), direction = "auto"),
       highlightOptions = leaflet::highlightOptions(color = .RISK_COL$accent, weight = 2)
     ) |>
     leaflet::removeControl("risk_legend") |>
-    add_tract_legend(pal, vals, cfg, lbl_fmt,
-                     .legend_title(cfg, "ok", asof, scope = paste("tracts", tracts$frame_label[1]))) |>
+    add_tract_legend(pal, vals, cfg, lbl_fmt, .legend_title(
+      cfg, sa$status, sa$asof,
+      scope = sprintf("tracts %s (n = %d)", tracts$frame_label[1], nrow(tracts)))) |>
     fit_to()
 }
 
@@ -578,7 +628,8 @@ reset_to_us <- function(map, county_layers, layer_id) {
 .assist_panel <- function(a, level, county_layers, st_names, sources = character(0)) {
   get <- function(col) if (col %in% names(a)) a[[col]][1] else NA
   workers <- as.numeric(get("assist_workers"))
-  if (is.na(workers) && is.na(as.numeric(get("assist_score")))) return(NULL)
+  no_mix <- if (level == "tract") unique(names(sources)[is.na(sources)]) else character(0)
+  if (is.na(workers) && is.na(as.numeric(get("assist_score"))) && !length(no_mix)) return(NULL)
   tg <- htmltools::tags; c <- .RISK_COL
   line <- function(txt, color = c$text) tg$div(style = sprintf("color:%s;margin:2px 0;", color), txt)
   src <- if (level == "tract") {
@@ -598,6 +649,8 @@ reset_to_us <- function(map, county_layers, layer_id) {
     style = sprintf("margin-top:10px;border-top:1px solid %s;padding-top:8px;", c$border),
     tg$div(style = sprintf("color:%s;margin-bottom:4px;", c$muted), "Assistance score inputs"),
     if (!is.na(src)) line(paste("Industry mix source:", src)),
+    if (length(no_mix)) line(color = c$warn, paste(
+      "Industry mix unavailable for:", paste(unname(st_names[no_mix]), collapse = ", "))),
     if (mixed) line(color = c$warn, paste0(
       "Industry mix source by state: ",
       paste(sprintf("%s — %s%s", unname(st_names[names(have)]), have,
@@ -678,6 +731,9 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
     if (level == "county" && !is.null(vintage)) .migration_line(a, vintage),
     if (level == "county") .metro_line_rows(a, county_layers)
     else .metro_line_rows(a, county_layers, key = "county_geoid"))
+  fn <- suppressWarnings(as.integer(get("frame_n")))
+  if (level == "tract" && length(fn) == 1 && !is.na(fn) && fn < .SMALL_FRAME)
+    standing <- c(standing, .small_frame_text(fn))
   standing <- standing[nzchar(standing)]
   tg$div(
     style = sprintf("background:%s;color:%s;border-radius:8px;padding:14px 16px;margin-top:12px;font-size:12px;",
