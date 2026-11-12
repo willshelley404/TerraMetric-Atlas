@@ -114,3 +114,30 @@ test_that("CBSA migration is population-weighted", {
   expect_true(is.na(m$mig_dom_rate[m$cbsa_geoid == "Y"]))
   expect_false(NA %in% m$cbsa_geoid)
 })
+
+test_that("cumulative layer labels its latest-year drivers with the year", {
+  l <- build_county_layers(fx_county_base(), fx_momentum(), migration = fx_migration())
+  cum <- mig_labels(build_risk_county_map(l, "mig_dom_cum"))
+  for (s in c("Domestic (2024–25)", "International (2024–25)", "Natural change (2024–25)"))
+    expect_true(all(grepl(s, cum, fixed = TRUE)), info = s)
+  one <- mig_labels(build_risk_county_map(l, "mig_dom"))
+  expect_false(any(grepl("(2024–25)</span>", one, fixed = TRUE)))
+})
+
+test_that("migration layers carry their own loading text", {
+  for (id in c("mig_dom", "mig_intl", "mig_net", "mig_dom_cum"))
+    expect_equal(RISK_LAYERS[[id]]$loading_text, "loading Census population estimates…")
+  l <- build_county_layers(fx_county_base(), fx_momentum(), loading = "migration")
+  title <- Filter(function(cl) cl$method == "addLegend",
+                  build_risk_county_map(l, "mig_net")$x$calls)[[1]]$args[[1]]$title
+  expect_true(grepl("loading Census population estimates", title, fixed = TRUE))
+})
+
+test_that("risk_drivers_vec treats a NULL (missing column) value as all-NA", {
+  v <- risk_drivers_vec(c("A", "B"), list(c("1", "2"), NULL), list(c(TRUE, FALSE), FALSE))
+  expect_length(v, 2)
+  expect_true(all(grepl("<span>A</span>", v, fixed = TRUE)))
+  expect_false(any(grepl("<span>B</span>", v, fixed = TRUE)))
+  expect_equal(risk_drivers_vec(c("A", "B"), list(NULL, c(NA_character_, NA)),
+                                list(FALSE, FALSE), n = 2), c("", ""))
+})

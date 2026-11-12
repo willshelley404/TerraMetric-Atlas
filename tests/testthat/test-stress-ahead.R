@@ -104,7 +104,8 @@ test_that("only sectors that drag are listed as drivers", {
   tips <- vapply(.county_tooltips(l, "stress_ahead", RISK_LAYERS$stress_ahead,
                                   attr(l, "asof")[["stress_ahead"]], "ok"), as.character, "")
   expect_equal(.n_driver_rows(tips[l$GEOID == "13295"]), 2)
-  expect_false(grepl("Driven by", tips[l$GEOID == "09110"], fixed = TRUE))
+  # No drag, so the block lists lifts instead (one row per positive contribution).
+  expect_equal(.n_driver_rows(tips[l$GEOID == "09110"]), 2)
 })
 
 test_that("per-element driver labels line up across counties", {
@@ -166,4 +167,42 @@ test_that("partial Stress ahead is marked partial in status and legend; stale wi
   attr(sa, "stale") <- TRUE
   l2 <- build_county_layers(fx_county_base(), fx_momentum(), stress_ahead = sa)
   expect_equal(attr(l2, "layer_status")[["stress_ahead"]], "stale")
+})
+
+test_that("Stress ahead is not rounded before it is ranked", {
+  s <- stress_ahead(fx_industry(), fx_weights())
+  ok <- !is.na(s$proj_pct)
+  expect_equal(s$stress_ahead_pp[ok], s$proj_pct[ok] - s$us_proj_pct[ok])
+  expect_false(isTRUE(all.equal(s$stress_ahead_pp[ok], round(s$stress_ahead_pp[ok], 2),
+                                tolerance = 0)))
+})
+
+test_that("a county with no drag sectors lists its top lifts, in a neutral colour", {
+  s <- stress_ahead(fx_industry(), fx_weights())
+  cap <- s[s$GEOID == "09110", ]
+  # Capitol is under-weight in shrinking manufacturing, so that is its biggest lift.
+  expect_equal(cap$sa_lift1_label, "Manufacturing")
+  expect_equal(cap$sa_lift2_label, "Education & health")
+  expect_gt(cap$sa_lift1_pp, cap$sa_lift2_pp)
+  expect_true(is.na(cap$sa_lift3_label))
+  expect_true(is.na(s$sa_lift1_label[s$GEOID == "15005"]))
+  l <- build_county_layers(fx_county_base(), fx_momentum(), stress_ahead = fx_stress_ahead())
+  tips <- vapply(.county_tooltips(l, "stress_ahead", RISK_LAYERS$stress_ahead,
+                                  attr(l, "asof")[["stress_ahead"]], "ok"), as.character, "")
+  cap_drv <- .drivers_part(tips[l$GEOID == "09110"])
+  expect_true(grepl("Education &amp; health", cap_drv, fixed = TRUE))
+  expect_true(grepl("+0.07 pp", cap_drv, fixed = TRUE))
+  expect_false(grepl("#ff6b6b", cap_drv, fixed = TRUE))           # not the "worse" red
+  # Walker has drags, so it keeps listing those.
+  expect_true(grepl("#ff6b6b", .drivers_part(tips[l$GEOID == "13295"]), fixed = TRUE))
+  # With no Stress ahead component the lift columns exist and are NA.
+  l0 <- build_county_layers(fx_county_base(), fx_momentum())
+  expect_true(all(is.na(l0$sa_lift1_label)))
+})
+
+test_that("industry panel carries the pandemic-years note with the ACS window", {
+  l <- build_county_layers(fx_county_base(), fx_momentum(), stress_ahead = fx_stress_ahead())
+  h <- as.character(risk_side_panel(l[l$GEOID == "13295", ], "county", l))
+  expect_true(grepl(paste0("Industry mix: ACS 2020–2024 5-year (includes pandemic years; ",
+                           "mix moves slowly)."), h, fixed = TRUE))
 })

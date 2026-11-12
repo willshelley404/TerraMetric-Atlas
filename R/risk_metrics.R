@@ -234,8 +234,10 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
   }
   if (is.null(stress_ahead)) {
     for (col in c("proj_pct", "us_proj_pct", "stress_ahead_pp", paste0("sa_drv", 1:3, "_pp"),
+                  paste0("sa_lift", 1:3, "_pp"),
                   paste0("share_", RISK_SECTORS$group))) out[[col]] <- NA_real_
-    for (col in paste0("sa_drv", 1:3, "_label")) out[[col]] <- NA_character_
+    for (col in c(paste0("sa_drv", 1:3, "_label"), paste0("sa_lift", 1:3, "_label")))
+      out[[col]] <- NA_character_
   } else {
     out <- dplyr::left_join(out, tibble::as_tibble(stress_ahead), by = "GEOID")
   }
@@ -456,18 +458,24 @@ stress_ahead <- function(ind, weights) {
   contrib <- sweep(sweep(share, 2, us_share), 2, m, `*`)
 
   out <- tibble::tibble(GEOID = ind$GEOID, proj_pct = proj, us_proj_pct = us_proj,
-                        stress_ahead_pp = round(proj - us_proj, 2))
-  worst <- t(apply(contrib, 1, function(r) {
+                        stress_ahead_pp = proj - us_proj)   # unrounded: display rounds, ranking must not
+  # Top 3 sectors by contribution: worst first (drags), best first (lifts).
+  top3 <- function(decreasing) t(apply(contrib, 1, function(r) {
     if (anyNA(r)) return(rep(NA_integer_, 3))
-    order(r)[1:3]
+    order(r, decreasing = decreasing)[1:3]
   }))
-  for (k in 1:3) {
-    idx <- worst[, k]
-    pp <- round(contrib[cbind(seq_len(nrow(contrib)), idx)], 2)
-    drag <- !is.na(pp) & pp < 0           # only real drags are listed
-    out[[sprintf("sa_drv%d_label", k)]] <- ifelse(drag, labels[idx], NA_character_)
-    out[[sprintf("sa_drv%d_pp", k)]] <- ifelse(drag, pp, NA_real_)
+  add_top <- function(out, prefix, idx_mat, keep) {
+    for (k in 1:3) {
+      idx <- idx_mat[, k]
+      pp <- round(contrib[cbind(seq_len(nrow(contrib)), idx)], 2)
+      ok <- !is.na(pp) & keep(pp)
+      out[[sprintf("%s%d_label", prefix, k)]] <- ifelse(ok, labels[idx], NA_character_)
+      out[[sprintf("%s%d_pp", prefix, k)]] <- ifelse(ok, pp, NA_real_)
+    }
+    out
   }
+  out <- add_top(out, "sa_drv", top3(FALSE), function(pp) pp < 0)    # only real drags
+  out <- add_top(out, "sa_lift", top3(TRUE), function(pp) pp > 0)    # shown when none drag
   for (i in seq_along(groups)) out[[paste0("share_", groups[i])]] <- share[, i]
   for (a in c("ref_month", "temphelp_m_pct")) attr(out, a) <- attr(weights, a)
   attr(out, "acs_year") <- attr(ind, "acs_year")

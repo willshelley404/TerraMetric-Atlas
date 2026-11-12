@@ -68,3 +68,8 @@ test_that("standing lines render above footer", {
                                       drivers_html = "<div>DRV</div>", standing = "<div>S1</div>")[[1]])
   expect_lt(regexpr("DRV", d, fixed = TRUE), regexpr("S1", d, fixed = TRUE))
 })
+
+test_that(".rank_bad treats a missing higher_is_worse as neutral", {
+  cfg <- RISK_LAYERS$stress_now; cfg$higher_is_worse <- NULL
+  expect_equal(.rank_bad(c(90, 10), cfg, c(-0.1, 0.2)), c(FALSE, FALSE))
+})
