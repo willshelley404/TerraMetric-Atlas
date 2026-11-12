@@ -37,6 +37,8 @@ server <- function(input, output, session) {
     risk_parts = list(),  # everything build_county_layers() takes besides the base
     risk_ready = FALSE,   # county map can render
     laus_go = NULL,       # set after the first map flush to start the BLS pull
+    credit_requested = FALSE, # Credit lens / tax base opened once: sources fetched, never again
+    credit_go = NULL,     # set after the "loading" frame is flushed to start the credit fetch
     kpis = NULL,
     forecasts = NULL,
     infl_panel = NULL,
@@ -1276,19 +1278,18 @@ server <- function(input, output, session) {
     rv$county_layers <- do.call(build_county_layers, c(list(rv$risk_base), rv$risk_parts))
   }
 
-  # Redraw the current layer from rv$county_layers.
-  risk_redraw <- function() {
+  # Redraw a layer (default: the selected one) from rv$county_layers.
+  risk_redraw <- function(layer = input$risk_layer) {
     proxy <- leaflet::leafletProxy("risk_map")
     if (!is.null(rv$risk_tracts)) {
-      add_tract_layer(proxy, rv$risk_tracts$tracts, input$risk_layer, rv$county_layers,
-                      fit = FALSE)
+      add_tract_layer(proxy, rv$risk_tracts$tracts, layer, rv$county_layers, fit = FALSE)
     } else {
-      .add_county_polygons(proxy, rv$county_layers, input$risk_layer, 0.82)
+      .add_county_polygons(proxy, rv$county_layers, layer, 0.82)
     }
   }
 
-  risk_redraw_safe <- function() {
-    tryCatch(risk_redraw(), error = function(e) {
+  risk_redraw_safe <- function(layer = input$risk_layer) {
+    tryCatch(risk_redraw(layer), error = function(e) {
       message("[Risk] redraw failed: ", conditionMessage(e))
       showNotification("Regional data partly unavailable — see console", type = "warning")
     })
@@ -1408,6 +1409,7 @@ server <- function(input, output, session) {
         fred <- quiet(fetch_fred_sectors)
         ind <- quiet(fetch_county_industry, attr(rv$risk_base, "acs_year"))
         w <- if (is.null(fred)) NULL else quiet(sector_weights, fred)
+        if (!is.null(w)) attr(w, "stale") <- isTRUE(attr(fred, "stale"))
         s <- if (is.null(w) || is.null(ind)) NULL else tryCatch({
           s <- stress_ahead(ind, w)
           attr(s, "stale") <- isTRUE(attr(fred, "stale")) || isTRUE(attr(ind, "stale"))
@@ -1425,8 +1427,49 @@ server <- function(input, output, session) {
       message("[Risk] Regional load failed: ", conditionMessage(e))
       showNotification("Regional data partly unavailable — see console", type = "warning")
     }, finally = {
-      if (length(rv$risk_parts$loading)) risk_try_part("Loading flags", loading = character(0))
+      # The credit load may already be pending (its flag is cleared when it finishes).
+      if (length(setdiff(rv$risk_parts$loading, "credit")))
+        risk_try_part("Loading flags", loading = intersect(rv$risk_parts$loading, "credit"))
       risk_redraw_safe()
+    })
+  })
+
+  # Credit lens and Tax base: CFPB, Urban Institute, FHFA and the metro-division crosswalk
+  # are fetched the first time either is opened (cached, so other sessions are instant) and
+  # never again in this session. The layer is painted "loading" first (this observer runs
+  # ahead of the layer observers); the fetch starts once that frame has been flushed.
+  risk_needs_credit <- function(lens, layer) identical(lens, "credit") || identical(layer, "tax_base")
+  observeEvent(list(input$risk_lens, input$risk_layer, rv$risk_ready), priority = 10, {
+    req(rv$risk_ready, rv$risk_base)
+    if (!risk_needs_credit(input$risk_lens, input$risk_layer) || isTRUE(rv$credit_requested)) return()
+    rv$credit_requested <- TRUE
+    if (!risk_try_part("Credit loading", loading = union(rv$risk_parts$loading, "credit"))) return()
+    # A lens switch reaches the layer select a round trip later: paint the layer it will pick.
+    if (!risk_needs_credit(NULL, input$risk_layer)) {
+      risk_redraw_safe(risk_lens_default(input$risk_lens))
+    }
+    session$onFlushed(function() rv$credit_go <- TRUE, once = TRUE)
+  })
+
+  observeEvent(rv$credit_go, {
+    req(rv$risk_base)
+    tryCatch({
+      quiet <- function(f, ...) tryCatch(f(...), error = function(e) {
+        message("[Risk] Credit input failed: ", conditionMessage(e)); NULL
+      })
+      credit <- withProgress(message = "Credit data (CFPB, Urban Institute, FHFA)…", value = 0.4, {
+        list(cfpb = quiet(fetch_cfpb_mortgage), urban = quiet(fetch_urban_debt),
+             hpi = quiet(fetch_fhfa_hpi), msad = quiet(fetch_msad_xwalk, rv$risk_base))
+      })
+      risk_try_part("Credit", credit = credit, loading = risk_unload("credit"))
+    }, error = function(e) {
+      message("[Risk] Credit load failed: ", conditionMessage(e))
+      showNotification("Credit data unavailable — see console", type = "warning")
+    }, finally = {
+      if ("credit" %in% rv$risk_parts$loading)
+        risk_try_part("Credit loading flag", loading = risk_unload("credit"))
+      # A pending lens switch redraws itself with the new data; only repaint a layer on screen.
+      if (risk_needs_credit(NULL, input$risk_layer)) risk_redraw_safe()
     })
   })
 

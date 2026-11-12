@@ -101,7 +101,7 @@ risk_tooltip_html <- function(title, subtitle = NULL, value_text, rank_text = NU
 
 # ── Layer registry ───────────────────────────────────────────────────────────
 # derived = TRUE: the column is computed inside build_county_layers from the base
-# percentiles (assistance now, credit later), so its percentile is added after them.
+# percentiles (assistance, credit, tax base), so its percentile is added after them.
 RISK_LAYERS <- c(
   list(stress_now = list(
     label = "Stress now: unemployment vs. a year ago", col = "momentum_pp", fmt = "pp",
@@ -140,12 +140,41 @@ RISK_LAYERS <- c(
         "Exposure-weighted workers (index headcount, not a layoff forecast)",
         "assist_workers", "n", src))
   }),
+  local({
+    # County-only; every value is derived inside build_county_layers (credit_components()).
+    cr <- function(label, col, fmt, source, ...) {
+      base <- list(label = label, col = col, fmt = fmt, pal = "YlOrRd", rev = FALSE,
+                   higher_is_worse = TRUE, source = source, levels = "county",
+                   lens = "credit", derived = TRUE,
+                   loading_text = "loading CFPB, Urban Institute and FHFA data…")
+      utils::modifyList(base, list(...))
+    }
+    list(
+      credit_score = cr("Household credit risk score (0–100)", "credit_score", "score",
+                        "CFPB · Urban · FHFA · BLS", bins = c(0, 20, 35, 50, 65, 80, 101),
+                        bin_labels = c("0–20", "20–35", "35–50", "50–65", "65–80", "80–100")),
+      credit_mortgage = cr("Mortgages 90+ days delinquent (%)", "dq90", "%",
+                           "CFPB mortgage performance"),
+      credit_consumer = cr("Card & auto loans delinquent (%)", "consumer_del", "%",
+                           "Urban Institute (Debt in America)"),
+      credit_jobs = cr("Job pressure (percentile)", "cr_jobs", "score", "BLS LAUS / CES"),
+      credit_collateral = cr("Home prices, year over year (%)", "hpi_yoy", "pct_signed",
+                             "FHFA house price index", pal = "RdBu", rev = FALSE,
+                             higher_is_worse = FALSE, digits = 1,
+                             bins = c(-50, -5, -2, 0, 2, 5, 50)))
+  }),
   stats::setNames(lapply(names(VAR_CFG), function(id) {
     v <- VAR_CFG[[id]]
     list(label = v$label, col = id, fmt = v$fmt, pal = v$pal, rev = v$rev,
          higher_is_worse = v$rev, source = "Census ACS 5-yr", levels = c("county", "tract"),
          lens = "context")
   }), names(VAR_CFG)),
+  list(tax_base = list(
+    label = "Tax base pressure (proxy — not a bond default model)", col = "tax_base",
+    fmt = "score", pal = "YlOrBr", rev = FALSE, higher_is_worse = TRUE,
+    source = "Census PEP · FHFA (proxy — not a bond default model)", levels = "county",
+    lens = "context", derived = TRUE,
+    loading_text = "loading CFPB, Urban Institute and FHFA data…")),
   local({
     mig <- function(label, col, bins) list(
       label = label, col = col, fmt = "per1k", pal = "PuOr", rev = FALSE,
@@ -163,7 +192,8 @@ RISK_LAYERS <- c(
 )
 
 # Lenses in display order; only lenses that have layers.
-RISK_LENSES <- c("Assistance" = "assistance", "Migration" = "migration", "Context" = "context")
+RISK_LENSES <- c("Assistance" = "assistance", "Credit" = "credit", "Migration" = "migration",
+                 "Context" = "context")
 
 #' Layer ids (values) and labels (names) of one lens, in registry order.
 risk_lens_choices <- function(lens) {
@@ -177,7 +207,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 # Only a raised flag is worth showing; "None" is the quiet default.
 .flag_shown <- function(flag) flag %in% c("Rising", "Trigger")
 
-#' digits applies to "pp" (layers may set `digits` in RISK_LAYERS; default 1). Values that
+#' digits applies to "pp" and "pct_signed" (layers may set `digits` in RISK_LAYERS; default 1). Values that
 #' round to zero print as +0.0 / +0.00, never a signed zero.
 .risk_fmt <- function(v, fmt, digits = 1) {
   out <- switch(fmt,
@@ -185,6 +215,10 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
     "pp" = {
       r <- round(v, digits); r[!is.na(r) & r == 0] <- 0
       sprintf(paste0("%+.", digits, "f pp"), r)
+    },
+    "pct_signed" = {      # a percent change (not points), signed
+      r <- round(v, digits); r[!is.na(r) & r == 0] <- 0
+      sprintf(paste0("%+.", digits, "f%%"), r)
     },
     "per1k" = sprintf("%+.1f per 1,000", v),
     "score" = sprintf("%.0f", v),
@@ -269,6 +303,111 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
   out
 }
 
+# ── Credit lens and tax base tooltip pieces ──────────────────────────────────
+.ordinal <- function(x) {
+  r <- round(x)
+  suf <- ifelse(r %% 100 %in% 11:13, "th", c("th", "st", "nd", "rd", "th", "th", "th", "th",
+                                              "th", "th")[r %% 10 + 1])
+  ifelse(is.na(x), NA_character_, paste0(r, suf))
+}
+
+# Column `col` of d as a vector (all NA when the frame lacks it).
+.col_or_na <- function(d, col, na = NA_real_) if (is.null(d[[col]])) rep(na, nrow(d)) else d[[col]]
+
+# " (metro est.)" etc.: the CFPB value is not the county's own.
+.cfpb_note <- function(src) ifelse(src %in% "metro", " (metro est.)",
+                                   ifelse(src %in% "state non-metro", " (state non-metro est.)", ""))
+.cfpb_where <- function(src) ifelse(src %in% "county", "county data",
+                                    ifelse(src %in% "metro", "metro estimate",
+                                           ifelse(src %in% "state non-metro",
+                                                  "state non-metro estimate", NA_character_)))
+.month_label <- function(x) format(as.Date(x), "%b %Y")
+
+#' "Driven by" for the credit score: the 3 components with the highest percentile, in
+#' natural units, red from the 50th percentile on. Order differs per county.
+.credit_drivers <- function(d) {
+  n <- nrow(d)
+  g <- function(col) as.numeric(.col_or_na(d, col))
+  src <- as.character(.col_or_na(d, "cfpb_source", NA_character_))
+  vals <- cbind(
+    ifelse(is.na(g("dq90")), NA_character_, paste0(sprintf("%.1f%%", g("dq90")), .cfpb_note(src))),
+    .risk_fmt(g("consumer_del"), "%"),
+    ifelse(is.na(g("cr_jobs")), NA_character_, paste(.ordinal(g("cr_jobs")), "pct")),
+    ifelse(is.na(g("hpi_yoy")), NA_character_, paste0(
+      .risk_fmt(g("hpi_yoy"), "pct_signed"),
+      ifelse(.col_or_na(d, "hpi_source", NA_character_) %in% "state", " (state est.)", ""))))
+  pct <- cbind(g("cr_mortgage"), g("cr_consumer"), g("cr_jobs"), g("cr_collateral"))
+  pct[is.na(vals)] <- NA_real_
+  labels <- c("Mortgages 90+ late", "Card & auto delinquent", "Job pressure", "Home prices YoY")
+  ord <- matrix(unlist(lapply(seq_len(n), function(i) order(-pct[i, ], na.last = TRUE))),
+                nrow = n, byrow = TRUE)
+  at <- function(m, j) m[cbind(seq_len(n), ord[, j])]
+  risk_drivers_vec(
+    lapply(1:3, function(j) labels[ord[, j]]),
+    lapply(1:3, function(j) at(vals, j)),
+    lapply(1:3, function(j) at(pct, j) >= 50), n = n)
+}
+
+#' Standing line(s) per credit-lens county: what the score rests on and where each
+#' value came from (CFPB level and month, FHFA quarter and level).
+.credit_standing <- function(d, id) {
+  n <- nrow(d)
+  g <- function(col) as.numeric(.col_or_na(d, col))
+  src <- as.character(.col_or_na(d, "cfpb_source", NA_character_))
+  mon <- as.character(.col_or_na(d, "cfpb_month", NA_character_))
+  switch(id,
+    credit_score = {
+      miss <- as.character(.col_or_na(d, "credit_missing", NA_character_))
+      cn <- g("credit_n")
+      ifelse(is.na(g("credit_score")) & !is.na(miss), paste("Missing:", miss),
+             ifelse(!is.na(g("credit_score")) & cn %in% 3L & nzchar(miss),
+                    sprintf("Based on 3 of 4 components (missing: %s)", miss), ""))
+    },
+    credit_mortgage = ifelse(is.na(g("dq90")), "", paste0(
+      "CFPB ", .month_label(mon), " · ", .cfpb_where(src))),
+    credit_collateral = {
+      hs <- as.character(.col_or_na(d, "hpi_source", NA_character_))
+      hq <- as.character(.col_or_na(d, "hpi_q", NA_character_))
+      ifelse(is.na(g("hpi_yoy")), "No FHFA home price data for this county",
+             paste0("FHFA ", hq, " · ", hs))
+    },
+    credit_consumer = ifelse(is.na(g("consumer_del")),
+                             "No Urban Institute data for this county", ""),
+    credit_jobs = .job_pressure_line(g("cr_jobs") / 100, .col_or_na(d, "job_pressure_n"),
+                                     .col_or_na(d, "job_pressure_from")),
+    rep("", n))
+}
+
+#' Drivers for the layers that list their inputs.
+.credit_layer_drivers <- function(d, id, cfg) {
+  g <- function(col) as.numeric(.col_or_na(d, col))
+  pct <- function(col) as.numeric(.col_or_na(d, paste0("pct_", col)))
+  switch(id,
+    credit_score = .credit_drivers(d),
+    credit_mortgage = risk_drivers_vec(
+      c("90+ days late", "30–89 days late, 12-month change"),
+      list(.risk_fmt(g("dq90"), "%"), .risk_fmt(g("dq3089_chg"), "pp", 2)),
+      list(pct("dq90") >= 50, g("dq3089_chg") > 0)),
+    credit_consumer = risk_drivers_vec(
+      c("Card delinquent", "Auto delinquent"),
+      list(.risk_fmt(g("card_del"), "%"), .risk_fmt(g("auto_del"), "%")),
+      list(FALSE, FALSE), n = nrow(d)),
+    tax_base = {
+      vint <- attr(d, "pep_vintage")
+      risk_drivers_vec(
+        c("Net domestic migration",
+          if (is.null(vint)) "Population change since 2020" else
+            sprintf("Population change 2020–%s", substr(vint, 3, 4)),
+          "Home prices YoY"),
+        list(.risk_fmt(g("mig_dom_rate"), "per1k"), .risk_fmt(g("pop_chg_pct"), "pct_signed"),
+             .risk_fmt(g("hpi_yoy"), "pct_signed")),
+        # Low migration, shrinking population and falling prices all weaken the base.
+        list(pct("mig_dom_rate") < 50, pct("pop_chg_pct") < 50, pct("hpi_yoy") < 50),
+        n = nrow(d))
+    },
+    "")
+}
+
 .county_tooltips <- function(d, id, cfg, asof, status = "ok") {
   if (identical(status, "loading")) {
     return(risk_tooltips_vec(title = d$name, value_text = "Loading…",
@@ -310,16 +449,19 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
       c("Workers in weakening sectors", "Renters cost-burdened", "Poverty rate"),
       .drv_text(d, c("weak_share", "rent_burden_rate", "poverty_rate")),
       .drv_worse(d, c("pct_weak_share", "pct_rent_burden_rate", "pct_poverty_rate")))
+  } else if (identical(cfg$lens, "credit") || id == "tax_base") {
+    .credit_layer_drivers(d, id, cfg)
   } else ""
   na_col <- function(col) if (is.null(d[[col]])) rep(NA, nrow(d)) else d[[col]]
   job_line <- if (identical(cfg$lens, "assistance")) .standing_html(.job_pressure_line(
     as.numeric(na_col("job_pressure")), na_col("job_pressure_n"),
     na_col("job_pressure_from"))) else ""
+  credit_line <- if (identical(cfg$lens, "credit")) .standing_html(.credit_standing(d, id)) else ""
   risk_tooltips_vec(title = d$name, subtitle = subs, value_text = vtxt,
                     rank_text = rank_label(pct, cfg$rank_frame %||% "nationally"),
                     footer = footer, drivers_html = drivers,
                     rank_bad = .rank_bad(pct, cfg, d[[cfg$col]]),
-                    standing = paste0(job_line,
+                    standing = paste0(job_line, credit_line,
                                       .standing_html(.migration_line(d, attr(d, "pep_vintage"))),
                                       .standing_html(.metro_line_rows(d))))
 }
@@ -330,7 +472,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 .rank_bad <- function(pct, cfg, vals = NULL) {
   hiw <- cfg$higher_is_worse %||% NA        # missing = neutral
   if (is.na(hiw)) return(rep(FALSE, length(pct)))
-  bad <- if (identical(cfg$fmt, "pp") && !is.null(vals)) {
+  bad <- if (cfg$fmt %in% c("pp", "pct_signed") && !is.null(vals)) {
     vals <- round(vals, cfg$digits %||% 1)       # what is displayed decides the colour
     if (isTRUE(hiw)) vals > 0 else vals < 0
   } else if (isTRUE(hiw)) pct >= 50 else pct < 50
@@ -341,7 +483,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 #' "below −10", "−10 to −5", ..., "above +10".
 .bin_labels <- function(bins, fmt, digits = 1) {
   num <- function(x) {
-    out <- if (fmt == "pp") sprintf(paste0("%+.", digits, "f"), x) else
+    out <- if (fmt %in% c("pp", "pct_signed")) sprintf(paste0("%+.", digits, "f"), x) else
       ifelse(x == round(x), sprintf("%+d", as.integer(round(x))), sprintf("%+.1f", x))
     out <- ifelse(x == 0, "0", out)
     sub("-", "−", out, fixed = TRUE)
@@ -482,7 +624,9 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
   if (!length(parts)) return(list(status = "unavailable", asof = NA_character_))
   asof <- paste(parts, collapse = " / ")
   if (length(ces) == 1 && !is.na(ces)) asof <- paste0(asof, format(ces, " · CES %b %Y"))
-  list(status = "ok", asof = asof)
+  st <- if (isTRUE(attr(weights, "stale"))) "stale" else
+    if (isTRUE(attr(weights, "partial"))) "partial" else "ok"
+  list(status = st, asof = asof)
 }
 
 # A binned layer keeps its own bin labels (no "80 – 101"); others use the palette's.
@@ -665,6 +809,74 @@ reset_to_us <- function(map, county_layers, layer_id) {
       paste0("County job pressure: ", .job_pressure_text(j, jn, jf))))
 }
 
+#' Credit components block for the county side panel (divs, not rows): each component
+#' with its value, national risk percentile, source (incl. the CFPB and FHFA level the
+#' county's value came from) and as-of, then the score. NULL until credit data has loaded.
+.credit_panel <- function(a, county_layers) {
+  info <- attr(county_layers, "credit_info")
+  if (is.null(info) || !isTRUE(info$loaded) || !any(info$has)) return(NULL)
+  tg <- htmltools::tags; c <- .RISK_COL
+  get <- function(col) if (col %in% names(a)) a[[col]][1] else NA
+  num <- function(col) suppressWarnings(as.numeric(get(col)))
+  asof <- attr(county_layers, "asof")
+  pctl <- function(p) if (is.na(p)) "no risk percentile" else
+    sprintf("risk percentile %.0f", p)
+  line <- function(name, value, p, source) tg$div(
+    style = "margin:3px 0;",
+    tg$b(name), " ", value,
+    tg$span(style = sprintf("color:%s;", c$muted), " · ", pctl(p), " · ", source))
+
+  src <- as.character(get("cfpb_source"))
+  dq <- num("dq90"); chg <- num("dq3089_chg")
+  mortgage <- line("Mortgage delinquency",
+    if (is.na(dq)) "—" else sprintf("%.1f%% 90+ days late%s", dq, if (is.na(chg)) "" else
+      sprintf(" (30–89 days: %+.2f pp over 12 months)", chg)),
+    num("cr_mortgage"),
+    if (is.na(src)) "no CFPB data for this county" else
+      sprintf("CFPB %s, %s", .cfpb_where(src), .month_label(as.character(get("cfpb_month")))))
+
+  card <- num("card_del"); auto <- num("auto_del")
+  consumer <- line("Card & auto delinquency",
+    if (is.na(card) && is.na(auto)) "—" else paste(c(
+      if (!is.na(card)) sprintf("card %.1f%%", card),
+      if (!is.na(auto)) sprintf("auto %.1f%%", auto)), collapse = ", "),
+    num("cr_consumer"),
+    if (!info$has[["urban"]]) "Urban Institute data unavailable" else
+      if (is.na(card) && is.na(auto)) "no Urban Institute data for this county" else
+        sprintf("Urban Institute (Debt in America), %s", info$urban_release))
+
+  jobs <- line("Job pressure", if (is.na(num("cr_jobs"))) "—" else
+                 sprintf("%.0f/100", num("cr_jobs")), num("cr_jobs"),
+               if (is.na(asof[["credit_jobs"]])) "BLS unemployment and payrolls unavailable" else
+                 paste("BLS", asof[["credit_jobs"]]))
+
+  hs <- as.character(get("hpi_source")); hq <- as.character(get("hpi_q"))
+  hpi <- num("hpi_yoy")
+  collateral <- line("Home prices (collateral)",
+    if (is.na(hpi)) "—" else sprintf("%s year over year", .risk_fmt(hpi, "pct_signed")),
+    num("cr_collateral"),
+    if (is.na(hs)) "no FHFA data for this county" else sprintf("FHFA %s, %s", hs, hq))
+
+  score <- num("credit_score"); n <- num("credit_n"); miss <- as.character(get("credit_missing"))
+  min_n <- RISK_CFG$credit_min_components
+  tg$div(
+    style = sprintf("margin-top:10px;border-top:1px solid %s;padding-top:8px;", c$border),
+    tg$div(style = sprintf("color:%s;margin-bottom:4px;", c$muted), "Credit components"),
+    tg$div(style = "margin:2px 0;", tg$b("Score: "),
+           if (is.na(score)) sprintf("Insufficient data (%s of 4 components; missing: %s)",
+                                     if (is.na(n)) 0 else n, if (is.na(miss)) "all" else miss) else
+             sprintf("%.0f/100, mean of %.0f of 4 component risk percentiles%s", score, n,
+                     if (nzchar(miss)) paste0(" (missing: ", miss, ")") else "")),
+    mortgage, consumer, jobs, collateral,
+    if (!info$has[["urban"]]) tg$div(
+      style = sprintf("color:%s;margin-top:4px;", c$warn),
+      if (!is.na(score)) sprintf("Urban Institute data unavailable — score uses %.0f components.", n) else
+        "Urban Institute data unavailable."),
+    tg$div(style = sprintf("color:%s;margin-top:4px;", c$muted), sprintf(paste0(
+      "Risk percentiles compare US counties (high = more credit risk); the score needs ",
+      "at least %d of 4 components."), min_n)))
+}
+
 # Dashed-outline notes, one sentence per group: assistance layers are only noisy through
 # their inputs (rent burden, poverty); ACS layers are noisy in themselves.
 noisy_notes <- function(labels, is_assist, color) {
@@ -692,8 +904,18 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
   rk <- function(p, hiw) { r <- rank_label(p, ""); if (is.na(r)) "—" else trimws(r) }  # value terms
   td <- function(...) tg$td(style = "padding:3px 10px 3px 0;", ...)
 
+  head <- c("Component", "Value",
+            if (level == "county") "National rank" else c("Labor market", "State"),
+            "As of", "Source")
+  # An assistance tract's industry-mix source: its own, else its state's in the loaded frame.
+  tract_src <- if (level == "tract") {
+    s <- as.character(get("assist_source"))
+    if (is.na(s)) s <- unname(sources[substr(get("GEOID"), 1, 2)])
+    if (length(s) == 0) NA_character_ else s
+  }
+
   noisy_labels <- character(0); noisy_assist <- logical(0)
-  rows <- lapply(ids, function(id) {
+  row_for <- function(id) {
     cfg <- RISK_LAYERS[[id]]
     v <- as.numeric(get(cfg$col))
     vt <- .risk_fmt(v, cfg$fmt, cfg$digits %||% 1)
@@ -709,16 +931,30 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
       noisy_labels <<- c(noisy_labels, cfg$label)
       noisy_assist <<- c(noisy_assist, identical(cfg$lens, "assistance"))
     }
-    when <- if (identical(status[[id]], "unavailable")) "unavailable" else
-      if (is.na(asof[[id]])) "loading" else asof[[id]]
+    # Assistance tracts have their own status and as-of (not the county's).
+    st_id <- status[[id]]; asof_id <- asof[[id]]
+    if (level == "tract" && identical(cfg$lens, "assistance")) {
+      sa <- .tract_status_asof(data.frame(assist_source = if (length(tract_src)) tract_src else
+                                            NA_character_), cfg, id, county_layers)
+      st_id <- sa$status; asof_id <- sa$asof
+    }
+    when <- if (identical(st_id, "unavailable")) "unavailable" else
+      if (is.na(asof_id)) "loading" else
+        paste0(asof_id, if (st_id %in% c("stale", "partial")) paste0(" (", st_id, ")") else "")
     pcts <- if (level == "county") list(td(rk(get(paste0("pct_", cfg$col)), cfg$higher_is_worse))) else
       list(td(rk(get(paste0("lm_pct_", cfg$col)), cfg$higher_is_worse)),
            td(rk(get(paste0("st_pct_", cfg$col)), cfg$higher_is_worse)))
     tg$tr(td(cfg$label), td(tg$b(if (is.na(vt)) "—" else vt)), pcts, td(when), td(cfg$source))
-  })
-  head <- c("Component", "Value",
-            if (level == "county") "National rank" else c("Labor market", "State"),
-            "As of", "Source")
+  }
+  # One header row per lens, in lens order, then that lens's layers in registry order.
+  lens_of <- vapply(RISK_LAYERS[ids], function(l) l$lens, "")
+  rows <- unlist(lapply(seq_along(RISK_LENSES), function(k) {
+    in_lens <- ids[lens_of == RISK_LENSES[[k]]]
+    if (!length(in_lens)) return(NULL)
+    c(list(tg$tr(tg$td(colspan = length(head), style = sprintf(
+      "padding:8px 0 2px;color:%s;font-weight:700;letter-spacing:.04em;text-transform:uppercase;font-size:11px;",
+      c$accent), names(RISK_LENSES)[k]))), lapply(in_lens, row_for))
+  }), recursive = FALSE)
 
   title <- if (level == "county") get("name") else get("tract_name")
   sub <- if (level == "county") {
@@ -752,6 +988,7 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
     if (level == "county" && !is.null(vintage)) .migration_panel(a, vintage),
     if (level == "county") .industry_panel(a, attr(county_layers, "sector_weights"),
                                           attr(county_layers, "acs_year")),
+    if (level == "county") .credit_panel(a, county_layers),
     noisy_notes(noisy_labels, noisy_assist, c$warn),
     if (length(missing_states)) tg$div(
       style = sprintf("color:%s;margin-top:8px;", c$warn),

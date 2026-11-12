@@ -255,11 +255,14 @@ tracts_for_county <- function(county_geoid, county_base, fetch = fetch_state_tra
 #' industry pull); falls back to attr(stress_ahead, "weights").
 #' metro_momentum: laus_momentum() on the metro pull (fips = CBSA code) or NULL; joined
 #' onto counties by cbsa_geoid as metro_momentum_pp / metro_rate_now / metro_ref_month.
+#' credit: list(cfpb, urban, hpi, msad), the raw fetch_cfpb_mortgage() / fetch_urban_debt() /
+#' fetch_fhfa_hpi() / fetch_msad_xwalk() results (any may be NULL; attr "stale" on each is
+#' honoured), or NULL before the lazy credit load. Per-county tables are derived here.
 build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
                                 laus_partial = FALSE,
                                 migration = NULL, loading = character(0),
                                 stress_ahead = NULL, metro_momentum = NULL,
-                                sector_weights = NULL) {
+                                sector_weights = NULL, credit = NULL) {
   out <- county_base
   if (is.null(momentum)) {
     out$ref_month <- as.Date(NA); out$rate_now <- NA_real_; out$rate_yr_ago <- NA_real_
@@ -312,6 +315,9 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
   out$job_pressure_n <- attr(jp, "n_inputs")
   out$job_pressure_from <- attr(jp, "inputs")
   out <- county_assistance(out, weights)
+  out <- county_credit(out, credit)
+  # While the credit sources load, a two-input tax base would change when HPI arrives.
+  out$tax_base <- if ("credit" %in% loading) rep(NA_real_, nrow(out)) else tax_base_proxy(out)
   out <- add_pct(out, names(RISK_LAYERS)[is_derived])
   out$pct_weak_share <- pct_rank(out$weak_share)
 
@@ -342,19 +348,28 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
   rm_sa <- if (is.null(stress_ahead)) NULL else attr(stress_ahead, "ref_month")
   asof[["stress_ahead"]] <- if (is.null(rm_sa) || is.na(rm_sa)) NA_character_ else
     sprintf("CES %s · ACS %d–%d", format(rm_sa, "%b %Y"), yr - 4, yr)
-  # Assistance needs the county industry mix as well as the weights.
+  # Assistance needs the county industry mix as well as the weights; it is stale or
+  # partial when either input is.
   ces <- if (is.null(weights)) NULL else attr(weights, "ref_month")
-  for (id in names(RISK_LAYERS)[is_derived]) {
+  sa_stale <- isTRUE(attr(stress_ahead, "stale")) || isTRUE(attr(weights, "stale"))
+  sa_partial <- isTRUE(attr(stress_ahead, "partial")) || isTRUE(attr(weights, "partial"))
+  for (id in names(RISK_LAYERS)[vapply(RISK_LAYERS, function(l) identical(l$lens, "assistance"), TRUE)]) {
     status[[id]] <- if ("stress_ahead" %in% loading) "loading" else
-      if (is.null(weights) || is.null(stress_ahead)) "unavailable" else "ok"
-    asof[[id]] <- if (status[[id]] != "ok") NA_character_ else
+      if (is.null(weights) || is.null(stress_ahead)) "unavailable" else
+        if (sa_stale) "stale" else if (sa_partial) "partial" else "ok"
+    asof[[id]] <- if (!status[[id]] %in% c("ok", "stale", "partial")) NA_character_ else
       paste0(sprintf("ACS %d–%d", yr - 4, yr),
              if (length(ces) == 1 && !is.na(ces)) format(ces, " · CES %b %Y") else "")
   }
+  cs <- credit_status_asof(out, credit, loading, asof[["stress_now"]], asof[["stress_ahead"]],
+                           v, isTRUE(attr(migration, "stale")))
+  status[names(cs$status)] <- cs$status
+  asof[names(cs$asof)] <- cs$asof
   attr(out, "layer_status") <- status
   attr(out, "asof") <- asof
   attr(out, "acs_year") <- yr
   attr(out, "sector_weights") <- weights
+  attr(out, "credit_info") <- cs$info
   if (!is.null(v)) attr(out, "pep_vintage") <- v
   out
 }
@@ -384,6 +399,90 @@ county_assistance <- function(out, weights) {
   out$assist_cushion <- if (blank) rep(NA_real_, n) else s$pct_cushion
   out$assist_workers <- e$exp_workers
   out
+}
+
+# Which raw credit sources exist (CFPB, Urban, FHFA); `[[` on a NULL list is NULL.
+.credit_has <- function(credit) vapply(c(cfpb = "cfpb", urban = "urban", hpi = "hpi"),
+                                       function(nm) !is.null(credit[[nm]]), TRUE)
+
+#' Credit lens columns for the county layers (names as in credit_components()), plus
+#' consumer_del (mean of card and auto, the consumer layer's value). Derives the
+#' per-county CFPB and HPI tables from the raw fetch results in `credit`. All NA when no
+#' source is present, so values always match the layer status.
+county_credit <- function(out, credit) {
+  cb <- .plain_df(out)
+  n <- nrow(cb)
+  if (!any(.credit_has(credit))) {
+    na <- rep(NA_real_, n); nc <- rep(NA_character_, n)
+    blank <- list(cr_mortgage = na, cr_consumer = na, cr_jobs = na, cr_collateral = na,
+                  credit_n = rep(NA_integer_, n), credit_score = na, credit_missing = nc,
+                  dq90 = na, dq3089_chg = na, cfpb_source = nc, cfpb_month = nc,
+                  card_del = na, auto_del = na, consumer_del = na, hpi_yoy = na,
+                  hpi_source = nc, hpi_q = nc)
+    for (col in names(blank)) out[[col]] <- blank[[col]]
+    return(out)
+  }
+  cf <- credit[["cfpb"]]
+  cfpb <- if (is.null(cf)) NULL else cfpb_county_components(
+    county_ids = cb$GEOID, cbsa_of = cb$cbsa_geoid, cbsa_type_of = cb$cbsa_type,
+    state_of = cb$state_fips, county90 = cf$county90, county3089 = cf$county3089,
+    metro90 = cf$metro90, metro3089 = cf$metro3089)
+  hpi <- if (is.null(credit[["hpi"]])) NULL else
+    county_hpi(cb, credit[["hpi"]], credit[["msad"]])
+  comps <- credit_components(cb, cfpb, credit[["urban"]], hpi)
+  comps$consumer_del <- .avail_mean(comps$card_del, comps$auto_del)
+  for (col in setdiff(names(comps), "GEOID")) out[[col]] <- comps[[col]]
+  out
+}
+
+#' Status and as-of of the credit-lens layers and tax_base: list(status, asof, info).
+#' Loading wins; a layer is unavailable without its own source or without any value;
+#' stale when any credit source came from a stale cache. The Urban as-of is the release
+#' month of its data folder, never the data month. jobs_now / jobs_ahead are the Stress
+#' now / ahead as-ofs, v the PEP vintage, mig_stale whether PEP came from a stale cache.
+credit_status_asof <- function(out, credit, loading, jobs_now, jobs_ahead, v, mig_stale) {
+  ids <- c("credit_score", "credit_mortgage", "credit_consumer", "credit_jobs",
+           "credit_collateral", "tax_base")
+  has <- .credit_has(credit)
+  stale <- any(vapply(c("cfpb", "urban", "hpi", "msad"),
+                      function(nm) isTRUE(attr(credit[[nm]], "stale")), TRUE))
+  some <- function(col) any(!is.na(out[[col]]))
+  avail <- c(credit_score = some("credit_score"),
+             credit_mortgage = has[["cfpb"]] && some("dq90"),
+             credit_consumer = has[["urban"]] && some("consumer_del"),
+             credit_jobs = any(has) && some("cr_jobs"),
+             credit_collateral = has[["hpi"]] && some("hpi_yoy"),
+             tax_base = some("tax_base"))
+  status <- vapply(ids, function(id) {
+    load_now <- if (id == "tax_base") any(c("credit", "migration") %in% loading) else
+      "credit" %in% loading
+    if (load_now) return("loading")
+    if (!avail[[id]]) return("unavailable")
+    if (stale || (id == "tax_base" && mig_stale)) "stale" else "ok"
+  }, "")
+  mon <- function(ym) format(as.Date(paste0(ym, "-01")), "%b %Y")
+  thru <- credit[["cfpb"]]$thru
+  cfpb_m <- if (has[["cfpb"]] && length(thru) == 1 && !is.na(thru)) mon(thru) else NA_character_
+  ua <- attr(credit[["urban"]], "asof")
+  urban_rel <- if (!has[["urban"]]) NA_character_ else
+    if (length(ua) == 1 && !is.na(ua)) paste("released", ua) else "release date unknown"
+  q <- out$hpi_q[!is.na(out$hpi_q)]
+  fhfa_q <- if (length(q)) max(q) else NA_character_
+  jobs <- c(jobs_now, jobs_ahead); jobs <- jobs[!is.na(jobs)]
+  asof <- c(
+    credit_score = paste(c(if (!is.na(cfpb_m)) paste("CFPB", cfpb_m),
+                           if (!is.na(urban_rel)) paste0("Urban Institute (", urban_rel, ")"),
+                           if (!is.na(fhfa_q)) paste("FHFA", fhfa_q),
+                           if (some("cr_jobs")) "BLS/CES"), collapse = " · "),
+    credit_mortgage = if (is.na(cfpb_m)) NA_character_ else paste("CFPB thru", cfpb_m),
+    credit_consumer = urban_rel,
+    credit_jobs = if (length(jobs)) paste(jobs, collapse = " · ") else NA_character_,
+    credit_collateral = if (is.na(fhfa_q)) NA_character_ else paste("FHFA", fhfa_q),
+    tax_base = if (is.null(v)) NA_character_ else paste0(
+      "PEP V", v, if (!is.na(fhfa_q)) paste(" · FHFA", fhfa_q) else " (home prices unavailable)"))
+  asof[!status %in% c("ok", "stale")] <- NA_character_
+  list(status = status, asof = asof,
+       info = list(loaded = !is.null(credit), has = has, thru = cfpb_m, urban_release = urban_rel))
 }
 
 #' Net domestic migration per 1,000 residents for each CBSA, population-weighted

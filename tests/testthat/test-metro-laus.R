@@ -82,7 +82,7 @@ test_that("metro line on CBSA counties", {
   # Shown on every lens, and kept out of the table rows.
   expect_true(grepl(txt, metro_poly_labels(build_risk_county_map(l, "poverty_rate"))[1],
                     fixed = TRUE))
-  expect_equal(lengths(regmatches(h, gregexpr("<tr", h))), length(RISK_LAYERS) + 1)
+  expect_equal(lengths(regmatches(h, gregexpr("<tr", h))), length(RISK_LAYERS) + 1 + length(RISK_LENSES))
 })
 
 test_that("metro line sits after the migration line", {

@@ -78,7 +78,7 @@ test_that("side panel lists top industries and temp-help note", {
   expect_true(grepl("Temporary help payrolls (US): -4.2%", h, fixed = TRUE))
   expect_true(grepl("Manufacturing", h, fixed = TRUE))
   expect_true(grepl("US payrolls −3.0%/yr", h, fixed = TRUE))
-  expect_equal(lengths(regmatches(h, gregexpr("<tr", h))), length(RISK_LAYERS) + 1)
+  expect_equal(lengths(regmatches(h, gregexpr("<tr", h))), length(RISK_LAYERS) + 1 + length(RISK_LENSES))
   # No Stress ahead data: the blocks are omitted rather than shown empty.
   l0 <- build_county_layers(fx_county_base(), fx_momentum())
   h0 <- as.character(risk_side_panel(l0[l0$GEOID == "13295", ], "county", l0))

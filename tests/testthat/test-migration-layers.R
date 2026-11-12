@@ -54,7 +54,7 @@ test_that("migration layers are registered with a per1k diverging palette", {
   ids <- c("mig_dom", "mig_intl", "mig_net", "mig_dom_cum")
   expect_equal(unname(risk_lens_choices("migration")), ids)
   expect_equal(risk_lens_default("migration"), "mig_dom")
-  expect_equal(unname(RISK_LENSES), c("assistance", "migration", "context"))
+  expect_equal(unname(RISK_LENSES), c("assistance", "credit", "migration", "context"))
   expect_equal(.risk_fmt(c(5.5, -0.11, NA), "per1k"),
                c("+5.5 per 1,000", "-0.1 per 1,000", NA))
 })
@@ -96,7 +96,7 @@ test_that("side panel shows migration chart and population change", {
     expect_true(grepl(s, h, fixed = TRUE), info = s)
   h2 <- as.character(risk_side_panel(l[l$GEOID == "09110", ], "county", l))
   expect_true(grepl("#f1a340", h2, fixed = TRUE))
-  expect_equal(lengths(regmatches(h, gregexpr("<tr", h))), length(RISK_LAYERS) + 1)
+  expect_equal(lengths(regmatches(h, gregexpr("<tr", h))), length(RISK_LAYERS) + 1 + length(RISK_LENSES))
 })
 
 test_that("side panel without PEP has no migration blocks", {

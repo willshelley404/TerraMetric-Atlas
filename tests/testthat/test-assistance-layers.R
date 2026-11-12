@@ -84,9 +84,11 @@ test_that("job pressure is built before, and independent of, county assistance",
   expect_equal(unique(na$job_pressure_n), 0L)
 })
 
-test_that("derived layers are exactly the four assistance layers", {
+test_that("derived layers are the assistance and credit layers and tax base", {
   der <- names(RISK_LAYERS)[vapply(RISK_LAYERS, function(l) isTRUE(l$derived), TRUE)]
-  expect_equal(der, c("assist_score", "assist_exposure", "assist_cushion", "assist_workers"))
+  expect_equal(der, c("assist_score", "assist_exposure", "assist_cushion", "assist_workers",
+                      "credit_score", "credit_mortgage", "credit_consumer", "credit_jobs",
+                      "credit_collateral", "tax_base"))
   l <- al_layers()
   for (id in der) expect_true(paste0("pct_", RISK_LAYERS[[id]]$col) %in% names(l), info = id)
 })
@@ -110,8 +112,8 @@ test_that("every assistance layer is in the assistance lens at both levels", {
     expect_equal(RISK_LAYERS[[id]]$lens, "assistance")
     expect_equal(RISK_LAYERS[[id]]$levels, c("county", "tract"))
   }
-  expect_equal(RISK_LENSES, c("Assistance" = "assistance", "Migration" = "migration",
-                              "Context" = "context"))
+  expect_equal(RISK_LENSES, c("Assistance" = "assistance", "Credit" = "credit",
+                              "Migration" = "migration", "Context" = "context"))
   expect_true(all(ids %in% .tract_vars()))
   expect_equal(RISK_LAYERS$assist_score$bins, c(0, 20, 35, 50, 65, 80, 101))
 })
@@ -257,11 +259,13 @@ test_that("side panel names the industry source and count caveat", {
               "County job pressure: 82/100 (mean of Stress now and Stress ahead percentiles)"))
     expect_true(grepl(s, h, fixed = TRUE), info = s)
   # Extra blocks are divs; the table keeps one row per tract layer plus the header.
-  tract_layers <- sum(vapply(RISK_LAYERS, function(l) "tract" %in% l$levels, TRUE))
-  expect_equal(lengths(regmatches(h, gregexpr("<tr", h))), tract_layers + 1)
+  on_tract <- Filter(function(l) "tract" %in% l$levels, RISK_LAYERS)
+  tract_lenses <- length(unique(vapply(on_tract, `[[`, "", "lens")))   # one header row each
+  tract_layers <- length(on_tract)
+  expect_equal(lengths(regmatches(h, gregexpr("<tr", h))), tract_layers + 1 + tract_lenses)
   l <- al_layers()
   hc <- as.character(risk_side_panel(l[l$GEOID == "13295", ], "county", l))
-  expect_equal(lengths(regmatches(hc, gregexpr("<tr", hc))), length(RISK_LAYERS) + 1)
+  expect_equal(lengths(regmatches(hc, gregexpr("<tr", hc))), length(RISK_LAYERS) + 1 + length(RISK_LENSES))
 })
 
 test_that("county side panel names the ACS source and omits tract-only lines", {

@@ -4,7 +4,7 @@ test_that("side panel lists as-of and source per row", {
   for (s in c("Capitol Planning Region, CT", "BLS LAUS", "Sep 2026",
               "Census ACS 5-yr", "ACS 2020–2024", "Sahm-style trigger", "5.4% now vs 4.3% a year ago"))
     expect_true(grepl(s, h, fixed = TRUE), info = s)
-  expect_equal(lengths(regmatches(h, gregexpr("<tr", h))), length(RISK_LAYERS) + 1)  # + header
+  expect_equal(lengths(regmatches(h, gregexpr("<tr", h))), length(RISK_LAYERS) + 1 + length(RISK_LENSES))  # + header
 })
 
 test_that("tract side panel shows labor-market and state percentiles and MOE note", {
