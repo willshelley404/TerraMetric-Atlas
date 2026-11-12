@@ -43,7 +43,7 @@ test_that("base tiles need no API key", {
 test_that("Stress now legend uses readable open-ended bins", {
   m <- build_risk_county_map(build_county_layers(fx_county_base(), fx_momentum()), "stress_now")
   labs <- as.character(unclass(map_calls(m, "addLegend")[[1]]$args[[1]]$labels))  # leaflet wraps in I()
-  expect_equal(labs[c(1, 7)], c("below −1.0 pp", "above +1.0 pp (trigger)"))
+  expect_equal(labs[c(1, 7)], c("below −1.0 pp", "above +1.0 pp (Sahm-style trigger)"))
   expect_false(any(grepl("50", labs)))
 })
 
@@ -76,6 +76,6 @@ test_that("tooltips carry rank pill, metro subtitle and Stress now flag", {
   labels <- vapply(map_calls(m, "addPolygons")[[1]]$args[[7]], as.character, "")
   expect_true(grepl("Chattanooga metro", labels[1], fixed = TRUE))
   expect_true(grepl("nationally", labels[1], fixed = TRUE))
-  expect_true(grepl("+1.1 pp · Trigger", labels[2], fixed = TRUE))
+  expect_true(grepl("+1.1 pp · Sahm-style trigger", labels[2], fixed = TRUE))
   expect_false(grepl("NA metro", labels[2], fixed = TRUE))
 })

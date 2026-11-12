@@ -16,8 +16,10 @@
 #' (or length 1); NA means "omit" (value_text NA shows "Insufficient data").
 #' drivers_html: pre-rendered "Driven by" block per element ("" for none).
 #' rank_bad: TRUE where the rank sits on the bad side (red pill), FALSE neutral.
+#' standing: pre-escaped HTML lines shown between the drivers block and the footer.
 risk_tooltips_vec <- function(title, subtitle = NA, value_text, rank_text = NA,
-                              rank_sub = NA, footer, drivers_html = "", rank_bad = TRUE) {
+                              rank_sub = NA, footer, drivers_html = "", rank_bad = TRUE,
+                              standing = "") {
   c <- .RISK_COL
   n <- max(length(title), length(value_text), length(footer))
   rep_n <- function(x) rep_len(x, n)
@@ -46,6 +48,7 @@ risk_tooltips_vec <- function(title, subtitle = NA, value_text, rank_text = NA,
     pill, '</div>',
     rsub_html,
     rep_n(drivers_html),
+    rep_n(standing),
     sprintf('<div style="color:%s;font-size:11px;margin-top:4px;">%s</div>', c$muted,
             .tt_esc(footer)),
     '</div>')
@@ -78,13 +81,31 @@ RISK_LAYERS <- c(
   list(stress_now = list(
     label = "Stress now: unemployment vs. a year ago", col = "momentum_pp", fmt = "pp",
     pal = "RdBu", rev = TRUE, higher_is_worse = TRUE, source = "BLS LAUS",
-    levels = "county")),
+    levels = "county", lens = "context",
+    bins = c(-50, -1, -0.5, -0.2, 0.2, 0.5, 1, 50),
+    bin_labels = c("below −1.0 pp", "−1.0 to −0.5", "−0.5 to −0.2", "−0.2 to +0.2",
+                   "+0.2 to +0.5", "+0.5 to +1.0 (rising)",
+                   "above +1.0 pp (Sahm-style trigger)"))),
   stats::setNames(lapply(names(VAR_CFG), function(id) {
     v <- VAR_CFG[[id]]
     list(label = v$label, col = id, fmt = v$fmt, pal = v$pal, rev = v$rev,
-         higher_is_worse = v$rev, source = "Census ACS 5-yr", levels = c("county", "tract"))
+         higher_is_worse = v$rev, source = "Census ACS 5-yr", levels = c("county", "tract"),
+         lens = "context")
   }), names(VAR_CFG))
 )
+
+# Lenses in display order; only lenses that have layers.
+RISK_LENSES <- c("Context" = "context")
+
+#' Layer ids (values) and labels (names) of one lens, in registry order.
+risk_lens_choices <- function(lens) {
+  ids <- names(RISK_LAYERS)[vapply(RISK_LAYERS, function(l) identical(l$lens, lens), TRUE)]
+  stats::setNames(ids, vapply(RISK_LAYERS[ids], `[[`, "", "label"))
+}
+risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
+
+# Display text for the Stress now flag column (values stay Trigger/Rising/None).
+.flag_text <- function(flag) ifelse(flag %in% "Trigger", "Sahm-style trigger", flag)
 
 .risk_fmt <- function(v, fmt) {
   out <- switch(fmt,
@@ -96,10 +117,9 @@ RISK_LAYERS <- c(
 }
 
 .risk_palette <- function(cfg, vals) {
-  if (cfg$fmt == "pp") {
-    return(leaflet::colorBin(cfg$pal, domain = c(-50, 50), reverse = cfg$rev,
-                             bins = c(-50, -1, -0.5, -0.2, 0.2, 0.5, 1, 50),
-                             na.color = "#555566"))
+  if (!is.null(cfg$bins)) {
+    return(leaflet::colorBin(cfg$pal, domain = range(cfg$bins), reverse = cfg$rev,
+                             bins = cfg$bins, na.color = "#555566"))
   }
   brks <- unique(stats::quantile(vals, seq(0, 1, length.out = 8), na.rm = TRUE))
   if (length(brks) < 3) brks <- 7
@@ -115,7 +135,7 @@ RISK_LAYERS <- c(
   vtxt <- .risk_fmt(d[[cfg$col]], cfg$fmt)
   if (id == "stress_now") {
     has_flag <- !is.na(vtxt) & !is.na(d$flag)
-    vtxt[has_flag] <- paste0(vtxt[has_flag], " · ", d$flag[has_flag])
+    vtxt[has_flag] <- paste0(vtxt[has_flag], " · ", .flag_text(d$flag[has_flag]))
   }
   pct <- d[[paste0("pct_", cfg$col)]]
   subs <- ifelse(is.na(d$cbsa_name), NA_character_, paste(d$cbsa_name, d$cbsa_type))
@@ -123,14 +143,34 @@ RISK_LAYERS <- c(
     paste0(cfg$source, ", ", asof)
   risk_tooltips_vec(title = d$name, subtitle = subs, value_text = vtxt,
                     rank_text = rank_label(pct, "nationally"), footer = footer,
-                    rank_bad = .rank_bad(pct, cfg))
+                    rank_bad = .rank_bad(pct, cfg, d[[cfg$col]]))
 }
 
-#' Ranks always read in value terms ("Top" = highest value); the pill turns red
-#' only on the bad side of the median for that variable.
-.rank_bad <- function(pct, cfg) {
-  bad <- if (isTRUE(cfg$higher_is_worse)) pct >= 50 else pct < 50
+#' Ranks always read in value terms ("Top" = highest value). The pill is red only
+#' on the bad side: sign for pp layers, the median otherwise; never for a neutral
+#' (NA higher_is_worse) layer.
+.rank_bad <- function(pct, cfg, vals = NULL) {
+  if (is.na(cfg$higher_is_worse)) return(rep(FALSE, length(pct)))
+  bad <- if (identical(cfg$fmt, "pp") && !is.null(vals)) {
+    if (isTRUE(cfg$higher_is_worse)) vals > 0 else vals < 0
+  } else if (isTRUE(cfg$higher_is_worse)) pct >= 50 else pct < 50
   bad %in% TRUE
+}
+
+#' Open-ended bin labels from breaks; numbers only (no unit), signed, as
+#' "below −10", "−10 to −5", ..., "above +10".
+.bin_labels <- function(bins, fmt) {
+  num <- function(x) {
+    out <- if (fmt == "pp") sprintf("%+.1f", x) else
+      ifelse(x == round(x), sprintf("%+d", as.integer(round(x))), sprintf("%+.1f", x))
+    out <- ifelse(x == 0, "0", out)
+    sub("-", "−", out, fixed = TRUE)
+  }
+  inner <- num(bins[-c(1, length(bins))])
+  k <- length(inner)
+  c(paste("below", inner[1]),
+    if (k > 1) paste(inner[-k], "to", inner[-1]),
+    paste("above", inner[k]))
 }
 
 .legend_title <- function(cfg, status, asof, scope = NULL) {
@@ -159,17 +199,16 @@ RISK_LAYERS <- c(
   lbl_fmt <- .legend_format(cfg)
   title <- .legend_title(cfg, status, asof)
   add_legend <- function(m) {
-    if (cfg$fmt != "pp") {
+    if (is.null(cfg$bins)) {
       return(leaflet::addLegend(m, pal = pal, values = vals, opacity = 0.9,
                                 layerId = "risk_legend", title = title,
                                 position = "bottomright", labFormat = lbl_fmt))
     }
-    mids <- c(-2, -0.75, -0.35, 0, 0.35, 0.75, 2)
+    b <- cfg$bins
+    mids <- (b[-1] + b[-length(b)]) / 2
     leaflet::addLegend(m, colors = pal(mids), opacity = 0.9, layerId = "risk_legend",
                        title = title, position = "bottomright",
-                       labels = c("below −1.0 pp", "−1.0 to −0.5", "−0.5 to −0.2",
-                                  "−0.2 to +0.2", "+0.2 to +0.5", "+0.5 to +1.0 (rising)",
-                                  "above +1.0 pp (trigger)"))
+                       labels = cfg$bin_labels %||% .bin_labels(b, cfg$fmt))
   }
   map |>
     leaflet::clearGroup("counties") |>
@@ -196,7 +235,8 @@ RISK_LAYERS <- c(
   st <- rank_label(t[[paste0("st_pct_", cfg$col)]], t$state_label)
   footer <- paste0(cfg$source, ", ", asof, ifelse(noisy, " · High margin of error", ""))
   risk_tooltips_vec(title = t$tract_name, value_text = vtxt, rank_text = lm,
-                    rank_sub = st, footer = footer, rank_bad = .rank_bad(lm_pct, cfg))
+                    rank_sub = st, footer = footer,
+                    rank_bad = .rank_bad(lm_pct, cfg, as.numeric(t[[cfg$col]])))
 }
 
 #' Dim counties and draw the frame's tracts for a tract-level layer. For a
@@ -275,7 +315,7 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
     v <- as.numeric(get(cfg$col))
     vt <- .risk_fmt(v, cfg$fmt)
     if (id == "stress_now" && !is.na(v)) {
-      vt <- sprintf("%s · %s (%.1f%% now vs %.1f%% a year ago)", vt, get("flag"),
+      vt <- sprintf("%s · %s (%.1f%% now vs %.1f%% a year ago)", vt, .flag_text(get("flag")),
                     get("rate_now"), get("rate_yr_ago"))
     }
     moe <- get(paste0(cfg$col, "_moe"))

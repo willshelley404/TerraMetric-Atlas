@@ -1317,6 +1317,12 @@ server <- function(input, output, session) {
     build_risk_county_map(isolate(rv$county_layers), isolate(input$risk_layer) %||% "stress_now")
   })
 
+  # A lens switch swaps the layer list; the layer observer below then redraws.
+  observeEvent(input$risk_lens, ignoreInit = TRUE, {
+    updateSelectInput(session, "risk_layer", choices = risk_lens_choices(input$risk_lens),
+                      selected = risk_lens_default(input$risk_lens))
+  })
+
   # Layer change keeps the current view (drilled in or US).
   observeEvent(input$risk_layer, ignoreInit = TRUE, {
     req(rv$county_layers)
