@@ -67,3 +67,14 @@ test_that("one loading vector drives every component status", {
   l2 <- build_county_layers(fx_county_base(), fx_momentum(), loading = character(0))
   expect_equal(attr(l2, "layer_status")[["stress_now"]], "ok")
 })
+
+test_that("sector weights survive the app's own %||% definitions", {
+  # global.R / synopsis_tier1.R redefine %||% with scalar semantics; a data frame must pass.
+  app_op <- function(a, b) if (!is.null(a) && !is.na(a)) a else b
+  assign("%||%", app_op, envir = globalenv())
+  on.exit(rm("%||%", envir = globalenv()), add = TRUE)
+  l <- build_county_layers(fx_county_base(), fx_momentum(), sector_weights = fx_weights())
+  expect_equal(attr(l, "sector_weights"), fx_weights())
+  h <- as.character(risk_side_panel(l[l$GEOID == "13295", ], "county", l))
+  expect_false(grepl("Industry mix", h, fixed = TRUE))   # weights alone: no industry shares
+})

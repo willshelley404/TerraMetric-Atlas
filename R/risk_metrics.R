@@ -286,8 +286,9 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
   attr(out, "layer_status") <- status
   attr(out, "asof") <- asof
   attr(out, "acs_year") <- yr
-  attr(out, "sector_weights") <- sector_weights %||%
-    (if (is.null(stress_ahead)) NULL else attr(stress_ahead, "weights"))
+  # Not %||%: the app redefines it, and a data frame is not a scalar.
+  attr(out, "sector_weights") <- if (!is.null(sector_weights)) sector_weights else
+    if (is.null(stress_ahead)) NULL else attr(stress_ahead, "weights")
   if (!is.null(v)) attr(out, "pep_vintage") <- v
   out
 }
