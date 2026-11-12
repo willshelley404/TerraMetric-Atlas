@@ -46,6 +46,7 @@ test_that("migration pill never red and drivers listed", {
   for (s in c("for in-migration", "Natural change (births − deaths)", "International"))
     expect_true(all(grepl(s, labs, fixed = TRUE)), info = s)
   expect_false(any(grepl("#5c1f2a", labs, fixed = TRUE)))
+  expect_false(any(grepl("#ff6b6b", labs, fixed = TRUE)))
   expect_true(grepl("+8.2 per 1,000", labs[1], fixed = TRUE))
 })
 
@@ -91,10 +92,10 @@ test_that("side panel shows migration chart and population change", {
   l <- build_county_layers(fx_county_base(), fx_momentum(), migration = fx_migration())
   h <- as.character(risk_side_panel(l[l$GEOID == "13295", ], "county", l))
   for (s in c("2020–21 to 2024–25", "Population change 2020–25: +4.0%", "Census PEP V2025",
-              "Net domestic migration: +8.2 per 1,000 (2024–25)", "#542788"))
+              "Net domestic migration: +8.2 per 1,000 (2024–25)", "#998ec3"))
     expect_true(grepl(s, h, fixed = TRUE), info = s)
   h2 <- as.character(risk_side_panel(l[l$GEOID == "09110", ], "county", l))
-  expect_true(grepl("#b35806", h2, fixed = TRUE))
+  expect_true(grepl("#f1a340", h2, fixed = TRUE))
   expect_equal(lengths(regmatches(h, gregexpr("<tr", h))), length(RISK_LAYERS) + 1)
 })
 

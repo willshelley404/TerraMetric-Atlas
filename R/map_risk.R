@@ -369,7 +369,7 @@ reset_to_us <- function(map, county_layers, layer_id) {
       tg$span(style = sprintf("width:52px;color:%s;", c$muted), pep_year_label(yrs[i])),
       tg$div(style = "flex:1;", tg$div(style = sprintf(
         "height:10px;border-radius:2px;width:%.0f%%;background:%s;", w,
-        if (!is.na(v[i]) && v[i] < 0) "#b35806" else "#542788"))),
+        if (!is.na(v[i]) && v[i] < 0) "#f1a340" else "#998ec3"))),
       tg$span(style = "width:90px;text-align:right;font-weight:600;",
               if (is.na(v[i])) "—" else .risk_fmt(v[i], "per1k")))
   })
