@@ -243,14 +243,6 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 .drv_worse <- function(d, cols) lapply(cols, function(col)
   if (is.null(d[[col]])) NULL else as.numeric(d[[col]]) >= 50)
 
-#' 82 -> "82nd".
-.ordinal <- function(n) {
-  n <- as.integer(round(n))
-  suf <- ifelse(n %% 100 %in% 11:13, "th",
-                c("th", "st", "nd", "rd", "th", "th", "th", "th", "th", "th")[n %% 10 + 1])
-  ifelse(is.na(n), NA_character_, paste0(n, suf))
-}
-
 # J is the mean of two percentiles, so it is an index, not itself a percentile.
 .job_pressure_text <- function(j)
   sprintf("%.0f/100 (mean of Stress now and Stress ahead percentiles)", 100 * j)
@@ -610,6 +602,20 @@ reset_to_us <- function(map, county_layers, layer_id) {
       paste0("County job pressure: ", .job_pressure_text(j))))
 }
 
+# Dashed-outline notes, one sentence per group: assistance layers are only noisy through
+# their inputs (rent burden, poverty); ACS layers are noisy in themselves.
+noisy_notes <- function(labels, is_assist, color) {
+  tg <- htmltools::tags
+  note <- function(txt) tg$div(style = sprintf("color:%s;margin-top:8px;", color), txt)
+  list(
+    if (any(!is_assist)) note(sprintf(
+      "Dashed outline: the margin of error is larger than the value for %s.",
+      paste(labels[!is_assist], collapse = ", "))),
+    if (any(is_assist)) note(sprintf(
+      "Dashed outline: the margin of error is larger than the value for an input (rent burden or poverty) to: %s.",
+      paste(labels[is_assist], collapse = ", "))))
+}
+
 # ── Side panel: full component breakdown for the selected county or tract ────
 risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
                             missing_states = character(0), sources = character(0)) {
@@ -623,7 +629,7 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
   rk <- function(p, hiw) { r <- rank_label(p, ""); if (is.na(r)) "—" else trimws(r) }  # value terms
   td <- function(...) tg$td(style = "padding:3px 10px 3px 0;", ...)
 
-  noisy_labels <- noisy_ids <- character(0)
+  noisy_labels <- character(0); noisy_assist <- logical(0)
   rows <- lapply(ids, function(id) {
     cfg <- RISK_LAYERS[[id]]
     v <- as.numeric(get(cfg$col))
@@ -637,7 +643,8 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
     moe <- get(paste0(cfg$col, "_moe"))
     if (level == "tract" && !is.na(v) && !is.na(moe)) vt <- sprintf("%s ± %.1f", vt, moe)
     if (level == "tract" && .noisy_flags(a, cfg)) {
-      noisy_labels <<- c(noisy_labels, cfg$label); noisy_ids <<- c(noisy_ids, id)
+      noisy_labels <<- c(noisy_labels, cfg$label)
+      noisy_assist <<- c(noisy_assist, identical(cfg$lens, "assistance"))
     }
     when <- if (identical(status[[id]], "unavailable")) "unavailable" else
       if (is.na(asof[[id]])) "loading" else asof[[id]]
@@ -679,13 +686,7 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
     if (level == "county" && !is.null(vintage)) .migration_panel(a, vintage),
     if (level == "county") .industry_panel(a, attr(county_layers, "sector_weights"),
                                           attr(county_layers, "acs_year")),
-    if (length(noisy_labels)) tg$div(
-      style = sprintf("color:%s;margin-top:8px;", c$warn),
-      if (any(vapply(RISK_LAYERS[noisy_ids], function(l) identical(l$lens, "assistance"), TRUE)))
-        sprintf("Dashed outline: the margin of error is larger than the value for an input (rent burden or poverty) to: %s.",
-                paste(noisy_labels, collapse = ", "))
-      else sprintf("Dashed outline: the margin of error is larger than the value for %s.",
-                   paste(noisy_labels, collapse = ", "))),
+    noisy_notes(noisy_labels, noisy_assist, c$warn),
     if (length(missing_states)) tg$div(
       style = sprintf("color:%s;margin-top:8px;", c$warn),
       paste("Tract data unavailable for:",

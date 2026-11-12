@@ -243,6 +243,21 @@ test_that("assistance side panel words the dashed-outline note as inputs", {
   expect_false(grepl("larger than the value for Assistance", h, fixed = TRUE))
 })
 
+test_that("mixed noisy tract lists ACS and assistance labels in their own sentences", {
+  l <- al_layers()
+  t <- sf::st_drop_geometry(al_tracts())[1, ]
+  t$assist_source <- "LODES 2024"; t$poverty_rate_moe <- 20
+  h <- as.character(risk_side_panel(t, "tract", l))
+  sents <- regmatches(h, gregexpr("Dashed outline: the margin of error[^<]*", h))[[1]]
+  expect_length(sents, 2)
+  plain <- sents[!grepl("an input", sents, fixed = TRUE)]
+  inp <- sents[grepl("an input", sents, fixed = TRUE)]
+  expect_true(grepl("Poverty Rate", plain, fixed = TRUE))
+  expect_false(grepl("Assistance need score", plain, fixed = TRUE))
+  expect_true(grepl("Assistance need score", inp, fixed = TRUE))
+  expect_false(grepl("Poverty Rate", inp, fixed = TRUE))
+})
+
 test_that("tract legend of a binned layer uses its bin labels", {
   m <- add_tract_layer(build_risk_county_map(al_layers(), "assist_score"), al_tracts(),
                        "assist_score", al_layers())
