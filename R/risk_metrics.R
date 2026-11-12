@@ -560,6 +560,8 @@ acs_group_jobs <- function(ind) {
 #' Exposure = job-share-weighted mean of sector weights (0..1); exp_workers is
 #' the same weighting on headcount (an index-like count, not a layoff forecast);
 #' weak_share = % of jobs in sectors with negative recent momentum (m_pct < 0).
+#' An NA sector weight counts as 0 and an NA m_pct is not counted as weak, so a
+#' sector missing from `weights` lowers exposure.
 exposure_from_jobs <- function(jobs, weights) {
   na <- rep(NA_real_, nrow(jobs))
   out <- tibble::tibble(GEOID = jobs$GEOID, exposure = na, exp_workers = na, weak_share = na)

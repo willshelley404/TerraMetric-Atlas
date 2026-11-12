@@ -123,3 +123,34 @@ test_that("score never yields NaN for singleton groups", {
                         J = c(1, 1), group = c("A", "B"))
   expect_false(any(is.nan(unlist(s))))
 })
+
+test_that("score is the geometric mean of distinct factors, not arithmetic or min", {
+  # 3 tracts: exposure pct 0/50/100; cushion inputs give cushion pct 100/0/50.
+  ci <- data.frame(a = c(3, 1, 2), b = c(30, 10, 20))
+  s <- assistance_score(c(1, 2, 3), ci, J = c(1, 1, 0.5), group = rep("A", 3))
+  expect_equal(s$pct_exposure, c(0, 50, 100))
+  expect_equal(s$pct_cushion, c(100, 0, 50))
+  expect_equal(s$score[3], round(100 * (1 * 0.5 * 0.5)^(1 / 3), 1))
+  expect_equal(s$score[3], 63)
+})
+
+test_that("a single-member group gives NA, not NaN", {
+  s <- assistance_score(1, data.frame(a = 1, b = 1), J = 1, group = "A")
+  expect_true(all(is.na(s$score)))
+  expect_false(any(is.nan(unlist(s))))
+})
+
+test_that("cushion averages the available percentiles and honours the minimum", {
+  ci <- data.frame(a = c(1, 2, 3, 4), b = c(4, 3, 2, 1), c = c(1, 2, 3, NA))
+  grp <- rep("A", 4)
+  s <- assistance_score(1:4, ci, J = rep(1, 4), group = grp)
+  # Tract 4: pct a = 100, pct b = 0, c missing -> mean of the two = 50.
+  expect_equal(s$cushion[4], 50)
+  # Tract 1: pct a = 0, b = 100, c = 0 -> 100 / 3.
+  expect_equal(s$cushion[1], 100 / 3)
+  s3 <- assistance_score(1:4, ci, J = rep(1, 4), group = grp,
+                         cfg = modifyList(RISK_CFG, list(cushion_min_inputs = 3)))
+  expect_true(is.na(s3$cushion[4]))
+  expect_true(is.na(s3$score[4]))
+  expect_false(is.na(s3$cushion[1]))
+})
