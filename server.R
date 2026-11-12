@@ -1306,7 +1306,7 @@ server <- function(input, output, session) {
         incProgress(0.7, detail = "Drawing counties…")
         rv$risk_base <- base
         rv$risk_parts <- list(momentum = NULL, laus_stale = FALSE, laus_loading = TRUE,
-                              laus_partial = FALSE, migration = pep, loading = character(0))
+                              laus_partial = FALSE, migration = pep, loading = "stress_ahead")
         risk_rebuild(redraw = FALSE)
         rv$risk_ready <- TRUE
       }
@@ -1325,6 +1325,27 @@ server <- function(input, output, session) {
     mom <- if (!is.null(laus) && nrow(laus) > 0) laus_momentum(laus) else NULL
     risk_set_parts(momentum = mom, laus_stale = isTRUE(attr(laus, "stale")),
                    laus_partial = isTRUE(attr(laus, "partial")), laus_loading = FALSE)
+    risk_rebuild()
+
+    # Stress ahead: FRED sector payrolls x ACS industry mix (both cached; each NULL on failure).
+    sa <- withProgress(message = "Sector payrolls and industry mix…", value = 0.4, {
+      quiet <- function(f, ...) tryCatch(f(...), error = function(e) {
+        message("[Risk] Stress ahead input failed: ", conditionMessage(e)); NULL
+      })
+      fred <- quiet(fetch_fred_sectors)
+      ind <- quiet(fetch_county_industry, attr(rv$risk_base, "acs_year"))
+      if (is.null(fred) || is.null(ind)) NULL else tryCatch({
+        w <- sector_weights(fred)
+        s <- stress_ahead(ind, w)
+        attr(s, "weights") <- w
+        attr(s, "stale") <- isTRUE(attr(fred, "stale")) || isTRUE(attr(ind, "stale"))
+        s
+      }, error = function(e) {
+        message("[Risk] Stress ahead failed: ", conditionMessage(e)); NULL
+      })
+    })
+    risk_set_parts(stress_ahead = sa,
+                   loading = setdiff(rv$risk_parts$loading, "stress_ahead"))
     risk_rebuild()
   })
 

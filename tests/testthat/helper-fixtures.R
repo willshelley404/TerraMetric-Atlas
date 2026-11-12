@@ -48,3 +48,36 @@ fx_migration <- function() {
   attr(m, "vintage") <- 2025
   m
 }
+
+# ACS C24030 industry counts: Walker is manufacturing-heavy, Capitol services-heavy,
+# Kalawao (15005) has no employed residents at all.
+fx_industry <- function() {
+  g <- RISK_SECTORS$group
+  counts <- rbind(
+    "13295" = c(200, 1500, 9000, 800, 3000, 1500, 200, 1200, 2000, 5000, 2500, 900, 900),
+    "09110" = c(300, 12000, 18000, 6000, 25000, 14000, 5000, 30000, 40000, 90000, 25000,
+                8000, 15000),
+    "15005" = rep(0, 13))
+  out <- tibble::tibble(GEOID = rownames(counts), emp_total = unname(rowSums(counts)))
+  for (i in seq_along(g)) out[[paste0("emp_", g[i])]] <- unname(counts[, i])
+  attr(out, "acs_year") <- 2024
+  out
+}
+
+# Shaped like sector_weights(): manufacturing shrinking, education & health growing.
+fx_weights <- function() {
+  w <- tibble::tibble(RISK_SECTORS[c("group", "label", "fred")],
+                      m_pct = 0, structural = 1, current_z = 0, w = 0.5)
+  w$m_pct[w$group == "manufacturing"] <- -3
+  w$m_pct[w$group == "educ_health"] <- 2
+  attr(w, "ref_month") <- as.Date("2026-10-01")
+  attr(w, "temphelp_m_pct") <- -4.2
+  w
+}
+
+# A Stress ahead component as the server builds it (weights travel as an attribute).
+fx_stress_ahead <- function() {
+  sa <- stress_ahead(fx_industry(), fx_weights())
+  attr(sa, "weights") <- fx_weights()
+  sa
+}

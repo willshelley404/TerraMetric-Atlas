@@ -55,18 +55,20 @@ risk_tooltips_vec <- function(title, subtitle = NA, value_text, rank_text = NA,
   lapply(out, htmltools::HTML)
 }
 
-#' "Driven by" blocks, one per element. labels: character(k); values: list of k
+#' "Driven by" blocks, one per element. labels: character(k), or a list of k
+#' character vectors when the label differs per element; values: list of k
 #' character vectors (one value per element); worse: list of k logical vectors.
 #' Elements whose values are all NA get "".
 risk_drivers_vec <- function(labels, values, worse) {
   c <- .RISK_COL
   n <- length(values[[1]])
+  labels <- if (is.list(labels)) unlist(lapply(labels, rep_len, n)) else rep(labels, each = n)
   vm <- matrix(unlist(lapply(values, rep_len, n)), nrow = n)          # n x k
   wm <- matrix(unlist(lapply(worse, function(w) rep_len(w, n))), nrow = n) %in% TRUE
   rows <- matrix(sprintf(
     paste0('<div style="display:flex;justify-content:space-between;gap:8px;">',
            '<span>%s</span><span style="font-weight:600;color:%s;">%s</span></div>'),
-    .tt_esc(rep(labels, each = n)), ifelse(wm, c$worse, c$text), .tt_esc(vm)), nrow = n)
+    .tt_esc(labels), ifelse(wm, c$worse, c$text), .tt_esc(vm)), nrow = n)
   rows[is.na(vm)] <- ""
   out <- paste0(
     sprintf('<hr style="border:0;border-top:1px solid %s;margin:7px 0;"/>', c$border),
@@ -98,7 +100,14 @@ RISK_LAYERS <- c(
     bins = c(-50, -1, -0.5, -0.2, 0.2, 0.5, 1, 50),
     bin_labels = c("below −1.0 pp", "−1.0 to −0.5", "−0.5 to −0.2", "−0.2 to +0.2",
                    "+0.2 to +0.5", "+0.5 to +1.0 (rising)",
-                   "above +1.0 pp (Sahm-style trigger)"))),
+                   "above +1.0 pp (Sahm-style trigger)")),
+    stress_ahead = list(
+    label = "Stress ahead: projected job growth vs. US (shift-share)",
+    col = "stress_ahead_pp", fmt = "pp", pal = "RdBu", rev = FALSE,
+    higher_is_worse = FALSE, source = "BLS CES (FRED) × ACS industry mix",
+    levels = "county", lens = "context",
+    loading_text = "loading sector payrolls and county industry mix…",
+    bins = c(-50, -0.6, -0.3, -0.1, 0.1, 0.3, 0.6, 50))),
   stats::setNames(lapply(names(VAR_CFG), function(id) {
     v <- VAR_CFG[[id]]
     list(label = v$label, col = id, fmt = v$fmt, pal = v$pal, rev = v$rev,
@@ -189,6 +198,14 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
       lapply(c("mig_dom_rate", "mig_intl_rate", "nat_chg_rate"),
              function(col) .risk_fmt(d[[col]], "per1k")),
       rep(list(FALSE), 3))
+  } else if (id == "stress_ahead") {
+    risk_drivers_vec(
+      lapply(1:3, function(k) d[[sprintf("sa_drv%d_label", k)]]),
+      lapply(1:3, function(k) {
+        v <- d[[sprintf("sa_drv%d_pp", k)]]
+        ifelse(is.na(v), NA_character_, sprintf("%+.2f pp", v))
+      }),
+      lapply(1:3, function(k) d[[sprintf("sa_drv%d_pp", k)]] < 0))
   } else ""
   risk_tooltips_vec(title = d$name, subtitle = subs, value_text = vtxt,
                     rank_text = rank_label(pct, cfg$rank_frame %||% "nationally"),
@@ -228,6 +245,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
   head <- htmltools::htmlEscape(cfg$label)
   sub <- if (identical(status, "unavailable")) "unavailable" else
     if (identical(status, "loading")) {
+      if (!is.null(cfg$loading_text)) cfg$loading_text else
       if (identical(cfg$source, "Census PEP")) "loading Census population estimates…" else
         "loading county unemployment from BLS…"
     } else
@@ -386,6 +404,35 @@ reset_to_us <- function(map, county_layers, layer_id) {
     tg$div(style = sprintf("color:%s;", c$muted), sprintf("Census PEP V%d", vintage)))
 }
 
+#' Top 5 resident industries (share of employed residents, with the national payroll
+#' momentum of each sector) and the national temp-help note. Divs, not rows. NULL when
+#' there is nothing to show.
+.industry_panel <- function(a, weights) {
+  if (is.null(weights)) return(NULL)
+  tg <- htmltools::tags; c <- .RISK_COL
+  sh <- vapply(paste0("share_", RISK_SECTORS$group), function(col)
+    if (col %in% names(a)) as.numeric(a[[col]]) else NA_real_, numeric(1))
+  top <- utils::head(order(sh, decreasing = TRUE), 5)
+  top <- top[!is.na(sh[top])]
+  m <- weights$m_pct[match(RISK_SECTORS$group, weights$group)]
+  signed <- function(x) sub("-", "−", sprintf("%+.1f", x), fixed = TRUE)
+  tp <- attr(weights, "temphelp_m_pct")
+  if (!length(top) && (is.null(tp) || is.na(tp))) return(NULL)
+  tg$div(
+    style = sprintf("margin-top:10px;border-top:1px solid %s;padding-top:8px;", c$border),
+    if (length(top)) tg$div(
+      tg$div(style = sprintf("color:%s;margin-bottom:4px;", c$muted), "Top resident industries"),
+      lapply(top, function(i) tg$div(
+        style = "margin:2px 0;",
+        tg$b(RISK_SECTORS$label[i]), sprintf(" %.1f%%", 100 * sh[i]),
+        if (!is.na(m[i])) tg$span(style = sprintf("color:%s;", c$muted),
+                                  sprintf(" · US payrolls %s%%/yr", signed(m[i])))))),
+    if (!is.null(tp) && !is.na(tp)) tg$div(
+      style = sprintf("color:%s;margin-top:6px;", c$muted),
+      sprintf(paste0("Temporary help payrolls (US): %+.1f%% annualized over 6 months — ",
+                     "a leading indicator, not in the score."), tp)))
+}
+
 # ── Side panel: full component breakdown for the selected county or tract ────
 risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
                             missing_states = character(0)) {
@@ -445,6 +492,7 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
       tg$tr(style = sprintf("color:%s;text-align:left;", c$muted), lapply(head, tg$th)),
       rows)),
     if (level == "county" && !is.null(vintage)) .migration_panel(a, vintage),
+    if (level == "county") .industry_panel(a, attr(county_layers, "sector_weights")),
     if (length(noisy_labels)) tg$div(
       style = sprintf("color:%s;margin-top:8px;", c$warn),
       sprintf("Dashed outline: the margin of error is larger than the value for %s.",

@@ -208,10 +208,13 @@ tracts_for_county <- function(county_geoid, county_base, fetch = fetch_state_tra
 #' laus_loading = TRUE marks Stress now as still loading (progressive tab load:
 #' the map draws from shapes + ACS first, BLS fills in when it arrives).
 #' migration: parse_pep_county() output (attr "stale" from risk_cached) or NULL.
-#' loading: component names still loading ("migration").
+#' loading: component names still loading ("migration", "stress_ahead").
+#' stress_ahead: stress_ahead() output with attrs "weights" (sector_weights()) and
+#' "stale" (set by the caller when FRED or ACS came from a stale cache), or NULL.
 build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
                                 laus_loading = FALSE, laus_partial = FALSE,
-                                migration = NULL, loading = character(0)) {
+                                migration = NULL, loading = character(0),
+                                stress_ahead = NULL) {
   out <- county_base
   if (is.null(momentum)) {
     out$ref_month <- as.Date(NA); out$rate_now <- NA_real_; out$rate_yr_ago <- NA_real_
@@ -224,6 +227,13 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
                   "mig_dom_cum", "pop_chg_pct", "mig_dom_n", "pop_avg")) out[[col]] <- NA_real_
   } else {
     out <- dplyr::left_join(out, migration, by = "GEOID")
+  }
+  if (is.null(stress_ahead)) {
+    for (col in c("proj_pct", "us_proj_pct", "stress_ahead_pp", paste0("sa_drv", 1:3, "_pp"),
+                  paste0("share_", RISK_SECTORS$group))) out[[col]] <- NA_real_
+    for (col in paste0("sa_drv", 1:3, "_label")) out[[col]] <- NA_character_
+  } else {
+    out <- dplyr::left_join(out, tibble::as_tibble(stress_ahead), by = "GEOID")
   }
   for (id in names(RISK_LAYERS)) {
     col <- RISK_LAYERS[[id]]$col
@@ -250,9 +260,16 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
     asof[[id]] <- if (is.null(v)) NA_character_ else if (id == "mig_dom_cum")
       sprintf("V%d, 2020–%s", v, substr(v, 3, 4)) else sprintf("V%d, %s", v, pep_year_label(v))
   }
+  status[["stress_ahead"]] <- if ("stress_ahead" %in% loading) "loading" else
+    if (is.null(stress_ahead)) "unavailable" else
+      if (isTRUE(attr(stress_ahead, "stale"))) "stale" else "ok"
+  rm_sa <- if (is.null(stress_ahead)) NULL else attr(stress_ahead, "ref_month")
+  asof[["stress_ahead"]] <- if (is.null(rm_sa) || is.na(rm_sa)) NA_character_ else
+    sprintf("CES %s · ACS %d–%d", format(rm_sa, "%b %Y"), yr - 4, yr)
   attr(out, "layer_status") <- status
   attr(out, "asof") <- asof
   attr(out, "acs_year") <- yr
+  attr(out, "sector_weights") <- if (is.null(stress_ahead)) NULL else attr(stress_ahead, "weights")
   if (!is.null(v)) attr(out, "pep_vintage") <- v
   out
 }
@@ -395,5 +412,41 @@ sector_weights <- function(fred, cfg = RISK_CFG) {
     max(mom$ref_month[mom$series_id %in% RISK_SECTORS$fred]))
   tp <- mom$m_pct[mom$series_id == "TEMPHELPS"]
   attr(out, "temphelp_m_pct") <- if (length(tp)) tp else NA_real_
+  out
+}
+
+#' Shift-share: each county's resident industry mix times national sector payroll
+#' momentum, as a gap versus the same calculation on the US mix (pp of annualized
+#' job growth). Drivers are the 3 sectors with the most negative (share - US share)
+#' x momentum. Counties with no employment get NA throughout, never NaN.
+stress_ahead <- function(ind, weights) {
+  groups <- RISK_SECTORS$group
+  labels <- RISK_SECTORS$label
+  m <- weights$m_pct[match(groups, weights$group)]
+  m[is.na(m)] <- 0                        # a sector with no momentum is neutral
+  emp <- as.matrix(as.data.frame(ind)[paste0("emp_", groups)])
+  total <- ind$emp_total
+  has <- !is.na(total) & total > 0
+  share <- emp / ifelse(has, total, NA_real_)
+  us_share <- colSums(emp[has, , drop = FALSE], na.rm = TRUE) / sum(total[has])
+
+  proj <- as.vector(share %*% m)
+  us_proj <- sum(us_share * m)
+  contrib <- sweep(sweep(share, 2, us_share), 2, m, `*`)
+
+  out <- tibble::tibble(GEOID = ind$GEOID, proj_pct = proj, us_proj_pct = us_proj,
+                        stress_ahead_pp = round(proj - us_proj, 2))
+  worst <- t(apply(contrib, 1, function(r) {
+    if (anyNA(r)) return(rep(NA_integer_, 3))
+    order(r)[1:3]
+  }))
+  for (k in 1:3) {
+    idx <- worst[, k]
+    out[[sprintf("sa_drv%d_label", k)]] <- labels[idx]
+    out[[sprintf("sa_drv%d_pp", k)]] <- round(contrib[cbind(seq_len(nrow(contrib)), idx)], 2)
+  }
+  for (i in seq_along(groups)) out[[paste0("share_", groups[i])]] <- share[, i]
+  for (a in c("ref_month", "temphelp_m_pct")) attr(out, a) <- attr(weights, a)
+  attr(out, "acs_year") <- attr(ind, "acs_year")
   out
 }

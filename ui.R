@@ -303,6 +303,8 @@ ui <- dashboardPage(
                   icon("info-circle", style = "color:#00b4d8;"),
                   " Stress now: BLS county unemployment, latest 3 months vs. a year earlier.",
                   tags$br(),
+                  " Stress ahead: national sector payroll momentum (6-mo.) applied to each county's resident industry mix; gap vs. the US.",
+                  tags$br(),
                   " Context layers: Census ACS 5-year estimates.",
                   " Migration: Census PEP county components of change (per 1,000 residents).",
                   tags$br(),

@@ -469,3 +469,29 @@ fetch_fred_sectors <- function(start = as.Date("2000-01-01")) {
     dplyr::bind_rows(got)
   })
 }
+
+# ── County resident industry mix (ACS C24030, spec §9.2) ─────────────────────
+
+#' Employed residents by industry group per county, cached 30 days. `emp_<group>` is
+#' the male plus female C24030 estimate; `emp_total` is C24030_001. NULL on failure.
+fetch_county_industry <- function(year = NULL) {
+  if (is.null(year)) year <- risk_acs_year()
+  if (is.null(year)) return(NULL)
+  out <- risk_cached(sprintf("county_ind_%d", year), 30,
+              bg = list(id = "county_ind", fn = "fetch_county_industry",
+                        args = list(year = year)),
+              fetch_fn = function() {
+    vars <- c("C24030_001", RISK_SECTORS$acs_m, RISK_SECTORS$acs_f)
+    raw <- tidycensus::get_acs(geography = "county", variables = vars, year = year,
+                               survey = "acs5", output = "wide")
+    est <- function(v) raw[[paste0(v, "E")]]
+    res <- tibble::tibble(GEOID = raw$GEOID, emp_total = est("C24030_001"))
+    for (i in seq_len(nrow(RISK_SECTORS))) {
+      res[[paste0("emp_", RISK_SECTORS$group[i])]] <-
+        est(RISK_SECTORS$acs_m[i]) + est(RISK_SECTORS$acs_f[i])
+    }
+    res
+  })
+  if (!is.null(out)) attr(out, "acs_year") <- year
+  out
+}
