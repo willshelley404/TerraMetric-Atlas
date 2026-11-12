@@ -1,0 +1,6 @@
+area_type_code	area_code	area_text	display_level	selectable	sort_sequence
+A	ST0100000000000	Alabama	0	T	1
+B	MT4716860000000	Chattanooga, TN-GA Metropolitan Statistical Area	0	T	6539
+B	MT1719340000000	Davenport-Moline-Rock Island, IA-IL Metropolitan Statistical Area	0	T	1691
+D	MC0110700000000	Albertville, AL Micropolitan Statistical Area	0	T	14
+C	DV0611244000000	Anaheim-Santa Ana-Irvine, CA Metropolitan Division	0	T	414

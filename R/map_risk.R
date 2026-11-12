@@ -177,6 +177,24 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
                                .risk_fmt(v, "per1k"), pep_year_label(vintage)))
 }
 
+.metro_line <- function(cbsa_name, momentum_pp, ref_month) {
+  ok <- !is.na(cbsa_name) & !is.na(momentum_pp) & !is.na(ref_month)
+  out <- rep("", length(ok))
+  out[ok] <- sprintf("%s metro: %+.1f pp unemployment vs. a year ago (%s)",
+                     cbsa_name[ok], momentum_pp[ok], format(ref_month[ok], "%b %Y"))
+  out
+}
+
+#' Metro line for each row of `d` (county rows, or tract rows via their county_geoid).
+.metro_line_rows <- function(d, county_layers = d, key = "GEOID") {
+  cl <- .plain_df(county_layers)
+  if (!all(c("cbsa_name", "metro_momentum_pp", "metro_ref_month") %in% names(cl))) {
+    return(rep("", nrow(d)))
+  }
+  i <- match(.plain_df(d)[[key]], cl$GEOID)
+  .metro_line(cl$cbsa_name[i], cl$metro_momentum_pp[i], cl$metro_ref_month[i])
+}
+
 .standing_html <- function(lines) {
   ifelse(.tt_has(lines), sprintf(
     '<div style="color:%s;font-size:11px;margin-top:4px;">%s</div>', .RISK_COL$muted,
@@ -216,7 +234,8 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
                     rank_text = rank_label(pct, cfg$rank_frame %||% "nationally"),
                     footer = footer, drivers_html = drivers,
                     rank_bad = .rank_bad(pct, cfg, d[[cfg$col]]),
-                    standing = .standing_html(.migration_line(d, attr(d, "pep_vintage"))))
+                    standing = paste0(.standing_html(.migration_line(d, attr(d, "pep_vintage"))),
+                                      .standing_html(.metro_line_rows(d))))
 }
 
 #' Ranks always read in value terms ("Top" = highest value). The pill is red only
@@ -307,7 +326,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 }
 
 # ── Tract drill-down layer ───────────────────────────────────────────────────
-.tract_tooltips <- function(t, cfg, asof, noisy) {
+.tract_tooltips <- function(t, cfg, asof, noisy, county_layers) {
   vtxt <- .risk_fmt(as.numeric(t[[cfg$col]]), cfg$fmt, cfg$digits %||% 1)
   lm_pct <- t[[paste0("lm_pct_", cfg$col)]]
   lm <- rank_label(lm_pct, t$frame_label)
@@ -315,7 +334,9 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
   footer <- paste0(cfg$source, ", ", asof, ifelse(noisy, " · High margin of error", ""))
   risk_tooltips_vec(title = t$tract_name, value_text = vtxt, rank_text = lm,
                     rank_sub = st, footer = footer,
-                    rank_bad = .rank_bad(lm_pct, cfg, as.numeric(t[[cfg$col]])))
+                    rank_bad = .rank_bad(lm_pct, cfg, as.numeric(t[[cfg$col]])),
+                    standing = .standing_html(
+                      .metro_line_rows(t, county_layers, key = "county_geoid")))
 }
 
 #' Dim counties and draw the frame's tracts for a tract-level layer. For a
@@ -346,7 +367,7 @@ add_tract_layer <- function(map, tracts, layer_id, county_layers, fit = TRUE) {
       fillColor = pal(vals), fillOpacity = 0.85,
       color = ifelse(noisy, .RISK_COL$warn, "#0f1117"),
       weight = ifelse(noisy, 1.5, 0.4), dashArray = ifelse(noisy, "4", NA),
-      label = .tract_tooltips(tracts, cfg, asof, noisy),
+      label = .tract_tooltips(tracts, cfg, asof, noisy, county_layers),
       labelOptions = leaflet::labelOptions(
         style = list(background = "transparent", border = "none", padding = "0",
                      "box-shadow" = "none"), direction = "auto"),
@@ -484,15 +505,20 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
   st_names <- stats::setNames(.plain_df(county_layers)$state_name, .plain_df(county_layers)$state_fips)
 
   vintage <- attr(county_layers, "pep_vintage")
-  standing <- if (level == "county" && !is.null(vintage)) .migration_line(a, vintage) else ""
+  standing <- c(
+    if (level == "county" && !is.null(vintage)) .migration_line(a, vintage),
+    if (level == "county") .metro_line_rows(a, county_layers)
+    else .metro_line_rows(a, county_layers, key = "county_geoid"))
+  standing <- standing[nzchar(standing)]
   tg$div(
     style = sprintf("background:%s;color:%s;border-radius:8px;padding:14px 16px;margin-top:12px;font-size:12px;",
                     c$page, c$text),
     tg$div(style = sprintf("color:%s;font-weight:700;font-size:16px;", c$accent), title),
     tg$div(style = sprintf("color:%s;margin-bottom:%s;", c$muted,
-                           if (nzchar(standing)) "2px" else "8px"), sub),
-    if (nzchar(standing)) tg$div(style = sprintf("color:%s;margin-bottom:8px;", c$muted),
-                                 standing),
+                           if (length(standing)) "2px" else "8px"), sub),
+    lapply(seq_along(standing), function(k) tg$div(
+      style = sprintf("color:%s;margin-bottom:%s;", c$muted,
+                      if (k == length(standing)) "8px" else "2px"), standing[k])),
     tg$div(style = "overflow-x:auto;", tg$table(
       style = "border-collapse:collapse;width:100%;",
       tg$tr(style = sprintf("color:%s;text-align:left;", c$muted), lapply(head, tg$th)),

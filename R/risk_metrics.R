@@ -211,10 +211,12 @@ tracts_for_county <- function(county_geoid, county_base, fetch = fetch_state_tra
 #' loading: component names still loading ("migration", "stress_ahead").
 #' stress_ahead: stress_ahead() output with attrs "weights" (sector_weights()) and
 #' "stale" (set by the caller when FRED or ACS came from a stale cache), or NULL.
+#' metro_momentum: laus_momentum() on the metro pull (fips = CBSA code) or NULL; joined
+#' onto counties by cbsa_geoid as metro_momentum_pp / metro_rate_now / metro_ref_month.
 build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
                                 laus_loading = FALSE, laus_partial = FALSE,
                                 migration = NULL, loading = character(0),
-                                stress_ahead = NULL) {
+                                stress_ahead = NULL, metro_momentum = NULL) {
   out <- county_base
   if (is.null(momentum)) {
     out$ref_month <- as.Date(NA); out$rate_now <- NA_real_; out$rate_yr_ago <- NA_real_
@@ -234,6 +236,16 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
     for (col in paste0("sa_drv", 1:3, "_label")) out[[col]] <- NA_character_
   } else {
     out <- dplyr::left_join(out, tibble::as_tibble(stress_ahead), by = "GEOID")
+  }
+  if (is.null(metro_momentum)) {
+    out$metro_momentum_pp <- NA_real_; out$metro_rate_now <- NA_real_
+    out$metro_ref_month <- as.Date(NA)
+  } else {
+    mm <- tibble::tibble(cbsa_geoid = metro_momentum$fips,
+                         metro_momentum_pp = metro_momentum$momentum_pp,
+                         metro_rate_now = metro_momentum$rate_now,
+                         metro_ref_month = metro_momentum$ref_month)
+    out <- dplyr::left_join(out, mm, by = "cbsa_geoid")
   }
   for (id in names(RISK_LAYERS)) {
     col <- RISK_LAYERS[[id]]$col

@@ -1333,6 +1333,25 @@ server <- function(input, output, session) {
       risk_set_parts(laus_loading = FALSE)
     })
 
+    # Metro unemployment (8 more BLS calls). Own tryCatch: a failure only drops the metro line.
+    tryCatch({
+      mm <- withProgress(message = "Metro unemployment (BLS)…", value = 0.4, {
+        tryCatch({
+          a <- fetch_laus_areas()
+          if (is.null(a)) NULL else {
+            ml <- fetch_laus_metro(a$series_id)
+            if (!is.null(ml) && nrow(ml) > 0) laus_momentum(ml) else NULL
+          }
+        }, error = function(e) {
+          message("[Risk] Metro LAUS failed: ", conditionMessage(e)); NULL
+        })
+      })
+      if (!is.null(mm)) {
+        risk_set_parts(metro_momentum = mm)
+        risk_rebuild()
+      }
+    }, error = function(e) message("[Risk] Metro unemployment step failed: ", conditionMessage(e)))
+
     # Stress ahead: FRED sector payrolls x ACS industry mix (both cached; each NULL on failure).
     sa <- withProgress(message = "Sector payrolls and industry mix…", value = 0.4, {
       quiet <- function(f, ...) tryCatch(f(...), error = function(e) {

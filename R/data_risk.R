@@ -211,12 +211,14 @@ risk_acs_year <- function(probe = .acs_probe_census, cache_dir = risk_cache_dir(
 
 laus_series_ids <- function(fips) paste0("LAUCN", fips, "0000000003")
 
-#' Tidy a BLS Results$series list: monthly rows with numeric values only.
-parse_bls_laus <- function(results) {
+#' Tidy a BLS Results$series list: monthly rows with numeric values only. The
+#' area id (still named `fips`) is the 5 characters at `id_start` of the series
+#' id: 6 for counties (LAUCN<fips>), 8 for metros (LAUMT<state2><cbsa5>...).
+parse_bls_laus <- function(results, id_start = 6L) {
   rows <- lapply(results, function(s) {
     if (length(s$data) == 0) return(NULL)
     data.frame(
-      fips   = substr(s$seriesID, 6, 10),
+      fips   = substr(s$seriesID, id_start, id_start + 4L),
       year   = vapply(s$data, function(d) as.character(d$year), ""),
       period = vapply(s$data, function(d) as.character(d$period), ""),
       value  = vapply(s$data, function(d) as.character(d$value), ""),
@@ -258,12 +260,39 @@ parse_bls_laus <- function(results) {
                               progress = FALSE)
 }
 
+#' Chunked BLS pull shared by the county and metro fetchers: 50 series per call,
+#' up to max_active in flight. If at least half the chunks succeed, the failed
+#' ones are retried once; otherwise (quota exhausted, outage) there are no
+#' retries and NULL is returned. A pull still incomplete after retries is marked
+#' attr "partial" with a 6 hour ttl. Returns NULL without a key.
+.laus_pull <- function(ids, years, key, max_active, perform, perform_one, id_start) {
+  if (!nzchar(key)) { message("[LAUS] BLS_API_KEY not set"); return(NULL) }
+  end_year <- as.integer(format(Sys.Date(), "%Y"))
+  chunks <- split(ids, ceiling(seq_along(ids) / 50))
+  reqs <- lapply(chunks, .bls_laus_request, end_year - years + 1, end_year, key)
+  results <- lapply(perform(reqs, max_active = max_active), .bls_ok_results)
+  failed <- vapply(results, is.null, logical(1))
+  if (mean(failed) > 0.5) {
+    message(sprintf("[LAUS] %d/%d BLS calls failed; not retrying", sum(failed), length(failed)))
+    return(NULL)
+  }
+  for (i in which(failed)) {
+    # results[i] <- list(x), not results[[i]] <- x: assigning NULL via [[ ]] deletes the slot.
+    results[i] <- list(.bls_ok_results(tryCatch(perform_one(reqs[[i]]), error = function(e) NULL)))
+  }
+  ok <- !vapply(results, is.null, logical(1))
+  message(sprintf("[LAUS] %d/%d BLS calls succeeded", sum(ok), length(ok)))
+  out <- parse_bls_laus(unlist(results[ok], recursive = FALSE), id_start)
+  if (!all(ok)) {
+    attr(out, "partial") <- TRUE
+    attr(out, "ttl_days") <- 0.25
+  }
+  out
+}
+
 #' Monthly county unemployment rates for the last `years` years, cached 7 days.
-#' Sends 50 series per call, up to max_active in flight. If at least half the
-#' chunks succeed, the failed ones are retried once; otherwise (quota exhausted,
-#' outage) there are no retries, NULL is returned and the failure is remembered
-#' for an hour so other sessions don't spend more quota. A pull that is still
-#' incomplete after retries is marked attr "partial" and kept for 6 hours only.
+#' See .laus_pull for the chunk and retry rules; a failed pull (NULL) is
+#' remembered for an hour so other sessions don't spend more quota.
 fetch_laus_county <- function(fips, years = 3, key = Sys.getenv("BLS_API_KEY"),
                               max_active = 8, cache_dir = risk_cache_dir(),
                               perform = .default_perform,
@@ -273,28 +302,55 @@ fetch_laus_county <- function(fips, years = 3, key = Sys.getenv("BLS_API_KEY"),
               fail_ttl_days = 1 / 24,
               bg = list(id = "laus", fn = "fetch_laus_county", args = list(fips = fips)),
               fetch_fn = function() {
-    if (!nzchar(key)) { message("[LAUS] BLS_API_KEY not set"); return(NULL) }
-    end_year <- as.integer(format(Sys.Date(), "%Y"))
-    chunks <- split(laus_series_ids(fips), ceiling(seq_along(fips) / 50))
-    reqs <- lapply(chunks, .bls_laus_request, end_year - years + 1, end_year, key)
-    results <- lapply(perform(reqs, max_active = max_active), .bls_ok_results)
-    failed <- vapply(results, is.null, logical(1))
-    if (mean(failed) > 0.5) {
-      message(sprintf("[LAUS] %d/%d BLS calls failed; not retrying", sum(failed), length(failed)))
-      return(NULL)
-    }
-    for (i in which(failed)) {
-      # results[i] <- list(x), not results[[i]] <- x: assigning NULL via [[ ]] deletes the slot.
-      results[i] <- list(.bls_ok_results(tryCatch(perform_one(reqs[[i]]), error = function(e) NULL)))
-    }
-    ok <- !vapply(results, is.null, logical(1))
-    message(sprintf("[LAUS] %d/%d BLS calls succeeded", sum(ok), length(ok)))
-    out <- parse_bls_laus(unlist(results[ok], recursive = FALSE))
-    if (!all(ok)) {
-      attr(out, "partial") <- TRUE
-      attr(out, "ttl_days") <- 0.25
-    }
-    out
+    .laus_pull(laus_series_ids(fips), years, key, max_active, perform, perform_one, 6L)
+  })
+}
+
+# ── BLS LAUS metro (CBSA) unemployment rate ──────────────────────────────────
+.BLS_LA_AREA_URL <- "https://download.bls.gov/pub/time.series/la/la.area"
+
+#' la.area lines (header first, tab-delimited) -> metropolitan areas only
+#' (area_type_code "B"; micro and divisions are dropped). CBSA = area_code[5:9].
+parse_laus_areas <- function(lines) {
+  empty <- tibble::tibble(cbsa_geoid = character(), cbsa_title = character(),
+                          series_id = character())
+  lines <- sub("\r$", "", lines)
+  lines <- lines[nzchar(lines)]
+  if (length(lines) < 2) return(empty)
+  d <- utils::read.delim(text = paste(lines, collapse = "\n"), colClasses = "character",
+                         quote = "", comment.char = "", strip.white = TRUE)
+  d <- d[d$area_type_code == "B", , drop = FALSE]
+  if (!nrow(d)) return(empty)
+  tibble::tibble(cbsa_geoid = substr(d$area_code, 5, 9), cbsa_title = d$area_text,
+                 series_id = paste0("LAU", d$area_code, "03"))
+}
+
+#' BLS metro area list, cached 90 days. NULL on failure (not cached).
+fetch_laus_areas <- function() {
+  risk_cached("laus_areas_v1", 90,
+              bg = list(id = "laus_areas", fn = "fetch_laus_areas", args = list()),
+              fetch_fn = function() {
+    resp <- httr2::request(.BLS_LA_AREA_URL) |>
+      httr2::req_user_agent(.RISK_UA) |>
+      httr2::req_timeout(60) |>
+      httr2::req_perform()
+    a <- parse_laus_areas(strsplit(httr2::resp_body_string(resp), "\r?\n")[[1]])
+    if (nrow(a) == 0) NULL else a
+  })
+}
+
+#' Monthly metro unemployment rates (`fips` holds the CBSA code), cached 7 days.
+#' Same chunk, retry and failure-memory rules as the county pull (8 calls for ~390 metros).
+fetch_laus_metro <- function(series_ids, years = 3, key = Sys.getenv("BLS_API_KEY"),
+                             max_active = 8, cache_dir = risk_cache_dir(),
+                             perform = .default_perform,
+                             perform_one = httr2::req_perform) {
+  risk_cached(sprintf("laus_metro_n%d", length(series_ids)), 7, cache_dir = cache_dir,
+              fail_ttl_days = 1 / 24,
+              bg = list(id = "laus_metro", fn = "fetch_laus_metro",
+                        args = list(series_ids = series_ids)),
+              fetch_fn = function() {
+    .laus_pull(series_ids, years, key, max_active, perform, perform_one, 8L)
   })
 }
 
