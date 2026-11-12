@@ -207,3 +207,37 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
   attr(out, "acs_year") <- yr
   out
 }
+
+# ── Migration (Census PEP county estimates) ──────────────────────────────────
+#' 2025 -> "2024–25". PEP years run July to July.
+pep_year_label <- function(y) sprintf("%d\u2013%02d", as.integer(y) - 1L, as.integer(y) %% 100L)
+
+#' Tidy a PEP co-est{V}-alldata read (all columns character): counties only
+#' (incl. CT planning regions), one row per GEOID. Rates are per 1,000 residents.
+parse_pep_county <- function(raw, vintage) {
+  v <- as.integer(vintage)
+  yrs <- 2021:v
+  num <- function(col) as.numeric(raw[[col]])
+  keep <- raw$SUMLEV == "050" & as.integer(raw$STATE) <= 56
+  raw <- raw[keep, , drop = FALSE]
+
+  dom <- vapply(paste0("DOMESTICMIG", yrs), num, numeric(nrow(raw)))
+  dom <- matrix(dom, nrow = nrow(raw))
+  base <- num("ESTIMATESBASE2020")
+  pop <- num(paste0("POPESTIMATE", v))
+  out <- tibble::tibble(
+    GEOID         = paste0(raw$STATE, raw$COUNTY),
+    mig_dom_rate  = num(paste0("RDOMESTICMIG", v)),
+    mig_intl_rate = num(paste0("RINTERNATIONALMIG", v)),
+    mig_net_rate  = num(paste0("RNETMIG", v)),
+    nat_chg_rate  = num(paste0("RNATURALCHG", v)),
+    mig_dom_cum   = 1000 * rowSums(dom) / base,
+    pop_chg_pct   = 100 * (pop / base - 1),
+    mig_dom_n     = num(paste0("DOMESTICMIG", v)),
+    pop_avg       = (num(paste0("POPESTIMATE", v - 1L)) + pop) / 2
+  )
+  for (y in yrs) out[[paste0("mig_dom_rate_", y)]] <- num(paste0("RDOMESTICMIG", y))
+  out <- dplyr::mutate(out, dplyr::across(-GEOID, \(x) round(x, 2)))
+  attr(out, "vintage") <- v
+  out
+}

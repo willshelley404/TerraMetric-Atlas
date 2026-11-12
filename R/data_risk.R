@@ -383,3 +383,63 @@ fetch_state_tracts <- function(state_fips, year = NULL) {
                        dplyr::across(dplyr::starts_with("noisy")))
   })
 }
+
+# ── Census PEP county estimates (migration) ──────────────────────────────────
+.RISK_UA <- "TerraMetricAtlas/1.0 (research)"
+
+.pep_url <- function(vintage) {
+  sprintf("https://www2.census.gov/programs-surveys/popest/datasets/2020-%d/counties/totals/co-est%d-alldata.csv",
+          as.integer(vintage), as.integer(vintage))
+}
+
+#' A real vintage answers 200 text/csv with a SUMLEV header. An unpublished one
+#' returns a 200 HTML page, so status alone proves nothing.
+.pep_resp_ok <- function(resp) {
+  if (!inherits(resp, "httr2_response") || httr2::resp_status(resp) != 200L) return(FALSE)
+  if (!startsWith(httr2::resp_content_type(resp) %||% "", "text/csv")) return(FALSE)
+  head <- rawToChar(utils::head(httr2::resp_body_raw(resp), 2000L))
+  grepl("SUMLEV", strsplit(head, "[\r\n]")[[1]][1], fixed = TRUE, useBytes = TRUE)
+}
+
+# Downloads the whole file (~2 MB); httr2 has no cheap first-chunk read here.
+.pep_probe <- function(vintage) {
+  resp <- httr2::request(.pep_url(vintage)) |>
+    httr2::req_user_agent(.RISK_UA) |>
+    httr2::req_timeout(60) |>
+    httr2::req_error(is_error = \(r) FALSE) |>
+    httr2::req_perform()
+  .pep_resp_ok(resp)
+}
+
+#' Newest PEP vintage published (current year down to year - 3), cached 30 days.
+#' A failed probe (NULL) is not cached.
+risk_pep_vintage <- function(probe = .pep_probe, today = Sys.Date(),
+                             cache_dir = risk_cache_dir()) {
+  v <- risk_cached("pep_vintage_v1", 30, cache_dir = cache_dir,
+                   bg = list(id = "pep_vintage", fn = "risk_pep_vintage", args = list()),
+                   fetch_fn = function() {
+    .probe_acs_year(as.integer(format(today, "%Y")), probe)
+  })
+  if (is.null(v)) NULL else as.integer(v)
+}
+
+#' County migration and population change for one PEP vintage, cached 30 days.
+#' NULL when no vintage can be found or the download fails.
+fetch_pep_county <- function(vintage = NULL) {
+  if (is.null(vintage)) vintage <- risk_pep_vintage()
+  if (is.null(vintage)) return(NULL)
+  vintage <- as.integer(vintage)
+  risk_cached(sprintf("pep_county_%d", vintage), 30,
+              bg = list(id = "pep", fn = "fetch_pep_county", args = list(vintage = vintage)),
+              fetch_fn = function() {
+    f <- tempfile(fileext = ".csv")
+    on.exit(unlink(f), add = TRUE)
+    httr2::request(.pep_url(vintage)) |>
+      httr2::req_user_agent(.RISK_UA) |>
+      httr2::req_timeout(120) |>
+      httr2::req_perform(path = f)
+    raw <- readr::read_csv(f, col_types = readr::cols(.default = "c"),
+                           locale = readr::locale(encoding = "latin1"), progress = FALSE)
+    parse_pep_county(raw, vintage)
+  })
+}
