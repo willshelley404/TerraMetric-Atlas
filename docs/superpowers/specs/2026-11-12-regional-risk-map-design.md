@@ -320,6 +320,6 @@ Each phase ships on its own and leaves the app working.
   - FHFA uses state HPI for non-metro counties.
 
   The ≥3-of-4 rule and the NA styling handle this, but many rural counties may show "insufficient data" on the Credit lens.
-- **BLS quota on frequent restarts:** more than 7 cold starts in one day would exhaust the 500-query limit. Stale-on-error covers this only if a disk cache survived. If it didn't, Stress now is unavailable until the quota resets.
+- **BLS quota on frequent restarts:** a cold start with seeds older than 7 days spends 72 BLS calls (64 county + 8 metro), so about 6 cold starts a day exhaust the 500-query limit. Stale-on-error covers this only if a disk cache survived. If it didn't, Stress now is unavailable until the quota resets.
 - **LODES earnings bands are nominal** ($1,250 has not been indexed), so CE01 is used only cross-sectionally.
 - **ACS 5-year mix** averages 2020–2024, which includes the pandemic years. Acceptable for industry mix (it moves slowly) but noted in the panel.
