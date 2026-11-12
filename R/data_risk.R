@@ -167,7 +167,8 @@ risk_seed_update <- function(cache_dir = risk_cache_dir(),
                              seed_dir = file.path("data", "risk_seed")) {
   files <- list.files(cache_dir, pattern = "[.]rds$")
   keep <- grepl(paste0("^(acs_year_v2|county_shapes_\\d+|cbsa_xwalk_\\d+|county_acs_\\d+|",
-                       "pep_vintage_v1|fred_sectors_v1|laus_areas_v1|lodes_year_v1)[.]rds$"), files)
+                       "pep_vintage_v1|fred_sectors_v1|laus_areas_v1|lodes_year_v1|",
+                       "cfpb_mortgage_v1|urban_debt_v1|fhfa_hpi_v1|msad_xwalk_2023)[.]rds$"), files)
   # Keys named <prefix><number>: keep only the highest number of each kind.
   for (prefix in c("laus_county_n", "laus_metro_n", "pep_county_", "county_ind_")) {
     m <- grep(sprintf("^%s\\d+[.]rds$", prefix), files, value = TRUE)
@@ -784,18 +785,20 @@ fetch_cfpb_mortgage <- function() {
 # ── Urban Institute consumer debt (Phase 4 credit lens) ──────────────────────
 .URBAN_BASE <- "https://apps.urban.org/features/debt-interactive-map/"
 
-#' Data folder named in the map's JS bundle (`var pathFiles="data/<date>-update/"`),
-#' or NULL. Restricted to a plain relative path.
+#' Data folder named in the map's JS bundle (`var pathFiles="data/<date>-update/"`; any of
+#' var/let/const, spacing, single or double quotes), or NULL. Restricted to a plain
+#' relative path.
 urban_path <- function(js) {
-  m <- regmatches(js, regexpr("var pathFiles=\"[^\"]+\"", js))
-  if (!length(m)) return(NULL)
-  p <- sub("^var pathFiles=\"", "", sub("\"$", "", m))
+  re <- "(?:var|let|const)\\s+pathFiles\\s*=\\s*([\"'])([^\"']+)\\1"
+  m <- regmatches(js, regexec(re, js, perl = TRUE))[[1]]
+  if (length(m) < 3) return(NULL)
+  p <- m[3]
   if (!grepl("^[A-Za-z0-9_./-]+$", p) || grepl("..", p, fixed = TRUE) || startsWith(p, "/")) return(NULL)
   p
 }
 
-#' "data/20261022-update/" -> "Oct 2026" (the update folder's date); NA when the
-#' folder has no YYYYMMDD stamp.
+#' "data/20261022-update/" -> "Oct 2026": the RELEASE (update folder) month, not the
+#' month of the data; NA when the folder has no YYYYMMDD stamp.
 urban_asof <- function(path) {
   if (is.null(path)) return(NA_character_)
   stamp <- regmatches(path, regexpr("[0-9]{8}", path))
@@ -820,7 +823,7 @@ urban_asof <- function(path) {
 }
 
 #' Urban Institute county card / auto delinquency (percent of consumers with a credit
-#' record), cached 30 days. attr "asof" is the update folder's month. NULL on failure.
+#' record), cached 30 days. attr "asof" is the release (update folder) month, not the data month. NULL on failure.
 fetch_urban_debt <- function() {
   risk_cached("urban_debt_v1", 30,
               bg = list(id = "urban", fn = "fetch_urban_debt", args = list()),

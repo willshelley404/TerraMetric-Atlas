@@ -115,3 +115,46 @@ test_that("tax base proxy needs two inputs", {
   expect_true(all(is.na(tax_base_proxy(one))))
   expect_false(any(is.nan(tb)))
 })
+
+test_that("consumer follows the percentile of the card/auto mean when they disagree", {
+  f <- cr_fx()
+  f$urban$card_del <- c(1, 2, 3, 4, 5, 6)      # ascending
+  f$urban$auto_del <- c(12, 10, 8, 6, 4, 2)    # descending
+  r <- credit_components(f$cl, f$cfpb, f$urban, f$hpi)
+  m <- (f$urban$card_del + f$urban$auto_del) / 2
+  expect_equal(r$cr_consumer, pct_rank(m))
+  expect_false(isTRUE(all.equal(r$cr_consumer, pct_rank(f$urban$card_del))))
+})
+
+test_that("shuffled and extra or missing GEOIDs in the source tables change nothing", {
+  f <- cr_fx()
+  base <- credit_components(f$cl, f$cfpb, f$urban, f$hpi)
+  extra <- function(t, id) { x <- t[1, ]; x$GEOID <- id; rbind(t, x) }
+  shuf <- function(t, id) extra(t, id)[c(7, 3, 1, 6, 2, 5, 4), ]
+  r <- credit_components(f$cl, shuf(f$cfpb, "99999"), shuf(f$urban, "99998"), shuf(f$hpi, "99997"))
+  expect_equal(r, base)
+  # a county absent from a table is just missing there; the others keep their percentiles
+  # because 99999 etc. are not in cl and never enter the ranking
+  gone <- f$urban[f$urban$GEOID != "01003", ]
+  r2 <- credit_components(f$cl, f$cfpb, gone, f$hpi)
+  expect_true(is.na(r2$cr_consumer[r2$GEOID == "01003"]))
+  expect_match(r2$credit_missing[r2$GEOID == "01003"], "consumer")
+  expect_equal(r2$cr_mortgage, base$cr_mortgage)
+  expect_equal(r2$cr_collateral, base$cr_collateral)
+  expect_equal(r2$GEOID, f$cl$GEOID)
+})
+
+test_that("tied input values share a percentile and never produce NaN", {
+  f <- cr_fx()
+  f$cfpb$dq90 <- c(2, 2, 2, 5, 5, 5)
+  f$cfpb$dq3089_chg <- c(1, 1, 1, 1, 1, 1)
+  f$urban$card_del <- rep(7, 6); f$urban$auto_del <- rep(3, 6)
+  f$hpi$hpi_yoy <- c(4, 4, 4, 4, 4, 4)
+  r <- credit_components(f$cl, f$cfpb, f$urban, f$hpi)
+  expect_equal(length(unique(r$cr_mortgage[1:3])), 1)
+  expect_equal(length(unique(r$cr_mortgage[4:6])), 1)
+  expect_equal(length(unique(r$cr_consumer[!is.na(r$cr_consumer)])), 1)
+  expect_equal(length(unique(r$cr_collateral)), 1)
+  expect_false(any(is.nan(unlist(r[sapply(r, is.numeric)]))))
+  expect_false(any(is.nan(r$credit_score)))
+})

@@ -104,3 +104,16 @@ test_that("seed update copies the LODES year probe, never LODES or tract-industr
   expect_equal(got, "lodes_year_v1.rds")
   expect_equal(list.files(seed), "lodes_year_v1.rds")
 })
+
+test_that("seed update copies the credit lens sources", {
+  cache <- tempfile("cache"); dir.create(cache)
+  seed <- tempfile("seed")
+  all <- c("cfpb_mortgage_v1", "urban_debt_v1", "fhfa_hpi_v1", "msad_xwalk_2023",
+           "cfpb_mortgage_v0", "msad_xwalk_2022", "urban_debt_v1__failed")
+  for (f in all)
+    saveRDS(list(value = f, fetched_at = Sys.time()), file.path(cache, paste0(f, ".rds")))
+  got <- risk_seed_update(cache_dir = cache, seed_dir = seed)
+  expect_setequal(got, c("cfpb_mortgage_v1.rds", "urban_debt_v1.rds", "fhfa_hpi_v1.rds",
+                         "msad_xwalk_2023.rds"))
+  expect_setequal(list.files(seed), got)
+})

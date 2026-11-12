@@ -514,13 +514,19 @@ risk_layer_cfg <- function(layer_id, county_layers) {
 
 #' Swap only the legend for a "loading" one; the polygons already on screen stay. Used for
 #' the first Credit open, where resending every county polygon would delay the fetch.
+#' The old polygons stay, so dim them and hide their tooltips until the repaint
+#' (.add_county_polygons removes the style control).
 risk_loading_legend <- function(map, layer_id, county_layers = NULL) {
   cfg <- if (is.null(county_layers)) RISK_LAYERS[[layer_id]] else
     risk_layer_cfg(layer_id, county_layers)
+  cfg$loading_text <- paste(cfg$loading_text %||% "loading…", "— showing previous layer until loaded")
   map |>
     leaflet::removeControl("risk_legend") |>
     leaflet::addControl(html = .legend_title(cfg, "loading", NA), layerId = "risk_legend",
-                        position = "bottomright", className = "info legend")
+                        position = "bottomright", className = "info legend") |>
+    leaflet::addControl(html = paste0("<style>#risk_map .leaflet-overlay-pane{opacity:.35}",
+                                      "#risk_map .leaflet-tooltip-pane{display:none}</style>"),
+                        layerId = "risk_loading_dim", className = "")
 }
 
 .legend_title <- function(cfg, status, asof, scope = NULL) {
@@ -571,6 +577,7 @@ risk_loading_legend <- function(map, layer_id, county_layers = NULL) {
   map |>
     leaflet::clearGroup("counties") |>
     leaflet::removeControl("risk_legend") |>
+    leaflet::removeControl("risk_loading_dim") |>
     leaflet::addPolygons(
       data = county_layers, layerId = county_layers$GEOID, group = "counties",
       fillColor = pal(vals), fillOpacity = fill_opacity,

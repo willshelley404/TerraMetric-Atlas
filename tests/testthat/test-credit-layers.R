@@ -385,8 +385,15 @@ test_that("long legend titles wrap", {
 test_that("the loading legend replaces only the legend control", {
   m <- risk_loading_legend(leaflet::leaflet(), "credit_score", cr_layers(NULL, loading = "credit"))
   methods <- vapply(m$x$calls, `[[`, "", "method")
-  expect_equal(methods, c("removeControl", "addControl"))
+  expect_equal(methods, c("removeControl", "addControl", "addControl"))
   ctl <- m$x$calls[[2]]$args
+  expect_true(grepl("showing previous layer until loaded", ctl[[1]], fixed = TRUE))
+  # a style control dims the old polygons and hides their tooltips
+  dim <- m$x$calls[[3]]$args
+  expect_true(grepl("#risk_map .leaflet-overlay-pane{opacity:.35}", dim[[1]], fixed = TRUE))
+  expect_true(grepl("#risk_map .leaflet-tooltip-pane{display:none}", dim[[1]], fixed = TRUE))
+  expect_equal(dim[[3]], "risk_loading_dim")
+  expect_equal(dim[[4]], "")     # no "info legend" class: it would draw an empty box
   expect_true(grepl("Household credit risk score", ctl[[1]], fixed = TRUE))
   expect_true(grepl("loading CFPB, Urban Institute and FHFA data", ctl[[1]], fixed = TRUE))
   expect_equal(ctl[[2]], "bottomright")
@@ -544,4 +551,15 @@ test_that("credit layers work under the app's scalar %||%", {
   expect_equal(l$dq90, c(1.4, 2.6, 2.5, 3.2))
   for (id in c(cr_ids, "tax_base")) expect_length(cr_labels(l, id), 4)
   expect_s3_class(risk_side_panel(l[l$GEOID == "13295", ], "county", l), "shiny.tag")
+})
+
+test_that("drawing county polygons removes the loading dim control", {
+  l <- cr_layers()
+  m <- .add_county_polygons(leaflet::leaflet(), l, "stress_now")
+  rm_calls <- Filter(function(cl) cl$method == "removeControl", m$x$calls)
+  expect_true("risk_loading_dim" %in% vapply(rm_calls, function(cl) cl$args[[1]], ""))
+  # loading dim goes away before the polygons are added
+  methods <- vapply(m$x$calls, `[[`, "", "method")
+  ids <- vapply(m$x$calls, function(cl) if (cl$method == "removeControl") cl$args[[1]] else "", "")
+  expect_lt(which(ids == "risk_loading_dim"), which(methods == "addPolygons"))
 })

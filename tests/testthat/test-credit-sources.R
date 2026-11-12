@@ -154,6 +154,13 @@ test_that("Urban path parsed and NA strings handled", {
   expect_equal(urban_path(js), "data/20261022-update/")
   expect_null(urban_path("var other=1;"))
   expect_null(urban_path("var pathFiles=\"../../etc/\";"))
+  # declaration keyword, spacing and quote style vary between bundle builds
+  expect_equal(urban_path("let pathFiles = 'data/20261022-update/';"), "data/20261022-update/")
+  expect_equal(urban_path("x;const pathFiles =\"data/a-update/\""), "data/a-update/")
+  expect_equal(urban_path("var pathFiles= 'data/a/' ;"), "data/a/")
+  expect_null(urban_path("let pathFiles = '/etc/passwd';"))
+  expect_null(urban_path("const pathFiles = 'data/../x/';"))
+  expect_null(urban_path("var pathFiles = \"data/a';"))     # mismatched quotes
 
   out <- parse_urban_county(urban_fx())
   expect_named(out, c("GEOID", "card_del", "auto_del"))

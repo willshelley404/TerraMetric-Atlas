@@ -7468,6 +7468,9 @@
     "data/risk_seed/cbsa_xwalk_2023.rds": {
       "checksum": "26809f5337027d5b1114a6533c189009"
     },
+    "data/risk_seed/cfpb_mortgage_v1.rds": {
+      "checksum": "31cbe1cb7bdc10279caca38b1f0e9c87"
+    },
     "data/risk_seed/county_acs_2024.rds": {
       "checksum": "86a14c5b3be17835227116ed79aa126b"
     },
@@ -7476,6 +7479,9 @@
     },
     "data/risk_seed/county_shapes_2024.rds": {
       "checksum": "f170b53553de4390a6641d0ccfe91520"
+    },
+    "data/risk_seed/fhfa_hpi_v1.rds": {
+      "checksum": "ed0440dd9f276b8c48ce3a4514a548aa"
     },
     "data/risk_seed/fred_sectors_v1.rds": {
       "checksum": "4a0550df3bfbe88c6df0474190b1f6ee"
@@ -7492,11 +7498,17 @@
     "data/risk_seed/lodes_year_v1.rds": {
       "checksum": "eede4a8b4b5e2d37c77e193d451cdbc8"
     },
+    "data/risk_seed/msad_xwalk_2023.rds": {
+      "checksum": "9d16a39243d229271c0fe427b6ad880c"
+    },
     "data/risk_seed/pep_county_2025.rds": {
       "checksum": "6f1b43fea83ac16a60e7a3691ff1d70a"
     },
     "data/risk_seed/pep_vintage_v1.rds": {
       "checksum": "bb54dce54b8dcd7cf19b525c160c9b77"
+    },
+    "data/risk_seed/urban_debt_v1.rds": {
+      "checksum": "b78799d484907b62d7fa7e18affd319b"
     },
     "global.R": {
       "checksum": "748cac9e8d4b4e4df249d04b9c5d1e4f"
@@ -7532,7 +7544,7 @@
       "checksum": "db77731de193cb91d5725a99422fdd92"
     },
     "R/data_risk.R": {
-      "checksum": "773044306b0e144dcac116a5c3353e4e"
+      "checksum": "adfd9e9d7cee581eedb53d25622b279c"
     },
     "R/forecasting.R": {
       "checksum": "ee58eebf253f07d7bf62fb9f8cfc6af2"
@@ -7541,10 +7553,10 @@
       "checksum": "c37f4cdab97c3a296a61934b099c6baa"
     },
     "R/map_risk.R": {
-      "checksum": "0296e44dd1acf67e944532a4e7c7312c"
+      "checksum": "0def7b4282aadbdbe82f430ac0878b8a"
     },
     "R/risk_metrics.R": {
-      "checksum": "16af49cb82f563170b97778a9482d662"
+      "checksum": "944354e46007f6411075a74ec6626ea1"
     },
     "R/synopsis_tier1.R": {
       "checksum": "c2f0474652fb6c07661b932d1200e172"
@@ -7559,10 +7571,10 @@
       "checksum": "f39d7e5ff82ee898c9e2389a13b090d5"
     },
     "server.R": {
-      "checksum": "a229198b3b2a155abe340b79efbfbc40"
+      "checksum": "83ca3bbec0ca445c65eb1ef3640be47e"
     },
     "ui.R": {
-      "checksum": "98211c1f938652b339b2c3cbc71f2803"
+      "checksum": "126502d5641e47cfa66f9fdd20ed4e1e"
     },
     "www/custom.css": {
       "checksum": "659f1c588a93f949f58fe8e8fc268081"
