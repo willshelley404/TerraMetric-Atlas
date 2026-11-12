@@ -779,3 +779,119 @@ fetch_cfpb_mortgage <- function() {
               bg = list(id = "cfpb", fn = "fetch_cfpb_mortgage", args = list()),
               fetch_fn = function() .cfpb_build(.cfpb_http_text))
 }
+
+
+# ── Urban Institute consumer debt (Phase 4 credit lens) ──────────────────────
+.URBAN_BASE <- "https://apps.urban.org/features/debt-interactive-map/"
+
+#' Data folder named in the map's JS bundle (`var pathFiles="data/<date>-update/"`),
+#' or NULL. Restricted to a plain relative path.
+urban_path <- function(js) {
+  m <- regmatches(js, regexpr("var pathFiles=\"[^\"]+\"", js))
+  if (!length(m)) return(NULL)
+  p <- sub("^var pathFiles=\"", "", sub("\"$", "", m))
+  if (!grepl("^[A-Za-z0-9_./-]+$", p) || grepl("..", p, fixed = TRUE) || startsWith(p, "/")) return(NULL)
+  p
+}
+
+#' "data/20261022-update/" -> "Oct 2026" (the update folder's date); NA when the
+#' folder has no YYYYMMDD stamp.
+urban_asof <- function(path) {
+  if (is.null(path)) return(NA_character_)
+  stamp <- regmatches(path, regexpr("[0-9]{8}", path))
+  d <- if (length(stamp)) as.Date(stamp, format = "%Y%m%d") else NA
+  if (is.na(d)) NA_character_ else format(d, "%b %Y")
+}
+
+.urban_build <- function(get_text) {
+  tryCatch({
+    path <- urban_path(get_text(paste0(.URBAN_BASE, "js/minified-main.js")))
+    if (is.null(path)) stop("no pathFiles in the Urban JS bundle")
+    csv <- get_text(paste0(.URBAN_BASE, path, "county_overall.csv"))
+    out <- parse_urban_county(readr::read_csv(I(csv), col_types = readr::cols(.default = "c"),
+                                              na = character(), progress = FALSE))
+    if (!nrow(out)) stop("no rows in county_overall.csv")
+    attr(out, "asof") <- urban_asof(path)
+    out
+  }, error = function(e) {
+    message("[urban] fetch failed: ", conditionMessage(e))
+    NULL
+  })
+}
+
+#' Urban Institute county card / auto delinquency (percent of consumers with a credit
+#' record), cached 30 days. attr "asof" is the update folder's month. NULL on failure.
+fetch_urban_debt <- function() {
+  risk_cached("urban_debt_v1", 30,
+              bg = list(id = "urban", fn = "fetch_urban_debt", args = list()),
+              fetch_fn = function() .urban_build(.cfpb_http_text))
+}
+
+
+# ── FHFA house price index (Phase 4 credit lens) ─────────────────────────────
+.FHFA_BASE <- "https://www.fhfa.gov/hpi/download/quarterly_datasets/"
+
+.fhfa_build <- function(get_text) {
+  tryCatch({
+    read <- function(file) readr::read_csv(I(get_text(paste0(.FHFA_BASE, file))),
+                                           col_names = FALSE, na = character(),
+                                           col_types = readr::cols(.default = "c"),
+                                           progress = FALSE)
+    out <- list(metro = hpi_yoy(read("hpi_at_metro.csv")), state = hpi_yoy(read("hpi_at_state.csv")))
+    if (!nrow(out$metro) || !nrow(out$state)) stop("empty FHFA file")
+    out
+  }, error = function(e) {
+    message("[fhfa] fetch failed: ", conditionMessage(e))
+    NULL
+  })
+}
+
+#' FHFA house price index year-over-year, metro (incl. metro divisions) and state,
+#' cached 30 days. NULL on failure.
+fetch_fhfa_hpi <- function() {
+  risk_cached("fhfa_hpi_v1", 30,
+              bg = list(id = "fhfa", fn = "fetch_fhfa_hpi", args = list()),
+              fetch_fn = function() .fhfa_build(.cfpb_http_text))
+}
+
+#' County -> metro division (MSAD) by point on surface, like county_cbsa_xwalk. FHFA
+#' reports the 13 divided CBSAs only as their divisions. Counties outside any
+#' division are dropped.
+msad_xwalk <- function(counties_sf, md_sf) {
+  pts <- sf::st_transform(counties_sf[, "GEOID"], 5070)
+  sf::st_agr(pts) <- "constant"
+  pts <- sf::st_point_on_surface(pts)
+  md <- sf::st_transform(md_sf, 5070) |> dplyr::transmute(msad_code = as.character(METDIVFP))
+  j <- suppressWarnings(sf::st_join(pts, md, join = sf::st_within, left = FALSE))
+  j <- sf::st_drop_geometry(j)
+  tibble::as_tibble(j[!duplicated(j$GEOID), c("GEOID", "msad_code")])
+}
+
+.msad_build <- function(county_base, md_fn) {
+  if (is.null(md_fn)) {
+    message("[msad] tigris::metro_divisions unavailable; divided metros fall back to state HPI")
+    return(NULL)
+  }
+  tryCatch({
+    if (is.null(county_base)) county_base <- fetch_county_base()
+    if (is.null(county_base)) stop("county base unavailable")
+    msad_xwalk(county_base, md_fn())
+  }, error = function(e) {
+    message("[msad] crosswalk failed: ", conditionMessage(e))
+    NULL
+  })
+}
+
+#' County -> metro division crosswalk, cached 90 days. county_base NULL loads
+#' fetch_county_base() (the background refresh calls it that way). NULL when this
+#' tigris has no metro_divisions().
+fetch_msad_xwalk <- function(county_base = NULL) {
+  risk_cached("msad_xwalk_2023", 90,
+              bg = list(id = "msad", fn = "fetch_msad_xwalk", args = list(county_base = NULL)),
+              fetch_fn = function() {
+                md_fn <- if (exists("metro_divisions", envir = asNamespace("tigris"), inherits = FALSE)) {
+                  function() tigris::metro_divisions(year = 2023, progress_bar = FALSE)
+                }
+                .msad_build(county_base, md_fn)
+              })
+}

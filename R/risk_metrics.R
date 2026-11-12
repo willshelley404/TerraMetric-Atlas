@@ -856,3 +856,63 @@ cfpb_county_components <- function(county_ids, cbsa_of, cbsa_type_of, state_of,
   }
   out
 }
+
+# ── Urban consumer delinquency + FHFA HPI (Phase 4 credit lens) ──────────────
+#' Urban county_overall.csv (character columns) -> percent of consumers with a
+#' delinquent card / auto-retail debt. Values are fractions; suppressed cells are
+#' the string "NA" and become NA.
+parse_urban_county <- function(df) {
+  num <- function(x) 100 * suppressWarnings(as.numeric(x))
+  id <- trimws(as.character(df$id))
+  id <- ifelse(grepl("^[0-9]{1,5}$", id), sprintf("%05d", as.integer(id)), id)
+  tibble::tibble(GEOID = id, card_del = num(df$carddelrate), auto_del = num(df$autoretdelrate))
+}
+
+#' FHFA quarterly HPI (headerless, raw character columns) -> latest year-over-year
+#' % change per code. Metro files have 6 columns (name, code, year, quarter, index,
+#' se), state files 4 (abbr, year, quarter, index). Uses each code's latest quarter
+#' with an index ("-" is missing) against the same quarter a year earlier.
+hpi_yoy <- function(df) {
+  off <- if (ncol(df) >= 6) 1L else 0L
+  d <- tibble::tibble(
+    code = trimws(as.character(df[[1 + off]])),
+    year = suppressWarnings(as.integer(df[[2 + off]])),
+    q = suppressWarnings(as.integer(df[[3 + off]])),
+    idx = suppressWarnings(as.numeric(df[[4 + off]])))
+  d <- d[!is.na(d$idx) & !is.na(d$year) & !is.na(d$q), ]
+  d$t <- d$year * 4L + d$q
+  d <- d[order(d$code, -d$t), ]
+  last <- d[!duplicated(d$code), ]
+  prev <- d$idx[match(paste(last$code, last$t - 4L), paste(d$code, d$t))]
+  tibble::tibble(code = last$code,
+                 hpi_yoy = round(100 * (last$idx / prev - 1), 2),
+                 hpi_q = sprintf("%d Q%d", last$year, last$q))
+}
+
+#' County HPI for the credit lens. Metro counties take their metro division's value
+#' when the county has one present in the metro file, else the CBSA's; micro, non-CBSA
+#' and metros missing from the file take the state value. `hpi` = list(metro, state)
+#' from fetch_fhfa_hpi(); `msad_xwalk` = tibble(GEOID, msad_code) or NULL.
+county_hpi <- function(cb, hpi, msad_xwalk = NULL) {
+  cb <- sf::st_drop_geometry(cb)
+  pick <- function(tbl, codes) {
+    ok <- tbl[!is.na(tbl$hpi_yoy), ]
+    i <- match(codes, ok$code)
+    list(yoy = ok$hpi_yoy[i], q = ok$hpi_q[i])
+  }
+  n <- nrow(cb)
+  is_metro <- cb$cbsa_type %in% "metro"
+  msad <- if (is.null(msad_xwalk)) rep(NA_character_, n) else
+    msad_xwalk$msad_code[match(cb$GEOID, msad_xwalk$GEOID)]
+  div <- pick(hpi$metro, ifelse(is_metro, msad, NA_character_))
+  met <- pick(hpi$metro, ifelse(is_metro, as.character(cb$cbsa_geoid), NA_character_))
+  st <- pick(hpi$state, as.character(cb$state_abbr))
+  src <- ifelse(!is.na(div$yoy), "metro division",
+         ifelse(!is.na(met$yoy), "metro",
+         ifelse(!is.na(st$yoy), "state", NA_character_)))
+  tibble::tibble(
+    GEOID = cb$GEOID,
+    hpi_yoy = dplyr::coalesce(div$yoy, met$yoy, st$yoy),
+    hpi_source = src,
+    hpi_q = dplyr::coalesce(div$q, met$q, st$q))
+}

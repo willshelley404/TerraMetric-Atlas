@@ -141,3 +141,143 @@ test_that("an NA RegionType does not crash the parser", {
                    check.names = FALSE, stringsAsFactors = FALSE)
   expect_equal(parse_cfpb_wide(df, "FIPSCode")$id, c("01003", "01005"))
 })
+
+# ── Urban consumer delinquency ───────────────────────────────────────────────
+urban_fx <- function() {
+  readr::read_csv(test_path("fixtures", "urban_county_overall.csv"),
+                  col_types = readr::cols(.default = "c"), progress = FALSE)
+}
+
+test_that("Urban path parsed and NA strings handled", {
+  js <- paste(readLines(test_path("fixtures", "urban_main_snippet.js"), warn = FALSE),
+              collapse = "\n")
+  expect_equal(urban_path(js), "data/20261022-update/")
+  expect_null(urban_path("var other=1;"))
+  expect_null(urban_path("var pathFiles=\"../../etc/\";"))
+
+  out <- parse_urban_county(urban_fx())
+  expect_named(out, c("GEOID", "card_del", "auto_del"))
+  expect_equal(out$card_del[out$GEOID == "47065"], 5.44018, tolerance = 1e-6)
+  expect_equal(out$card_del[out$GEOID == "47065"], 5.44, tolerance = 1e-3)
+  expect_true(is.na(out$card_del[out$GEOID == "02013"]))
+  expect_true(is.na(out$auto_del[out$GEOID == "02013"]))
+  expect_true("09001" %in% out$GEOID)           # CT old counties are left as-is
+  expect_type(out$card_del, "double")
+})
+
+test_that("Urban as-of comes from the update folder date", {
+  expect_equal(urban_asof("data/20261022-update/"), "Oct 2026")
+  expect_true(is.na(urban_asof("data/latest/")))
+  expect_true(is.na(urban_asof(NULL)))
+})
+
+test_that("Urban build reads JS -> path -> csv, tags as-of, NULL on failure", {
+  js <- paste(readLines(test_path("fixtures", "urban_main_snippet.js"), warn = FALSE),
+              collapse = "\n")
+  csv <- paste(readLines(test_path("fixtures", "urban_county_overall.csv"), warn = FALSE),
+               collapse = "\n")
+  seen <- character()
+  get <- function(url) { seen <<- c(seen, url); if (grepl("[.]js$", url)) js else csv }
+  out <- .urban_build(get)
+  expect_equal(nrow(out), 5)
+  expect_equal(attr(out, "asof"), "Oct 2026")
+  expect_match(seen[2], "debt-interactive-map/data/20261022-update/county_overall.csv$")
+
+  expect_message(bad <- .urban_build(function(url) "var nothing=1;"), "urban")
+  expect_null(bad)
+  expect_message(err <- .urban_build(function(url) stop("boom")), "boom")
+  expect_null(err)
+})
+
+# ── FHFA HPI ─────────────────────────────────────────────────────────────────
+fhfa_fx <- function(name) {
+  readr::read_csv(test_path("fixtures", name), col_names = FALSE,
+                  col_types = readr::cols(.default = "c"), na = character(), progress = FALSE)
+}
+
+test_that("HPI yoy uses same quarter a year earlier, skips dashes", {
+  m <- hpi_yoy(fhfa_fx("fhfa_metro.csv"))
+  expect_named(m, c("code", "hpi_yoy", "hpi_q"))
+  expect_setequal(m$code, c("16860", "16984"))
+  # 2026 Q2 414.74 vs 2025 Q2 406.94; the 1975 "-" row and row order are irrelevant
+  expect_equal(m$hpi_yoy[m$code == "16860"], round(100 * (414.74 / 406.94 - 1), 2))
+  expect_equal(m$hpi_yoy[m$code == "16860"], 1.92)
+  expect_equal(m$hpi_q[m$code == "16860"], "2026 Q2")
+  s <- hpi_yoy(fhfa_fx("fhfa_state.csv"))
+  expect_setequal(s$code, c("TN", "GA", "IL", "CT"))
+  expect_equal(s$hpi_yoy[s$code == "TN"], round(100 * (705.37 / 687.53 - 1), 2))
+
+  # latest quarter is "-": fall back to the latest quarter with an index
+  d <- data.frame(X1 = "A", X2 = "1", X3 = c("2025", "2025", "2026", "2026"),
+                  X4 = c("1", "2", "1", "2"), X5 = c("100", "110", "121", "-"),
+                  X6 = "( 1.0)", stringsAsFactors = FALSE)
+  r <- hpi_yoy(d)
+  expect_equal(r$hpi_q, "2026 Q1")
+  expect_equal(r$hpi_yoy, 21)
+  # no same quarter a year earlier: NA yoy, not a wrong number
+  d2 <- d[d$X3 == "2026", ]
+  expect_true(is.na(hpi_yoy(d2)$hpi_yoy))
+})
+
+hpi_fx <- function() {
+  list(metro = hpi_yoy(fhfa_fx("fhfa_metro.csv")), state = hpi_yoy(fhfa_fx("fhfa_state.csv")))
+}
+
+test_that("FHFA uses metro division for divided CBSAs, state for micro/rural", {
+  cb <- tibble::tibble(
+    GEOID = c("17031", "13295", "47999", "09110", "13555", "13777"),
+    cbsa_geoid = c("16980", "16860", "99001", NA, "99002", "99003"),
+    cbsa_type = c("metro", "metro", "micro area", NA, "metro", "metro"),
+    state_abbr = c("IL", "GA", "TN", "CT", "GA", "GA"))
+  xw <- tibble::tibble(GEOID = c("17031", "13777"), msad_code = c("16984", "99999"))
+  out <- county_hpi(cb, hpi_fx(), xw)
+  expect_named(out, c("GEOID", "hpi_yoy", "hpi_source", "hpi_q"))
+  expect_equal(out$GEOID, cb$GEOID)
+  expect_equal(out$hpi_source,
+               c("metro division", "metro", "state", "state", "state", "state"))
+  chi <- hpi_fx()$metro
+  expect_equal(out$hpi_yoy[1], chi$hpi_yoy[chi$code == "16984"])
+  expect_equal(out$hpi_yoy[2], chi$hpi_yoy[chi$code == "16860"])
+  expect_equal(out$hpi_yoy[3], round(100 * (705.37 / 687.53 - 1), 2))   # TN state
+  expect_equal(out$hpi_q, rep("2026 Q2", 6))
+
+  # no crosswalk: a divided metro absent from the file drops to state
+  out2 <- county_hpi(cb, hpi_fx(), NULL)
+  expect_equal(out2$hpi_source[1], "state")
+  expect_equal(out2$hpi_yoy[1], round(100 * (565.87 / 533.90 - 1), 2))   # IL state
+  # state missing too: NA with no source
+  out3 <- county_hpi(cb[1, ], list(metro = hpi_fx()$metro, state = hpi_fx()$state[0, ]), NULL)
+  expect_true(is.na(out3$hpi_yoy)); expect_true(is.na(out3$hpi_source))
+})
+
+test_that("county_hpi works under the app's scalar %||% and an sf input", {
+  app_op <- function(x, y) if (is.null(x) || length(x) == 0 || (length(x) == 1 && is.na(x))) y else x
+  assign("%||%", app_op, envir = globalenv())
+  on.exit(rm("%||%", envir = globalenv()), add = TRUE)
+  cb <- fx_county_base()
+  out <- county_hpi(cb, hpi_fx(), NULL)
+  expect_equal(out$hpi_source, c("metro", "state"))
+})
+
+# ── Metro-division crosswalk ─────────────────────────────────────────────────
+test_that("msad_xwalk joins counties to metro divisions by point on surface", {
+  counties <- sf::st_sf(GEOID = c("17031", "13295", "09110"),
+                        geometry = sf::st_sfc(sq(-88, 41), sq(-85, 34), sq(-73, 41), crs = 4326))
+  md <- sf::st_sf(CBSAFP = "16980", METDIVFP = "16984", GEOID = "1698016984",
+                  geometry = sf::st_sfc(sq(-89, 40, 3), crs = 4326))
+  out <- msad_xwalk(counties, md)
+  expect_named(out, c("GEOID", "msad_code"))
+  expect_equal(out$GEOID, "17031")
+  expect_equal(out$msad_code, "16984")
+})
+
+test_that("msad build is NULL (with a log line) when tigris lacks metro_divisions", {
+  expect_message(out <- .msad_build(fx_county_base(), NULL), "metro_divisions")
+  expect_null(out)
+  md <- sf::st_sf(CBSAFP = "16860", METDIVFP = "16861", GEOID = "1686016861",
+                  geometry = sf::st_sfc(sq(-85.5, 33.5, 2), crs = 4326))
+  got <- .msad_build(fx_county_base(), function() md)
+  expect_equal(got$msad_code, "16861")
+  expect_message(bad <- .msad_build(fx_county_base(), function() stop("offline")), "offline")
+  expect_null(bad)
+})
