@@ -43,6 +43,19 @@ test_that("noise flag follows the layer being shown", {
   expect_true(all(is.na(calls_in_group(m, "tracts")[[1]]$args[[4]]$dashArray)))
 })
 
+test_that("fit = FALSE keeps the current view (layer switch while drilled in)", {
+  m <- add_tract_layer(build_risk_county_map(fx_layers(), "poverty_rate"),
+                       fx_tracts(), "poverty_rate", fx_layers(), fit = FALSE)
+  expect_null(m$x$fitBounds)
+  expect_length(calls_in_group(m, "tracts"), 1)
+})
+
+test_that("county-only layer still zooms to the frame when drilling in", {
+  m <- add_tract_layer(build_risk_county_map(fx_layers(), "stress_now"),
+                       fx_tracts(), "stress_now", fx_layers())
+  expect_false(is.null(m$x$fitBounds))
+})
+
 test_that("county-only layer adds no tracts", {
   m <- add_tract_layer(build_risk_county_map(fx_layers(), "stress_now"),
                        fx_tracts(), "stress_now", fx_layers())

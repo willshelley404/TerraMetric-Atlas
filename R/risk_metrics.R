@@ -148,7 +148,10 @@ tracts_for_county <- function(county_geoid, county_base, fetch = fetch_state_tra
 }
 
 # ── County layers: join Stress now, add national percentiles, status/as-of ───
-build_county_layers <- function(county_base, momentum, laus_stale = FALSE) {
+#' laus_loading = TRUE marks Stress now as still loading (progressive tab load:
+#' the map draws from shapes + ACS first, BLS fills in when it arrives).
+build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
+                                laus_loading = FALSE) {
   out <- county_base
   if (is.null(momentum)) {
     out$ref_month <- as.Date(NA); out$rate_now <- NA_real_; out$rate_yr_ago <- NA_real_
@@ -166,7 +169,7 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE) {
   status <- stats::setNames(rep("ok", length(ids)), ids)
   asof <- stats::setNames(rep(sprintf("ACS %d–%d", yr - 4, yr), length(ids)), ids)
   if (is.null(momentum)) {
-    status[["stress_now"]] <- "unavailable"
+    status[["stress_now"]] <- if (isTRUE(laus_loading)) "loading" else "unavailable"
     asof[["stress_now"]] <- NA_character_
   } else {
     asof[["stress_now"]] <- format(max(momentum$ref_month, na.rm = TRUE), "%b %Y")

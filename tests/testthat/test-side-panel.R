@@ -22,6 +22,13 @@ test_that("tract side panel shows labor-market and state percentiles and MOE not
   expect_false(grepl("BLS LAUS", h, fixed = TRUE))   # county-only layer not listed
 })
 
+test_that("side panel ranks read in value terms (highest income = Top)", {
+  l <- build_county_layers(fx_county_base(), fx_momentum())
+  h <- as.character(risk_side_panel(l[l$GEOID == "09110", ], "county", l))
+  row <- regmatches(h, regexpr("Median HH Income.*?</tr>", h))
+  expect_true(grepl("Top 1%", row, fixed = TRUE))
+})
+
 test_that("side panel reports missing states", {
   l <- build_county_layers(fx_county_base(), fx_momentum())
   h <- as.character(risk_side_panel(l[l$GEOID == "13295", ], "county", l, missing_states = "13"))

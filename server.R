@@ -28,9 +28,14 @@ server <- function(input, output, session) {
     mkt_data = NULL,
     mkt_returns = NULL,
     news_data = NULL,
-    census_data = NULL,
     metro_data = NULL,
-    metro_sf = NULL, # metro ACS joined with CBSA centroids
+    county_layers = NULL, # Regional Risk: county base + layers (sf)
+    risk_tracts = NULL,   # tracts_for_county() result for the drilled-in area
+    risk_sel = NULL,      # list(level = "county"|"tract", geoid)
+    risk_failed = FALSE,
+    risk_base = NULL,     # county base before LAUS joins (progressive load)
+    risk_ready = FALSE,   # county map can render
+    laus_go = NULL,       # set after the first map flush to start the BLS pull
     kpis = NULL,
     forecasts = NULL,
     infl_panel = NULL,
@@ -1243,110 +1248,166 @@ server <- function(input, output, session) {
   })
 
   # ═══════════════════════════════════════════════════════════════════════════
-  # METRO MAP
+  # REGIONAL RISK MAP
   # ═══════════════════════════════════════════════════════════════════════════
 
+  risk_placeholder <- function(msg, color = "#9aa3b2") {
+    leaflet::leaflet() %>%
+      leaflet::addTiles(options = leaflet::tileOptions(opacity = 0.95)) %>%
+      leaflet::setView(lng = -96, lat = 38, zoom = 4) %>%
+      leaflet::addControl(
+        html = sprintf(paste0("<div style='background:#1e2640;color:%s;padding:10px 14px;",
+                              "border-radius:6px;font-size:13px;'>%s</div>"), color, msg),
+        position = "topright"
+      )
+  }
+
+  # Tab entry: metro ACS (metro table + Metro AI) and the county base, once.
   observeEvent(input$tabs, {
-    if (input$tabs == "metro") {
-      if (is.null(rv$census_data)) {
-        withProgress(
-          message = "Loading state ACS data from Census API…",
-          value = 0,
-          {
-            incProgress(0.1, detail = "Connecting to Census API…")
-            rv$census_data <- fetch_state_acs()
-            incProgress(0.5, detail = "State data loaded. Fetching metro data…")
-            rv$metro_data <- fetch_metro_acs()
-            incProgress(0.9, detail = "Fetching CBSA centroids…")
-            if (!is.null(rv$metro_data)) {
-              rv$metro_sf <- fetch_metro_sf(rv$metro_data)
-            }
-            incProgress(1.0)
-          }
-        )
+    req(input$tabs == "metro", is.null(rv$county_layers), !isTRUE(rv$risk_failed))
+    withProgress(message = "Loading regional data…", value = 0, {
+      incProgress(0.05, detail = "Metro ACS…")
+      acs_year <- as.integer(risk_cached("acs_year", 30, function() .best_acs_year(2024)))
+      if (is.null(rv$metro_data)) rv$metro_data <- fetch_metro_acs(year = acs_year)
+      incProgress(0.25, detail = "County shapes and ACS…")
+      base <- tryCatch(fetch_county_base(), error = function(e) {
+        message("[Risk] county base failed: ", conditionMessage(e)); NULL
+      })
+      if (is.null(base)) {
+        rv$risk_failed <- TRUE
+      } else {
+        incProgress(0.6, detail = "Drawing counties…")
+        rv$risk_base <- base
+        rv$county_layers <- build_county_layers(base, NULL, laus_loading = TRUE)
+        rv$risk_ready <- TRUE
       }
-      # If state data loaded but metro_sf not yet fetched (e.g. after refresh)
-      if (!is.null(rv$metro_data) && is.null(rv$metro_sf)) {
-        withProgress(message = "Fetching CBSA centroids…", value = 0.5, {
-          rv$metro_sf <- fetch_metro_sf(rv$metro_data)
-          incProgress(1.0)
-        })
-      }
-    }
+    })
+    # BLS is the slow part (64 calls); fetch it after the map has been sent.
+    if (isTRUE(rv$risk_ready)) session$onFlushed(function() rv$laus_go <- TRUE, once = TRUE)
   })
 
-  output$metro_map <- renderLeaflet({
-    # Show a loading placeholder until census data is ready
-    if (is.null(rv$census_data)) {
-      return(
-        leaflet::leaflet() %>%
-          leaflet::addTiles(
-            options = leaflet::tileOptions(opacity = 0.95)
-          ) %>%
-          leaflet::setView(lng = -96, lat = 38, zoom = 4) %>%
-          leaflet::addControl(
-            html = "<div style='background:#1e2640;color:#9aa3b2;padding:10px 14px;
-                    border-radius:6px;font-size:13px;'>
-                    &#9203; Loading Census data&hellip; (first load ~20s)</div>",
-            position = "topright"
-          )
-      )
-    }
-    req(input$map_var)
-    map_out <- tryCatch(
-      build_state_map(rv$census_data, variable = input$map_var),
-      error = function(e) {
-        message("[Map error] ", e$message)
-        NULL
-      }
-    )
-    if (is.null(map_out)) {
-      leaflet::leaflet() %>%
-        leaflet::addTiles() %>%
-        leaflet::setView(lng = -96, lat = 38, zoom = 4) %>%
-        leaflet::addControl(
-          html = "<div style='background:#1e2640;color:#e94560;padding:10px 14px;
-                  border-radius:6px;font-size:13px;'>
-                  &#9888; Map failed &mdash; check R console</div>",
-          position = "topright"
-        )
+  observeEvent(rv$laus_go, {
+    req(rv$risk_base)
+    laus <- withProgress(message = "County unemployment (BLS)…", value = 0.4, {
+      tryCatch(fetch_laus_county(rv$risk_base$GEOID), error = function(e) {
+        message("[Risk] LAUS failed: ", conditionMessage(e)); NULL
+      })
+    })
+    mom <- if (!is.null(laus) && nrow(laus) > 0) laus_momentum(laus) else NULL
+    rv$county_layers <- build_county_layers(rv$risk_base, mom, isTRUE(attr(laus, "stale")))
+    proxy <- leaflet::leafletProxy("risk_map")
+    if (!is.null(rv$risk_tracts)) {
+      add_tract_layer(proxy, rv$risk_tracts$tracts, input$risk_layer, rv$county_layers,
+                      fit = FALSE)
     } else {
-      map_out
+      .add_county_polygons(proxy, rv$county_layers, input$risk_layer, 0.82)
     }
   })
 
-  # State rankings table
-  output$tbl_metro <- renderDT({
-    req(rv$census_data)
-    df <- rv$census_data %>%
-      sf::st_drop_geometry() %>%
-      transmute(
-        State = state,
-        `Unemp Rate %` = round(unemp_rate, 1),
-        `Poverty Rate %` = round(poverty_rate, 1),
-        `LFP Rate %` = round(lfp_rate, 1),
-        `Median Income` = scales::dollar(med_income, accuracy = 1),
-        `Median Home` = scales::dollar(med_home_val, accuracy = 1),
-        Population = scales::comma(pop)
-      ) %>%
-      arrange(`Unemp Rate %`)
+  # Rendered once when the county base is ready; later updates go through the proxy.
+  output$risk_map <- renderLeaflet({
+    if (isTRUE(rv$risk_failed)) {
+      return(risk_placeholder("&#9888; County data failed to load &mdash; check R console",
+                              "#e94560"))
+    }
+    if (!isTRUE(rv$risk_ready)) {
+      return(risk_placeholder("&#9203; Loading county data&hellip;"))
+    }
+    build_risk_county_map(isolate(rv$county_layers), isolate(input$risk_layer) %||% "stress_now")
+  })
 
-    datatable(
-      df,
-      caption = "State Rankings (ACS 5-Year Estimates)",
-      options = list(pageLength = 15, dom = "ftp", scrollX = TRUE),
-      rownames = FALSE,
-      class = "table-dark compact stripe"
-    ) %>%
-      formatStyle(
-        "Unemp Rate %",
-        color = styleInterval(c(4, 6), c("#2dce89", "#f4a261", "#e94560"))
-      ) %>%
-      formatStyle(
-        columns = seq_len(7),
-        backgroundColor = "#1e2640",
-        color = "#d0d0d0"
-      )
+  # Layer change keeps the current view (drilled in or US).
+  observeEvent(input$risk_layer, ignoreInit = TRUE, {
+    req(rv$county_layers)
+    proxy <- leaflet::leafletProxy("risk_map")
+    if (!is.null(rv$risk_tracts)) {
+      add_tract_layer(proxy, rv$risk_tracts$tracts, input$risk_layer, rv$county_layers,
+                      fit = FALSE)
+    } else {
+      .add_county_polygons(proxy, rv$county_layers, input$risk_layer, 0.82)
+    }
+  })
+
+  risk_drill <- function(county_geoid) {
+    r <- withProgress(message = "Loading tracts…", value = 0.3, {
+      tracts_for_county(county_geoid, rv$county_layers)
+    })
+    rv$risk_tracts <- r
+    rv$risk_sel <- list(level = "county", geoid = county_geoid)
+    add_tract_layer(leaflet::leafletProxy("risk_map"), r$tracts, input$risk_layer,
+                    rv$county_layers)
+  }
+
+  observeEvent(input$risk_map_shape_click, {
+    id <- input$risk_map_shape_click$id
+    req(rv$county_layers, !is.null(id))
+    if (nchar(id) == 5) {
+      risk_drill(id)
+    } else if (nchar(id) == 11) {
+      rv$risk_sel <- list(level = "tract", geoid = id)
+    }
+  })
+
+  observe({
+    req(rv$county_layers)
+    cl <- sf::st_drop_geometry(rv$county_layers)
+    cl <- cl[!is.na(cl$cbsa_geoid), ]
+    m <- unique(cl[, c("cbsa_geoid", "cbsa_name", "cbsa_type")])
+    m <- m[order(m$cbsa_name), ]
+    updateSelectizeInput(session, "risk_jump_metro", server = TRUE, selected = "",
+                         choices = c("", stats::setNames(m$cbsa_geoid,
+                                                         paste(m$cbsa_name, m$cbsa_type))))
+  })
+
+  observeEvent(input$risk_jump_metro, ignoreInit = TRUE, {
+    req(rv$county_layers, nzchar(input$risk_jump_metro))
+    cl <- sf::st_drop_geometry(rv$county_layers)
+    cl <- cl[!is.na(cl$cbsa_geoid) & cl$cbsa_geoid == input$risk_jump_metro, ]
+    req(nrow(cl) > 0)
+    risk_drill(cl$GEOID[which.max(cl$pop)])
+  })
+
+  observeEvent(input$risk_back_us, {
+    req(rv$county_layers)
+    reset_to_us(leaflet::leafletProxy("risk_map"), rv$county_layers, input$risk_layer)
+    rv$risk_tracts <- NULL
+    rv$risk_sel <- NULL
+    updateSelectizeInput(session, "risk_jump_metro", selected = "")
+  })
+
+  risk_selected_row <- reactive({
+    sel <- rv$risk_sel
+    req(sel, rv$county_layers)
+    if (sel$level == "county") {
+      rv$county_layers[rv$county_layers$GEOID == sel$geoid, ]
+    } else {
+      t <- rv$risk_tracts$tracts
+      if (is.null(t)) NULL else t[t$GEOID == sel$geoid, ]
+    }
+  })
+
+  output$risk_breadcrumb <- renderUI({
+    sel <- rv$risk_sel
+    crumbs <- "US"
+    if (!is.null(sel) && !is.null(rv$county_layers)) {
+      cty <- sf::st_drop_geometry(rv$county_layers)
+      cty <- cty[cty$GEOID == substr(sel$geoid, 1, 5), ]
+      if (nrow(cty)) crumbs <- c(crumbs, cty$state_name, cty$name)
+      if (sel$level == "tract") crumbs <- c(crumbs, paste("Tract", substr(sel$geoid, 6, 11)))
+    }
+    div(style = "color:#9aa3b2;font-size:12px;margin:4px 0 6px;",
+        paste(crumbs, collapse = " › "))
+  })
+
+  output$risk_side_panel <- renderUI({
+    if (is.null(rv$risk_sel) || is.null(rv$county_layers)) {
+      return(div(style = "color:#9aa3b2;font-size:12px;margin-top:10px;",
+                 "Click a county to see its breakdown and load its tracts."))
+    }
+    row <- risk_selected_row()
+    req(row, nrow(row) > 0)
+    risk_side_panel(row, rv$risk_sel$level, rv$county_layers,
+                    rv$risk_tracts$missing_states %||% character(0))
   })
 
   # Metro CBSA rankings table
@@ -1385,49 +1446,6 @@ server <- function(input, output, session) {
         backgroundColor = "#1e2640",
         color = "#d0d0d0"
       )
-  })
-
-  # Metro bubble map
-  output$metro_bubble_map <- renderLeaflet({
-    if (is.null(rv$metro_sf)) {
-      return(
-        leaflet::leaflet() %>%
-          leaflet::addTiles(
-            options = leaflet::tileOptions(opacity = 0.95)
-          ) %>%
-          leaflet::setView(lng = -96, lat = 38, zoom = 4) %>%
-          leaflet::addControl(
-            html = "<div style='background:#1e2640;color:#9aa3b2;padding:10px 14px;
-                    border-radius:6px;font-size:13px;'>
-                    &#9203; Switch to State Choropleth tab first to load data&hellip;</div>",
-            position = "topright"
-          )
-      )
-    }
-
-    var <- input$metro_map_var %||% "unemp_rate"
-    min_pop <- (input$metro_min_pop %||% 0.5) * 1e6
-
-    map_out <- tryCatch(
-      build_metro_bubble_map(rv$metro_sf, variable = var, min_pop = min_pop),
-      error = function(e) {
-        message("[Metro bubble error] ", e$message)
-        NULL
-      }
-    )
-
-    if (is.null(map_out)) {
-      leaflet::leaflet() %>%
-        leaflet::addTiles() %>%
-        leaflet::setView(lng = -96, lat = 38, zoom = 4) %>%
-        leaflet::addControl(
-          html = "<div style='background:#1e2640;color:#e94560;padding:10px 14px;
-                  border-radius:6px;'>&#9888; Metro map failed &mdash; check R console</div>",
-          position = "topright"
-        )
-    } else {
-      map_out
-    }
   })
 
   # ── Populate metro selector when metro_data loads ────────────────────────────

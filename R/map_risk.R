@@ -7,46 +7,70 @@
                   better = "#51cf66", border = "#2a3042", warn = "#fcc419")
 
 # ── Hover tooltip, option B layout (spec §10) ────────────────────────────────
-#' drivers: data.frame(label, value_text, worse) — first 3 rows shown.
+# String templates, vectorised: thousands of county labels are built per render,
+# and htmltools tag trees cost ~1 ms each.
+.tt_has <- function(x) !is.na(x) & nzchar(x)
+.tt_esc <- function(x) htmltools::htmlEscape(ifelse(is.na(x), "", as.character(x)))
+
+#' One HTML label per element. All text arguments are vectors of equal length
+#' (or length 1); NA means "omit" (value_text NA shows "Insufficient data").
+#' drivers_html: pre-rendered "Driven by" block per element ("" for none).
+#' rank_bad: TRUE where the rank sits on the bad side (red pill), FALSE neutral.
+risk_tooltips_vec <- function(title, subtitle = NA, value_text, rank_text = NA,
+                              rank_sub = NA, footer, drivers_html = "", rank_bad = TRUE) {
+  c <- .RISK_COL
+  n <- max(length(title), length(value_text), length(footer))
+  rep_n <- function(x) rep_len(x, n)
+  subtitle <- rep_n(subtitle); rank_text <- rep_n(rank_text); rank_sub <- rep_n(rank_sub)
+  value_text <- ifelse(.tt_has(value_text), value_text, "Insufficient data")
+  pill_style <- ifelse(rep_n(rank_bad) %in% TRUE, "background:#5c1f2a;color:#ff8787;",
+                       "background:#1f3b4d;color:#8fd3ff;")
+
+  sub_html <- ifelse(.tt_has(subtitle), sprintf(
+    '<div style="color:%s;font-size:11px;">%s</div>', c$muted, .tt_esc(subtitle)), "")
+  pill <- ifelse(.tt_has(rank_text), sprintf(paste0(
+    '<span style="padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;',
+    '%s">%s</span>'), pill_style, .tt_esc(rank_text)), "")
+  rsub_html <- ifelse(.tt_has(rank_sub), sprintf(
+    '<div style="color:%s;font-size:11px;">%s</div>', c$muted, .tt_esc(rank_sub)), "")
+
+  out <- paste0(
+    sprintf(paste0('<div style="font-family:Inter,system-ui,sans-serif;background:%s;color:%s;',
+                   'border-radius:8px;padding:10px 12px;min-width:220px;max-width:280px;',
+                   'font-size:12px;line-height:1.5;white-space:normal;">'), c$panel, c$text),
+    sprintf('<div style="color:%s;font-weight:700;font-size:14px;">%s</div>', c$accent,
+            .tt_esc(title)),
+    sub_html,
+    '<div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-top:4px;">',
+    sprintf('<span style="font-size:20px;font-weight:700;">%s</span>', .tt_esc(value_text)),
+    pill, '</div>',
+    rsub_html,
+    rep_n(drivers_html),
+    sprintf('<div style="color:%s;font-size:11px;margin-top:4px;">%s</div>', c$muted,
+            .tt_esc(footer)),
+    '</div>')
+  lapply(out, htmltools::HTML)
+}
+
+#' Single tooltip. drivers: data.frame(label, value_text, worse) — first 3 shown.
 risk_tooltip_html <- function(title, subtitle = NULL, value_text, rank_text = NULL,
                               rank_sub = NULL, drivers = NULL, footer) {
   c <- .RISK_COL
-  tg <- htmltools::tags
-  has <- function(x) !is.null(x) && length(x) == 1 && !is.na(x) && nzchar(x)
-  value_text <- if (has(value_text)) value_text else "Insufficient data"
-
-  driver_rows <- NULL
+  na1 <- function(x) if (is.null(x) || length(x) == 0) NA else x
+  drivers_html <- ""
   if (!is.null(drivers) && nrow(drivers) > 0) {
     d <- utils::head(drivers, 3)
-    driver_rows <- htmltools::tagList(
-      tg$hr(style = sprintf("border:0;border-top:1px solid %s;margin:7px 0;", c$border)),
-      tg$div(style = sprintf("color:%s;font-size:11px;", c$muted), "Driven by"),
-      lapply(seq_len(nrow(d)), function(i) tg$div(
-        style = "display:flex;justify-content:space-between;gap:8px;",
-        tg$span(d$label[i]),
-        tg$span(style = sprintf("font-weight:600;color:%s;",
-                                if (isTRUE(d$worse[i])) c$worse else c$text),
-                d$value_text[i])
-      ))
-    )
+    rows <- sprintf(paste0('<div style="display:flex;justify-content:space-between;gap:8px;">',
+                           '<span>%s</span><span style="font-weight:600;color:%s;">%s</span></div>'),
+                    .tt_esc(d$label), ifelse(d$worse %in% TRUE, c$worse, c$text),
+                    .tt_esc(d$value_text))
+    drivers_html <- paste0(
+      sprintf('<hr style="border:0;border-top:1px solid %s;margin:7px 0;"/>', c$border),
+      sprintf('<div style="color:%s;font-size:11px;">Driven by</div>', c$muted),
+      paste(rows, collapse = ""))
   }
-
-  out <- tg$div(
-    style = sprintf(paste0("font-family:Inter,system-ui,sans-serif;background:%s;color:%s;",
-                           "border-radius:8px;padding:10px 12px;min-width:220px;max-width:280px;",
-                           "font-size:12px;line-height:1.5;white-space:normal;"), c$panel, c$text),
-    tg$div(style = sprintf("color:%s;font-weight:700;font-size:14px;", c$accent), title),
-    if (has(subtitle)) tg$div(style = sprintf("color:%s;font-size:11px;", c$muted), subtitle),
-    tg$div(style = "display:flex;align-items:baseline;justify-content:space-between;gap:8px;margin-top:4px;",
-           tg$span(style = "font-size:20px;font-weight:700;", value_text),
-           if (has(rank_text)) tg$span(
-             style = "padding:1px 7px;border-radius:10px;font-size:11px;font-weight:600;background:#5c1f2a;color:#ff8787;",
-             rank_text)),
-    if (has(rank_sub)) tg$div(style = sprintf("color:%s;font-size:11px;", c$muted), rank_sub),
-    driver_rows,
-    tg$div(style = sprintf("color:%s;font-size:11px;margin-top:4px;", c$muted), footer)
-  )
-  htmltools::HTML(as.character(out))
+  risk_tooltips_vec(title, na1(subtitle), na1(value_text), na1(rank_text), na1(rank_sub),
+                    footer, drivers_html)[[1]]
 }
 
 # ── Layer registry ───────────────────────────────────────────────────────────
@@ -83,26 +107,46 @@ RISK_LAYERS <- c(
                     na.color = "#555566")
 }
 
-.county_tooltips <- function(d, id, cfg, asof) {
+.county_tooltips <- function(d, id, cfg, asof, status = "ok") {
+  if (identical(status, "loading")) {
+    return(risk_tooltips_vec(title = d$name, value_text = "Loading…",
+                             footer = paste(cfg$source, "— loading")))
+  }
   vtxt <- .risk_fmt(d[[cfg$col]], cfg$fmt)
   if (id == "stress_now") {
     has_flag <- !is.na(vtxt) & !is.na(d$flag)
     vtxt[has_flag] <- paste0(vtxt[has_flag], " · ", d$flag[has_flag])
   }
-  ranks <- rank_label(d[[paste0("pct_", cfg$col)]], "nationally", cfg$higher_is_worse)
+  pct <- d[[paste0("pct_", cfg$col)]]
   subs <- ifelse(is.na(d$cbsa_name), NA_character_, paste(d$cbsa_name, d$cbsa_type))
   footer <- if (is.na(asof)) paste(cfg$source, "— unavailable") else
     paste0(cfg$source, ", ", asof)
-  lapply(seq_len(nrow(d)), function(i) risk_tooltip_html(
-    title = d$name[i], subtitle = subs[i], value_text = vtxt[i],
-    rank_text = ranks[i], footer = footer))
+  risk_tooltips_vec(title = d$name, subtitle = subs, value_text = vtxt,
+                    rank_text = rank_label(pct, "nationally"), footer = footer,
+                    rank_bad = .rank_bad(pct, cfg))
 }
 
-.legend_title <- function(cfg, status, asof) {
-  if (identical(status, "unavailable")) return(paste(cfg$label, "— unavailable"))
-  t <- paste0(cfg$label, " — ", cfg$source, ", ", asof)
-  if (identical(status, "stale")) t <- paste0(t, " (stale)")
-  t
+#' Ranks always read in value terms ("Top" = highest value); the pill turns red
+#' only on the bad side of the median for that variable.
+.rank_bad <- function(pct, cfg) {
+  bad <- if (isTRUE(cfg$higher_is_worse)) pct >= 50 else pct < 50
+  bad %in% TRUE
+}
+
+.legend_title <- function(cfg, status, asof, scope = NULL) {
+  head <- htmltools::htmlEscape(cfg$label)
+  sub <- if (identical(status, "unavailable")) "unavailable" else
+    if (identical(status, "loading")) "loading county unemployment from BLS…" else
+      paste0(if (!is.null(scope)) paste0(scope, " · "), cfg$source, ", ", asof,
+             if (identical(status, "stale")) " (stale)")
+  paste0(head, "<br><small style='font-weight:400;'>", htmltools::htmlEscape(sub), "</small>")
+}
+
+.legend_format <- function(cfg) {
+  switch(cfg$fmt,
+    "$"  = leaflet::labelFormat(prefix = "$", big.mark = ",", digits = 0),
+    "pp" = leaflet::labelFormat(suffix = " pp", digits = 1),
+    leaflet::labelFormat(suffix = "%", digits = 1))
 }
 
 .add_county_polygons <- function(map, county_layers, layer_id, fill_opacity = 0.82) {
@@ -111,10 +155,21 @@ RISK_LAYERS <- c(
   pal <- .risk_palette(cfg, vals)
   asof <- attr(county_layers, "asof")[[layer_id]]
   status <- attr(county_layers, "layer_status")[[layer_id]]
-  lbl_fmt <- switch(cfg$fmt,
-    "$"  = leaflet::labelFormat(prefix = "$", big.mark = ","),
-    "pp" = leaflet::labelFormat(suffix = " pp"),
-    leaflet::labelFormat(suffix = "%"))
+  lbl_fmt <- .legend_format(cfg)
+  title <- .legend_title(cfg, status, asof)
+  add_legend <- function(m) {
+    if (cfg$fmt != "pp") {
+      return(leaflet::addLegend(m, pal = pal, values = vals, opacity = 0.9,
+                                layerId = "risk_legend", title = title,
+                                position = "bottomright", labFormat = lbl_fmt))
+    }
+    mids <- c(-2, -0.75, -0.35, 0, 0.35, 0.75, 2)
+    leaflet::addLegend(m, colors = pal(mids), opacity = 0.9, layerId = "risk_legend",
+                       title = title, position = "bottomright",
+                       labels = c("below −1.0 pp", "−1.0 to −0.5", "−0.5 to −0.2",
+                                  "−0.2 to +0.2", "+0.2 to +0.5", "+0.5 to +1.0 (rising)",
+                                  "above +1.0 pp (trigger)"))
+  }
   map |>
     leaflet::clearGroup("counties") |>
     leaflet::removeControl("risk_legend") |>
@@ -122,36 +177,40 @@ RISK_LAYERS <- c(
       data = county_layers, layerId = county_layers$GEOID, group = "counties",
       fillColor = pal(vals), fillOpacity = fill_opacity,
       color = "#0f1117", weight = 0.4, smoothFactor = 0.5,
-      label = .county_tooltips(county_layers, layer_id, cfg, asof),
+      label = .county_tooltips(county_layers, layer_id, cfg, asof, status),
       labelOptions = leaflet::labelOptions(
         style = list(background = "transparent", border = "none", padding = "0",
                      "box-shadow" = "none"), direction = "auto"),
       highlightOptions = leaflet::highlightOptions(color = .RISK_COL$accent, weight = 2,
                                                    bringToFront = FALSE)
     ) |>
-    leaflet::addLegend(pal = pal, values = vals, opacity = 0.9, layerId = "risk_legend",
-                       title = .legend_title(cfg, status, asof), position = "bottomright",
-                       labFormat = lbl_fmt)
+    add_legend()
 }
 
 # ── Tract drill-down layer ───────────────────────────────────────────────────
 .tract_tooltips <- function(t, cfg, asof, noisy) {
   vtxt <- .risk_fmt(as.numeric(t[[cfg$col]]), cfg$fmt)
-  lm <- rank_label(t[[paste0("lm_pct_", cfg$col)]], t$frame_label, cfg$higher_is_worse)
-  st <- rank_label(t[[paste0("st_pct_", cfg$col)]], t$state_label, cfg$higher_is_worse)
+  lm_pct <- t[[paste0("lm_pct_", cfg$col)]]
+  lm <- rank_label(lm_pct, t$frame_label)
+  st <- rank_label(t[[paste0("st_pct_", cfg$col)]], t$state_label)
   footer <- paste0(cfg$source, ", ", asof, ifelse(noisy, " · High margin of error", ""))
-  lapply(seq_len(nrow(t)), function(i) risk_tooltip_html(
-    title = t$tract_name[i], value_text = vtxt[i], rank_text = lm[i],
-    rank_sub = st[i], footer = footer[i]))
+  risk_tooltips_vec(title = t$tract_name, value_text = vtxt, rank_text = lm,
+                    rank_sub = st, footer = footer, rank_bad = .rank_bad(lm_pct, cfg))
 }
 
 #' Dim counties and draw the frame's tracts for a tract-level layer. For a
 #' county-only layer (Stress now) the counties are restored and no tracts drawn.
-add_tract_layer <- function(map, tracts, layer_id, county_layers) {
+add_tract_layer <- function(map, tracts, layer_id, county_layers, fit = TRUE) {
   cfg <- RISK_LAYERS[[layer_id]]
   map <- leaflet::clearGroup(map, "tracts")
-  if (!"tract" %in% cfg$levels || is.null(tracts) || nrow(tracts) == 0) {
-    return(.add_county_polygons(map, county_layers, layer_id, 0.82))
+  have <- !is.null(tracts) && nrow(tracts) > 0
+  fit_to <- function(m) {
+    if (!fit || !have) return(m)
+    bb <- as.numeric(sf::st_bbox(tracts))
+    leaflet::fitBounds(m, bb[1], bb[2], bb[3], bb[4])
+  }
+  if (!"tract" %in% cfg$levels || !have) {
+    return(fit_to(.add_county_polygons(map, county_layers, layer_id, 0.82)))
   }
   asof <- attr(county_layers, "asof")[[layer_id]]
   vals <- as.numeric(tracts[[cfg$col]])
@@ -159,9 +218,7 @@ add_tract_layer <- function(map, tracts, layer_id, county_layers) {
   noisy_col <- paste0("noisy_", cfg$col)
   noisy <- if (noisy_col %in% names(tracts)) tracts[[noisy_col]] %in% TRUE else
     rep(FALSE, nrow(tracts))
-  bb <- as.numeric(sf::st_bbox(tracts))
-  lbl_fmt <- if (cfg$fmt == "$") leaflet::labelFormat(prefix = "$", big.mark = ",") else
-    leaflet::labelFormat(suffix = "%")
+  lbl_fmt <- .legend_format(cfg)
 
   .add_county_polygons(map, county_layers, layer_id, 0.25) |>
     leaflet::addPolygons(
@@ -178,9 +235,9 @@ add_tract_layer <- function(map, tracts, layer_id, county_layers) {
     leaflet::removeControl("risk_legend") |>
     leaflet::addLegend(pal = pal, values = vals, opacity = 0.9, layerId = "risk_legend",
                        position = "bottomright", labFormat = lbl_fmt,
-                       title = sprintf("%s — tracts %s — %s, %s", cfg$label,
-                                       tracts$frame_label[1], cfg$source, asof)) |>
-    leaflet::fitBounds(bb[1], bb[2], bb[3], bb[4])
+                       title = .legend_title(cfg, "ok", asof,
+                                             scope = paste("tracts", tracts$frame_label[1]))) |>
+    fit_to()
 }
 
 reset_to_us <- function(map, county_layers, layer_id) {
@@ -199,7 +256,7 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
   ids <- names(RISK_LAYERS)
   if (level == "tract") ids <- ids[vapply(RISK_LAYERS[ids], function(l) "tract" %in% l$levels, logical(1))]
   get <- function(col) if (col %in% names(a)) a[[col]] else NA
-  rk <- function(p, hiw) { r <- rank_label(p, "", hiw); if (is.na(r)) "—" else trimws(r) }
+  rk <- function(p, hiw) { r <- rank_label(p, ""); if (is.na(r)) "—" else trimws(r) }  # value terms
   td <- function(...) tg$td(style = "padding:3px 10px 3px 0;", ...)
 
   noisy_labels <- character(0)
@@ -255,7 +312,7 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
 #' US county choropleth for one layer. Polygons carry GEOID layerIds for clicks.
 build_risk_county_map <- function(county_layers, layer_id, fill_opacity = 0.82) {
   leaflet::leaflet(options = leaflet::leafletOptions(zoomControl = TRUE)) |>
-    leaflet::addProviderTiles(leaflet::providers$CartoDB.DarkMatter) |>
+    leaflet::addTiles(options = leaflet::tileOptions(opacity = 0.95)) |>  # CARTO now needs a key
     .add_county_polygons(county_layers, layer_id, fill_opacity) |>
     leaflet::setView(lng = -96, lat = 38, zoom = 4)
 }

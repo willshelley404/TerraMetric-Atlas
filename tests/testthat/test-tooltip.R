@@ -27,6 +27,19 @@ test_that("NA value shows Insufficient data", {
   expect_true(grepl("Insufficient data", h))
 })
 
+test_that("vectorised tooltips match the single tooltip builder exactly", {
+  title <- c("Walker County, GA", "O'Brien & <Co>", "Rural County, GA")
+  sub <- c("Chattanooga metro", NA, NA)
+  val <- c("+0.7 pp · Rising", NA, "12.0%")
+  rank <- c("Top 12% nationally", NA, "Bottom 30% nationally")
+  rsub <- c(NA, NA, "Top 15% in Georgia")
+  foot <- c("BLS LAUS, Sep 2026", "src", "Census ACS 5-yr, ACS 2020–2024 · High margin of error")
+  vec <- risk_tooltips_vec(title, sub, val, rank, rsub, foot)
+  one <- lapply(1:3, function(i) risk_tooltip_html(title[i], sub[i], val[i], rank[i], rsub[i],
+                                                   footer = foot[i]))
+  expect_equal(vapply(vec, as.character, ""), vapply(one, as.character, ""))
+})
+
 test_that("rank pill, rank sub-line and subtitle render when given", {
   h <- as.character(risk_tooltip_html("Walker County, GA", subtitle = "Chattanooga metro",
                                       value_text = "84", rank_text = "Top 8% in Chattanooga metro",
