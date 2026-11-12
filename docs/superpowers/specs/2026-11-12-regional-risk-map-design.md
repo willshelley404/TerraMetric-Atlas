@@ -294,6 +294,11 @@ Each phase ships on its own and leaves the app working.
 2. **Migration lens + Stress ahead.**
    - Migration lens (PEP: one small CSV, cheap, high interest) and the standing migration line on county tooltips.
    - Stress ahead: FRED sector payrolls, ACS county mix, shift-share, sector risk weights.
+   - **Metro-level Stress now** (added 2026-11-12 at the user's request):
+     - Source: BLS's published metro LAUS unemployment rates (about 8 API calls per refresh, 50 series per call), seeded in `data/risk_seed/` like the county pull.
+     - Computed with the same pairwise year-over-year momentum as counties.
+     - When you jump to or drill into a metro, the side panel header and the tooltips show e.g. "Chattanooga metro: +0.x pp vs a year ago".
+     - Today the side panel shows only the metro's largest county.
 3. **Assistance lens.** LODES loader (`lehdr` with direct fallback), tract exposure, cushion, score, counts, MOE flags, AK/MI fallback.
 4. **Credit lens + tax base.** CFPB, Urban, FHFA; credit score; tax base proxy layer (reuses the PEP data from Phase 2).
 5. **Metro AI.** Feed the new components into the metro summary.
