@@ -788,3 +788,67 @@ assistance_tracts <- function(tracts, jobs, weights, county_layers, frame_counti
   tracts$assist_cushion_st <- if (blank) na else st$pct_cushion
   tracts
 }
+
+# ── CFPB mortgage delinquency (Phase 4 credit lens) ──────────────────────────
+
+#' Wide CFPB file (one column per YYYY-MM, all character) -> long tibble(id, date, pct).
+#' `id_col` is "FIPSCode" (quotes stripped) or "CBSACode"; National and id-less rows drop.
+parse_cfpb_wide <- function(df, id_col) {
+  months <- grep("^\\d{4}-\\d{2}$", names(df), value = TRUE)
+  id <- gsub("[' ]", "", as.character(df[[id_col]]))
+  keep <- !is.na(id) & nzchar(id) & !grepl("^-+$", id)
+  if ("RegionType" %in% names(df)) keep <- keep & df$RegionType != "National"
+  if (!any(keep) || !length(months)) {
+    return(tibble::tibble(id = character(), date = as.Date(character()), pct = numeric()))
+  }
+  m <- as.matrix(df[keep, months, drop = FALSE])
+  out <- tibble::tibble(
+    id = rep(id[keep], times = length(months)),
+    date = rep(as.Date(paste0(months, "-01")), each = sum(keep)),
+    pct = suppressWarnings(as.numeric(m)))
+  out[!is.na(out$pct), ]
+}
+
+#' Per-county CFPB inputs for the credit score. Lookup order per county: its own
+#' county row, then its CBSA's metro row, then the state's non-metro row ("{ss}-non").
+#' dq90 = 90+ days late at the file's latest month; dq3089_chg = 30-89 latest minus
+#' 12 months earlier (pp), read from the same source row.
+cfpb_county_components <- function(county_ids, cbsa_of, state_of,
+                                   county90, county3089, metro90, metro3089) {
+  n <- length(county_ids)
+  cbsa_of <- rep_len(as.character(cbsa_of), n)
+  state_of <- rep_len(as.character(state_of), n)
+  key <- function(tbl) paste(tbl$id, format(tbl$date))
+  latest <- function(tbl) if (nrow(tbl)) max(tbl$date) else as.Date(NA)
+  back12 <- function(d) if (is.na(d)) d else seq(d, by = "-1 year", length.out = 2)[2]
+  at <- function(tbl, ids, d) {
+    if (is.na(d)) return(rep(NA_real_, length(ids)))
+    tbl$pct[match(paste(ids, format(d)), key(tbl))]
+  }
+
+  metro_ids <- ifelse(!is.na(cbsa_of) & !grepl("-non$", cbsa_of) &
+                        cbsa_of %in% metro90$id, cbsa_of, NA_character_)
+  nonmetro_ids <- ifelse(!is.na(state_of) & nzchar(state_of),
+                         paste0(state_of, "-non"), NA_character_)
+  levels <- list(
+    list(src = "county", ids = as.character(county_ids), t90 = county90, t3089 = county3089),
+    list(src = "metro", ids = metro_ids, t90 = metro90, t3089 = metro3089),
+    list(src = "state non-metro", ids = nonmetro_ids, t90 = metro90, t3089 = metro3089))
+
+  out <- tibble::tibble(GEOID = as.character(county_ids), dq90 = NA_real_,
+                        dq3089_chg = NA_real_, cfpb_source = NA_character_,
+                        cfpb_month = as.Date(NA))
+  for (lv in levels) {
+    d <- latest(lv$t90)
+    v90 <- at(lv$t90, lv$ids, d)
+    take <- is.na(out$cfpb_source) & !is.na(v90)
+    if (!any(take)) next
+    d3 <- latest(lv$t3089)
+    chg <- at(lv$t3089, lv$ids, d3) - at(lv$t3089, lv$ids, back12(d3))
+    out$dq90[take] <- v90[take]
+    out$dq3089_chg[take] <- round(chg[take], 2)
+    out$cfpb_source[take] <- lv$src
+    out$cfpb_month[take] <- d
+  }
+  out
+}

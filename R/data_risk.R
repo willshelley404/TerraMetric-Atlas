@@ -706,3 +706,76 @@ fetch_lodes_rac <- function(state_fips, year = NULL, cache_dir = risk_cache_dir(
   })
 }
 
+
+# ── CFPB mortgage delinquency (Phase 4 credit lens) ──────────────────────────
+.CFPB_PAGE <- "https://www.consumerfinance.gov/data-research/mortgage-performance-trends/download-the-data/"
+
+#' Newest CSV link per file type on the CFPB download page, rewritten to
+#' https://files.consumerfinance.gov/. Quarters can be missing from the list, so
+#' always take the max `thru`; a type with no link is NA. `thru` is the oldest of
+#' the four chosen files (the as-of every file reaches).
+cfpb_links <- function(html) {
+  pat <- "href=\"(https?://[^\"]*?/(County|MetroArea)MortgagesPercent-(90-plus|30-89)DaysLate-thru-(\\d{4}-\\d{2})\\.csv)\""
+  m <- regmatches(html, gregexpr(pat, html, perl = TRUE))[[1]]
+  empty <- list(county_90 = NA_character_, county_3089 = NA_character_,
+                metro_90 = NA_character_, metro_3089 = NA_character_, thru = NA_character_)
+  if (!length(m)) return(empty)
+  url <- sub("^href=\"", "", sub("\"$", "", m))
+  thru <- sub("^.*thru-(\\d{4}-\\d{2})\\.csv$", "\\1", url)
+  type <- paste0(ifelse(grepl("/CountyMortgages", url), "county", "metro"), "_",
+                 ifelse(grepl("90-plusDaysLate", url), "90", "3089"))
+  https <- sub("^http://files\\.consumerfinance\\.gov(\\.s3\\.amazonaws\\.com)?/",
+               "https://files.consumerfinance.gov/", url)
+  https <- sub("^https?://s3\\.amazonaws\\.com/files\\.consumerfinance\\.gov/",
+               "https://files.consumerfinance.gov/", https)
+  out <- empty
+  for (t in setdiff(names(empty), "thru")) {
+    i <- which(type == t)
+    if (length(i)) out[[t]] <- https[i[order(thru[i], decreasing = TRUE)[1]]]
+  }
+  got <- vapply(out[setdiff(names(out), "thru")], function(u) !is.na(u), logical(1))
+  if (all(got)) {
+    out$thru <- min(sub("^.*thru-(\\d{4}-\\d{2})\\.csv$", "\\1",
+                        unlist(out[setdiff(names(out), "thru")])))
+  }
+  out
+}
+
+#' Page + the four CSVs through get_text(url) -> string; only the last 13 months of
+#' each file are kept (the 12-month change needs 13). NULL when any step fails.
+.cfpb_build <- function(get_text) {
+  tryCatch({
+    ln <- cfpb_links(get_text(.CFPB_PAGE))
+    if (is.na(ln$thru)) return(NULL)
+    last13 <- function(x) x[x$date >= seq(max(x$date), by = "-1 year", length.out = 2)[2], ]
+    read <- function(url, id_col) {
+      df <- readr::read_csv(I(get_text(url)), col_types = readr::cols(.default = "c"),
+                            progress = FALSE)
+      out <- parse_cfpb_wide(df, id_col)
+      if (!nrow(out)) stop("no rows in ", url)
+      last13(out)
+    }
+    list(county90 = read(ln$county_90, "FIPSCode"), county3089 = read(ln$county_3089, "FIPSCode"),
+         metro90 = read(ln$metro_90, "CBSACode"), metro3089 = read(ln$metro_3089, "CBSACode"),
+         thru = ln$thru)
+  }, error = function(e) {
+    message("[cfpb] fetch failed: ", conditionMessage(e))
+    NULL
+  })
+}
+
+.cfpb_http_text <- function(url) {
+  httr2::request(url) |>
+    httr2::req_user_agent(.RISK_UA) |>
+    httr2::req_timeout(120) |>
+    httr2::req_perform() |>
+    httr2::resp_body_string()
+}
+
+#' CFPB mortgage delinquency (county and metro/state non-metro, 90+ and 30-89 days
+#' late), last 13 months, cached 30 days. NULL if any of the four files fails.
+fetch_cfpb_mortgage <- function() {
+  risk_cached("cfpb_mortgage_v1", 30,
+              bg = list(id = "cfpb", fn = "fetch_cfpb_mortgage", args = list()),
+              fetch_fn = function() .cfpb_build(.cfpb_http_text))
+}
