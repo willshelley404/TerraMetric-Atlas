@@ -205,18 +205,20 @@ tracts_for_county <- function(county_geoid, county_base, fetch = fetch_state_tra
 }
 
 # ── County layers: join Stress now, add national percentiles, status/as-of ───
-#' laus_loading = TRUE marks Stress now as still loading (progressive tab load:
-#' the map draws from shapes + ACS first, BLS fills in when it arrives).
+#' loading: component names still loading ("stress_now", "migration", "stress_ahead");
+#' progressive tab load: the map draws from shapes + ACS first, the rest fills in.
 #' migration: parse_pep_county() output (attr "stale" from risk_cached) or NULL.
-#' loading: component names still loading ("migration", "stress_ahead").
-#' stress_ahead: stress_ahead() output with attrs "weights" (sector_weights()) and
-#' "stale" (set by the caller when FRED or ACS came from a stale cache), or NULL.
+#' stress_ahead: stress_ahead() output with attr "stale" (set by the caller when FRED or
+#' ACS came from a stale cache), or NULL.
+#' sector_weights: sector_weights() output (needs FRED only, so it survives a missing ACS
+#' industry pull); falls back to attr(stress_ahead, "weights").
 #' metro_momentum: laus_momentum() on the metro pull (fips = CBSA code) or NULL; joined
 #' onto counties by cbsa_geoid as metro_momentum_pp / metro_rate_now / metro_ref_month.
 build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
-                                laus_loading = FALSE, laus_partial = FALSE,
+                                laus_partial = FALSE,
                                 migration = NULL, loading = character(0),
-                                stress_ahead = NULL, metro_momentum = NULL) {
+                                stress_ahead = NULL, metro_momentum = NULL,
+                                sector_weights = NULL) {
   out <- county_base
   if (is.null(momentum)) {
     out$ref_month <- as.Date(NA); out$rate_now <- NA_real_; out$rate_yr_ago <- NA_real_
@@ -257,7 +259,7 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
   status <- stats::setNames(rep("ok", length(ids)), ids)
   asof <- stats::setNames(rep(sprintf("ACS %d–%d", yr - 4, yr), length(ids)), ids)
   if (is.null(momentum)) {
-    status[["stress_now"]] <- if (isTRUE(laus_loading)) "loading" else "unavailable"
+    status[["stress_now"]] <- if ("stress_now" %in% loading) "loading" else "unavailable"
     asof[["stress_now"]] <- NA_character_
   } else {
     asof[["stress_now"]] <- format(max(momentum$ref_month, na.rm = TRUE), "%b %Y")
@@ -281,7 +283,8 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
   attr(out, "layer_status") <- status
   attr(out, "asof") <- asof
   attr(out, "acs_year") <- yr
-  attr(out, "sector_weights") <- if (is.null(stress_ahead)) NULL else attr(stress_ahead, "weights")
+  attr(out, "sector_weights") <- sector_weights %||%
+    (if (is.null(stress_ahead)) NULL else attr(stress_ahead, "weights"))
   if (!is.null(v)) attr(out, "pep_vintage") <- v
   out
 }

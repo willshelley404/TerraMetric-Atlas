@@ -54,7 +54,7 @@ test_that("unavailable layer legend says unavailable", {
 })
 
 test_that("Stress now shows loading while BLS data is still coming", {
-  l <- build_county_layers(fx_county_base(), NULL, laus_loading = TRUE)
+  l <- build_county_layers(fx_county_base(), NULL, loading = "stress_now")
   expect_equal(attr(l, "layer_status")[["stress_now"]], "loading")
   title <- map_calls(build_risk_county_map(l, "stress_now"), "addLegend")[[1]]$args[[1]]$title
   expect_true(grepl("loading county unemployment", title, fixed = TRUE))

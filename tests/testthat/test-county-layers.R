@@ -44,3 +44,26 @@ test_that("as-of labels per layer", {
   expect_equal(a[["stress_now"]], "Sep 2026")
   expect_equal(a[["poverty_rate"]], "ACS 2020–2024")
 })
+
+test_that("sector weights are kept without a Stress ahead component", {
+  l <- build_county_layers(fx_county_base(), fx_momentum(), stress_ahead = NULL,
+                           sector_weights = fx_weights())
+  expect_equal(attr(l, "sector_weights"), fx_weights())
+  expect_equal(attr(l, "layer_status")[["stress_ahead"]], "unavailable")
+  # Backward compatible: weights riding on stress_ahead are used when no argument is given.
+  expect_equal(attr(build_county_layers(fx_county_base(), fx_momentum(),
+                                        stress_ahead = fx_stress_ahead()), "sector_weights"),
+               fx_weights())
+  expect_null(attr(build_county_layers(fx_county_base(), fx_momentum()), "sector_weights"))
+})
+
+test_that("one loading vector drives every component status", {
+  l <- build_county_layers(fx_county_base(), NULL, loading = c("stress_now", "migration"))
+  st <- attr(l, "layer_status")
+  expect_equal(st[["stress_now"]], "loading")
+  expect_equal(st[["mig_dom"]], "loading")
+  expect_equal(st[["poverty_rate"]], "ok")
+  # Data wins over a leftover loading flag only when the part is absent; present data is ok.
+  l2 <- build_county_layers(fx_county_base(), fx_momentum(), loading = character(0))
+  expect_equal(attr(l2, "layer_status")[["stress_now"]], "ok")
+})

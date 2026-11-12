@@ -1263,7 +1263,7 @@ server <- function(input, output, session) {
       )
   }
 
-  # Update components of rv$risk_parts (NULL values kept) and rebuild the layers.
+  # Update components of rv$risk_parts (NULL values kept); risk_try_part() also rebuilds.
   risk_set_parts <- function(...) {
     new <- list(...)
     p <- rv$risk_parts
@@ -1271,11 +1271,13 @@ server <- function(input, output, session) {
     rv$risk_parts <- p
   }
 
-  # Rebuild county layers from rv$risk_parts and redraw the current layer. A later
-  # component (e.g. stress_ahead) is one risk_set_parts() call plus risk_rebuild().
-  risk_rebuild <- function(redraw = TRUE) {
+  # Rebuild county layers from rv$risk_parts (no drawing).
+  risk_rebuild <- function() {
     rv$county_layers <- do.call(build_county_layers, c(list(rv$risk_base), rv$risk_parts))
-    if (!redraw) return(invisible())
+  }
+
+  # Redraw the current layer from rv$county_layers.
+  risk_redraw <- function() {
     proxy <- leaflet::leafletProxy("risk_map")
     if (!is.null(rv$risk_tracts)) {
       add_tract_layer(proxy, rv$risk_tracts$tracts, input$risk_layer, rv$county_layers,
@@ -1284,6 +1286,26 @@ server <- function(input, output, session) {
       .add_county_polygons(proxy, rv$county_layers, input$risk_layer, 0.82)
     }
   }
+
+  risk_redraw_safe <- function() {
+    tryCatch(risk_redraw(), error = function(e) {
+      message("[Risk] redraw failed: ", conditionMessage(e))
+      showNotification("Regional data partly unavailable — see console", type = "warning")
+    })
+  }
+
+  # Set parts and rebuild without drawing. If build_county_layers() rejects them the
+  # previous parts come back (so later rebuilds still work) and the failure is logged.
+  risk_try_part <- function(name, ...) {
+    snap <- rv$risk_parts
+    risk_set_parts(...)
+    tryCatch({ risk_rebuild(); TRUE }, error = function(e) {
+      rv$risk_parts <- snap
+      message(sprintf("[Risk] %s failed: %s", name, conditionMessage(e)))
+      FALSE
+    })
+  }
+  risk_unload <- function(name) setdiff(rv$risk_parts$loading, name)
 
   # Tab entry: metro ACS (metro table + Metro AI) and the county base, once.
   observeEvent(input$tabs, {
@@ -1299,16 +1321,19 @@ server <- function(input, output, session) {
       if (is.null(base)) {
         rv$risk_failed <- TRUE
       } else {
-        incProgress(0.5, detail = "Census migration…")
-        pep <- tryCatch(fetch_pep_county(), error = function(e) {
-          message("[Risk] PEP failed: ", conditionMessage(e)); NULL
-        })
         incProgress(0.7, detail = "Drawing counties…")
         rv$risk_base <- base
-        rv$risk_parts <- list(momentum = NULL, laus_stale = FALSE, laus_loading = TRUE,
-                              laus_partial = FALSE, migration = pep, loading = "stress_ahead")
-        risk_rebuild(redraw = FALSE)
-        rv$risk_ready <- TRUE
+        rv$risk_parts <- list(momentum = NULL, laus_stale = FALSE, laus_partial = FALSE,
+                              migration = NULL,
+                              loading = c("stress_now", "migration", "stress_ahead"))
+        if (tryCatch({ risk_rebuild(); TRUE }, error = function(e) {
+          message("[Risk] county layers failed: ", conditionMessage(e)); FALSE
+        })) {
+          rv$risk_ready <- TRUE
+        } else {
+          rv$risk_failed <- TRUE
+          showNotification("Regional data partly unavailable — see console", type = "warning")
+        }
       }
     })
     # BLS is the slow part (64 calls); fetch it after the map has been sent.
@@ -1318,9 +1343,13 @@ server <- function(input, output, session) {
   observeEvent(rv$laus_go, {
     req(rv$risk_base)
     # Each part sets its inputs and rebuilds without drawing; ONE redraw at the end
-    # (the browser decodes queued 4 MB frames back to back, so extra redraws delay the map).
-    # A throw anywhere must not leave Stress now / Stress ahead "loading", hence `finally`.
+    # (the browser decodes queued 4 MB frames back to back, so extra redraws delay the map),
+    # plus one early redraw after a slow county pull so Stress now does not wait for the rest.
+    # A throw anywhere must not leave a layer "loading", hence `finally`.
+    slow_secs <- 3
     tryCatch({
+      mom <- NULL
+      t0 <- proc.time()[["elapsed"]]
       tryCatch({
         laus <- withProgress(message = "County unemployment (BLS)…", value = 0.4, {
           tryCatch(fetch_laus_county(rv$risk_base$GEOID), error = function(e) {
@@ -1328,16 +1357,34 @@ server <- function(input, output, session) {
           })
         })
         mom <- if (!is.null(laus) && nrow(laus) > 0) laus_momentum(laus) else NULL
-        risk_set_parts(momentum = mom, laus_stale = isTRUE(attr(laus, "stale")),
-                       laus_partial = isTRUE(attr(laus, "partial")), laus_loading = FALSE)
-        risk_rebuild(redraw = FALSE)
+        risk_try_part("County unemployment", momentum = mom,
+                      laus_stale = isTRUE(attr(laus, "stale")),
+                      laus_partial = isTRUE(attr(laus, "partial")),
+                      loading = risk_unload("stress_now"))
       }, error = function(e) {
         message("[Risk] County unemployment step failed: ", conditionMessage(e))
-        risk_set_parts(laus_loading = FALSE)
+        risk_set_parts(loading = risk_unload("stress_now"))
+      })
+      if (proc.time()[["elapsed"]] - t0 > slow_secs) risk_redraw_safe()
+
+      # Census migration (cached; downloads only when cold).
+      tryCatch({
+        pep <- withProgress(message = "Census migration…", value = 0.4, {
+          tryCatch(fetch_pep_county(), error = function(e) {
+            message("[Risk] PEP failed: ", conditionMessage(e)); NULL
+          })
+        })
+        risk_try_part("Migration", migration = pep, loading = risk_unload("migration"))
+      }, error = function(e) {
+        message("[Risk] Migration step failed: ", conditionMessage(e))
+        risk_set_parts(loading = risk_unload("migration"))
       })
 
-      # Metro unemployment (8 more BLS calls). Own tryCatch: a failure only drops the metro line.
-      tryCatch({
+      # Metro unemployment (8 more BLS calls); pointless when the county pull gave nothing.
+      # Own tryCatch: a failure only drops the metro line.
+      if (is.null(mom)) {
+        message("[Risk] Skipping metro unemployment: county LAUS unavailable")
+      } else tryCatch({
         mm <- withProgress(message = "Metro unemployment (BLS)…", value = 0.4, {
           tryCatch({
             a <- fetch_laus_areas()
@@ -1349,36 +1396,37 @@ server <- function(input, output, session) {
             message("[Risk] Metro LAUS failed: ", conditionMessage(e)); NULL
           })
         })
-        if (!is.null(mm)) {
-          risk_set_parts(metro_momentum = mm)
-          risk_rebuild(redraw = FALSE)
-        }
+        if (!is.null(mm)) risk_try_part("Metro unemployment", metro_momentum = mm)
       }, error = function(e) message("[Risk] Metro unemployment step failed: ", conditionMessage(e)))
 
-      # Stress ahead: FRED sector payrolls x ACS industry mix (both cached; each NULL on failure).
+      # Stress ahead: FRED sector payrolls x ACS industry mix (both cached; each NULL on
+      # failure). Sector weights need FRED only; tract exposure (Phase 3) reuses them.
       sa <- withProgress(message = "Sector payrolls and industry mix…", value = 0.4, {
         quiet <- function(f, ...) tryCatch(f(...), error = function(e) {
           message("[Risk] Stress ahead input failed: ", conditionMessage(e)); NULL
         })
         fred <- quiet(fetch_fred_sectors)
         ind <- quiet(fetch_county_industry, attr(rv$risk_base, "acs_year"))
-        if (is.null(fred) || is.null(ind)) NULL else tryCatch({
-          w <- sector_weights(fred)
+        w <- if (is.null(fred)) NULL else quiet(sector_weights, fred)
+        s <- if (is.null(w) || is.null(ind)) NULL else tryCatch({
           s <- stress_ahead(ind, w)
-          attr(s, "weights") <- w
           attr(s, "stale") <- isTRUE(attr(fred, "stale")) || isTRUE(attr(ind, "stale"))
           s
         }, error = function(e) {
           message("[Risk] Stress ahead failed: ", conditionMessage(e)); NULL
         })
+        list(weights = w, stress_ahead = s)
       })
-      risk_set_parts(stress_ahead = sa,
-                     loading = setdiff(rv$risk_parts$loading, "stress_ahead"))
-      risk_rebuild(redraw = FALSE)
+      if (!risk_try_part("Stress ahead", sector_weights = sa$weights,
+                         stress_ahead = sa$stress_ahead, loading = risk_unload("stress_ahead"))) {
+        risk_try_part("Sector weights", sector_weights = sa$weights, stress_ahead = NULL)
+      }
+    }, error = function(e) {
+      message("[Risk] Regional load failed: ", conditionMessage(e))
+      showNotification("Regional data partly unavailable — see console", type = "warning")
     }, finally = {
-      risk_set_parts(laus_loading = FALSE,
-                     loading = setdiff(rv$risk_parts$loading, "stress_ahead"))
-      risk_rebuild()
+      if (length(rv$risk_parts$loading)) risk_try_part("Loading flags", loading = character(0))
+      risk_redraw_safe()
     })
   })
 
