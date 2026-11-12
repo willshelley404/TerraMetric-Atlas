@@ -21,7 +21,9 @@ RISK_CFG <- list(
   # LODES has no usable coverage here: AK is thin, MI is missing from LODES8.
   lodes_exclude_states = c("02", "26"),
   # Assistance cushion: mean of available percentiles, at least this many inputs.
-  cushion_min_inputs  = 2
+  cushion_min_inputs  = 2,
+  # Credit score needs this many of its 4 components, else "Insufficient data".
+  credit_min_components = 3
 )
 
 # FRED payroll series and ACS C24030 detail lines per industry group. `cns` are
@@ -915,4 +917,83 @@ county_hpi <- function(cb, hpi, msad_xwalk = NULL) {
     hpi_yoy = dplyr::coalesce(div$yoy, met$yoy, st$yoy),
     hpi_source = src,
     hpi_q = dplyr::coalesce(div$q, met$q, st$q))
+}
+
+# ── Credit components, score and tax base proxy (Phase 4) ────────────────────
+# percent_rank gives NaN for a lone value; keep missing as NA, never NaN.
+.pr <- function(x) {
+  r <- pct_rank(as.numeric(x))
+  r[is.nan(r)] <- NA_real_
+  r
+}
+
+# Row-wise mean of the available columns; NA when none.
+.avail_mean <- function(...) {
+  m <- rowMeans(cbind(...), na.rm = TRUE)
+  m[is.nan(m)] <- NA_real_
+  m
+}
+
+# Column `col` of a per-county table `tbl`, aligned to `ids` by GEOID; NA if absent.
+.by_geoid <- function(tbl, col, ids, na = NA_real_) {
+  if (is.null(tbl) || !col %in% names(tbl)) return(rep(na, length(ids)))
+  tbl[[col]][match(ids, tbl$GEOID)]
+}
+
+#' Credit lens components, one row per county in `cl`, each a national percentile
+#' (0-100, high = more credit risk). `cfpb`, `urban`, `hpi` are the per-county tables
+#' from cfpb_county_components(), parse_urban_county() and county_hpi(), joined by
+#' GEOID; any may be NULL. cr_jobs is 100 * cl$job_pressure (already computed).
+#' credit_score is the mean of available components, NA below
+#' RISK_CFG$credit_min_components; credit_missing names the absent ones ("" if none).
+credit_components <- function(cl, cfpb = NULL, urban = NULL, hpi = NULL,
+                              cfg = RISK_CFG) {
+  cl <- .plain_df(cl)
+  ids <- as.character(cl$GEOID)
+  dq90 <- as.numeric(.by_geoid(cfpb, "dq90", ids))
+  dq_chg <- as.numeric(.by_geoid(cfpb, "dq3089_chg", ids))
+  card <- as.numeric(.by_geoid(urban, "card_del", ids))
+  auto <- as.numeric(.by_geoid(urban, "auto_del", ids))
+  yoy <- as.numeric(.by_geoid(hpi, "hpi_yoy", ids))
+
+  cr_mortgage <- .avail_mean(.pr(dq90), .pr(dq_chg))
+  cr_consumer <- .pr(.avail_mean(card, auto))
+  cr_jobs <- if ("job_pressure" %in% names(cl)) 100 * as.numeric(cl$job_pressure) else
+    rep(NA_real_, length(ids))
+  cr_collateral <- 100 - .pr(yoy)
+
+  comps <- cbind(cr_mortgage, cr_consumer, cr_jobs, cr_collateral)
+  labels <- c("mortgage", "consumer", "job pressure", "collateral")
+  n <- rowSums(!is.na(comps))
+  score <- round(.avail_mean(comps), 1)
+  score[n < cfg$credit_min_components] <- NA_real_
+  missing <- apply(is.na(comps), 1, function(m) paste(labels[m], collapse = ", "))
+
+  tibble::tibble(
+    GEOID = ids,
+    cr_mortgage = cr_mortgage, cr_consumer = cr_consumer,
+    cr_jobs = cr_jobs, cr_collateral = cr_collateral,
+    credit_n = as.integer(n), credit_score = score, credit_missing = unname(missing),
+    dq90 = dq90, dq3089_chg = dq_chg,
+    cfpb_source = as.character(.by_geoid(cfpb, "cfpb_source", ids, NA_character_)),
+    cfpb_month = as.character(.by_geoid(cfpb, "cfpb_month", ids, NA_character_)),
+    card_del = card, auto_del = auto,
+    hpi_yoy = yoy,
+    hpi_source = as.character(.by_geoid(hpi, "hpi_source", ids, NA_character_)),
+    hpi_q = as.character(.by_geoid(hpi, "hpi_q", ids, NA_character_)))
+}
+
+#' Tax base pressure proxy (0-100, high = weaker base): mean of inverted national
+#' percentiles of net domestic migration rate, population change and HPI change.
+#' Needs at least 2 of the 3; hpi_yoy may be absent. A proxy, not a bond default model.
+tax_base_proxy <- function(cl) {
+  cl <- .plain_df(cl)
+  inv <- function(col) {
+    if (!col %in% names(cl)) return(rep(NA_real_, nrow(cl)))
+    100 - .pr(cl[[col]])
+  }
+  parts <- cbind(inv("mig_dom_rate"), inv("pop_chg_pct"), inv("hpi_yoy"))
+  out <- round(.avail_mean(parts), 1)
+  out[rowSums(!is.na(parts)) < 2] <- NA_real_
+  out
 }
