@@ -104,7 +104,7 @@ RISK_LAYERS <- c(
     stress_ahead = list(
     label = "Stress ahead: projected job growth vs. US (shift-share)",
     col = "stress_ahead_pp", fmt = "pp", pal = "RdBu", rev = FALSE,
-    higher_is_worse = FALSE, source = "BLS CES (FRED) × ACS industry mix",
+    higher_is_worse = FALSE, digits = 2, source = "BLS CES (FRED) × ACS industry mix",
     levels = "county", lens = "context",
     loading_text = "loading sector payrolls and county industry mix…",
     bins = c(-50, -0.6, -0.3, -0.1, 0.1, 0.3, 0.6, 50))),
@@ -142,10 +142,15 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 # Display text for the Stress now flag column (values stay Trigger/Rising/None).
 .flag_text <- function(flag) ifelse(flag %in% "Trigger", "Sahm-style trigger", flag)
 
-.risk_fmt <- function(v, fmt) {
+#' digits applies to "pp" (layers may set `digits` in RISK_LAYERS; default 1). Values that
+#' round to zero print as +0.0 / +0.00, never a signed zero.
+.risk_fmt <- function(v, fmt, digits = 1) {
   out <- switch(fmt,
     "$"  = paste0("$", formatC(round(v), format = "d", big.mark = ",")),
-    "pp" = sprintf("%+.1f pp", v),
+    "pp" = {
+      r <- round(v, digits); r[!is.na(r) & r == 0] <- 0
+      sprintf(paste0("%+.", digits, "f pp"), r)
+    },
     "per1k" = sprintf("%+.1f per 1,000", v),
     sprintf("%.1f%%", v))
   out[is.na(v)] <- NA_character_
@@ -183,7 +188,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
     return(risk_tooltips_vec(title = d$name, value_text = "Loading…",
                              footer = paste(cfg$source, "— loading")))
   }
-  vtxt <- .risk_fmt(d[[cfg$col]], cfg$fmt)
+  vtxt <- .risk_fmt(d[[cfg$col]], cfg$fmt, cfg$digits %||% 1)
   if (id == "stress_now") {
     has_flag <- !is.na(vtxt) & !is.na(d$flag)
     vtxt[has_flag] <- paste0(vtxt[has_flag], " · ", .flag_text(d$flag[has_flag]))
@@ -220,6 +225,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 .rank_bad <- function(pct, cfg, vals = NULL) {
   if (is.na(cfg$higher_is_worse)) return(rep(FALSE, length(pct)))
   bad <- if (identical(cfg$fmt, "pp") && !is.null(vals)) {
+    vals <- round(vals, cfg$digits %||% 1)       # what is displayed decides the colour
     if (isTRUE(cfg$higher_is_worse)) vals > 0 else vals < 0
   } else if (isTRUE(cfg$higher_is_worse)) pct >= 50 else pct < 50
   bad %in% TRUE
@@ -227,9 +233,9 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 
 #' Open-ended bin labels from breaks; numbers only (no unit), signed, as
 #' "below −10", "−10 to −5", ..., "above +10".
-.bin_labels <- function(bins, fmt) {
+.bin_labels <- function(bins, fmt, digits = 1) {
   num <- function(x) {
-    out <- if (fmt == "pp") sprintf("%+.1f", x) else
+    out <- if (fmt == "pp") sprintf(paste0("%+.", digits, "f"), x) else
       ifelse(x == round(x), sprintf("%+d", as.integer(round(x))), sprintf("%+.1f", x))
     out <- ifelse(x == 0, "0", out)
     sub("-", "−", out, fixed = TRUE)
@@ -258,7 +264,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 .legend_format <- function(cfg) {
   switch(cfg$fmt,
     "$"  = leaflet::labelFormat(prefix = "$", big.mark = ",", digits = 0),
-    "pp" = leaflet::labelFormat(suffix = " pp", digits = 1),
+    "pp" = leaflet::labelFormat(suffix = " pp", digits = cfg$digits %||% 1),
     "per1k" = leaflet::labelFormat(suffix = " per 1,000", digits = 1),
     leaflet::labelFormat(suffix = "%", digits = 1))
 }
@@ -281,7 +287,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
     mids <- (b[-1] + b[-length(b)]) / 2
     leaflet::addLegend(m, colors = pal(mids), opacity = 0.9, layerId = "risk_legend",
                        title = title, position = "bottomright",
-                       labels = cfg$bin_labels %||% .bin_labels(b, cfg$fmt))
+                       labels = cfg$bin_labels %||% .bin_labels(b, cfg$fmt, cfg$digits %||% 1))
   }
   map |>
     leaflet::clearGroup("counties") |>
@@ -302,7 +308,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 
 # ── Tract drill-down layer ───────────────────────────────────────────────────
 .tract_tooltips <- function(t, cfg, asof, noisy) {
-  vtxt <- .risk_fmt(as.numeric(t[[cfg$col]]), cfg$fmt)
+  vtxt <- .risk_fmt(as.numeric(t[[cfg$col]]), cfg$fmt, cfg$digits %||% 1)
   lm_pct <- t[[paste0("lm_pct_", cfg$col)]]
   lm <- rank_label(lm_pct, t$frame_label)
   st <- rank_label(t[[paste0("st_pct_", cfg$col)]], t$state_label)
@@ -450,7 +456,7 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
   rows <- lapply(ids, function(id) {
     cfg <- RISK_LAYERS[[id]]
     v <- as.numeric(get(cfg$col))
-    vt <- .risk_fmt(v, cfg$fmt)
+    vt <- .risk_fmt(v, cfg$fmt, cfg$digits %||% 1)
     if (id == "stress_now" && !is.na(v)) {
       vt <- sprintf("%s · %s (%.1f%% now vs %.1f%% a year ago)", vt, .flag_text(get("flag")),
                     get("rate_now"), get("rate_yr_ago"))

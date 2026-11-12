@@ -1317,15 +1317,21 @@ server <- function(input, output, session) {
 
   observeEvent(rv$laus_go, {
     req(rv$risk_base)
-    laus <- withProgress(message = "County unemployment (BLS)…", value = 0.4, {
-      tryCatch(fetch_laus_county(rv$risk_base$GEOID), error = function(e) {
-        message("[Risk] LAUS failed: ", conditionMessage(e)); NULL
+    # A throw anywhere in this half must not leave Stress now "loading" or block Stress ahead.
+    tryCatch({
+      laus <- withProgress(message = "County unemployment (BLS)…", value = 0.4, {
+        tryCatch(fetch_laus_county(rv$risk_base$GEOID), error = function(e) {
+          message("[Risk] LAUS failed: ", conditionMessage(e)); NULL
+        })
       })
+      mom <- if (!is.null(laus) && nrow(laus) > 0) laus_momentum(laus) else NULL
+      risk_set_parts(momentum = mom, laus_stale = isTRUE(attr(laus, "stale")),
+                     laus_partial = isTRUE(attr(laus, "partial")), laus_loading = FALSE)
+      risk_rebuild()
+    }, error = function(e) {
+      message("[Risk] County unemployment step failed: ", conditionMessage(e))
+      risk_set_parts(laus_loading = FALSE)
     })
-    mom <- if (!is.null(laus) && nrow(laus) > 0) laus_momentum(laus) else NULL
-    risk_set_parts(momentum = mom, laus_stale = isTRUE(attr(laus, "stale")),
-                   laus_partial = isTRUE(attr(laus, "partial")), laus_loading = FALSE)
-    risk_rebuild()
 
     # Stress ahead: FRED sector payrolls x ACS industry mix (both cached; each NULL on failure).
     sa <- withProgress(message = "Sector payrolls and industry mix…", value = 0.4, {

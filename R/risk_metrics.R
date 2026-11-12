@@ -442,8 +442,10 @@ stress_ahead <- function(ind, weights) {
   }))
   for (k in 1:3) {
     idx <- worst[, k]
-    out[[sprintf("sa_drv%d_label", k)]] <- labels[idx]
-    out[[sprintf("sa_drv%d_pp", k)]] <- round(contrib[cbind(seq_len(nrow(contrib)), idx)], 2)
+    pp <- round(contrib[cbind(seq_len(nrow(contrib)), idx)], 2)
+    drag <- !is.na(pp) & pp < 0           # only real drags are listed
+    out[[sprintf("sa_drv%d_label", k)]] <- ifelse(drag, labels[idx], NA_character_)
+    out[[sprintf("sa_drv%d_pp", k)]] <- ifelse(drag, pp, NA_real_)
   }
   for (i in seq_along(groups)) out[[paste0("share_", groups[i])]] <- share[, i]
   for (a in c("ref_month", "temphelp_m_pct")) attr(out, a) <- attr(weights, a)

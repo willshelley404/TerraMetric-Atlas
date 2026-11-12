@@ -24,7 +24,6 @@ test_that("drag drivers are most negative contributions", {
   expect_equal(w$sa_drv1_label, "Manufacturing")
   expect_lt(w$sa_drv1_pp, 0)
   expect_lte(w$sa_drv1_pp, w$sa_drv2_pp)
-  expect_lte(w$sa_drv2_pp, w$sa_drv3_pp)
 })
 
 test_that("shift-share carries its attributes", {
@@ -84,4 +83,65 @@ test_that("side panel lists top industries and temp-help note", {
   l0 <- build_county_layers(fx_county_base(), fx_momentum())
   h0 <- as.character(risk_side_panel(l0[l0$GEOID == "13295", ], "county", l0))
   expect_false(grepl("Top resident industries", h0, fixed = TRUE))
+})
+
+# Tooltip text after "Driven by" ("" when the block is absent).
+.drivers_part <- function(tip) {
+  i <- regexpr("Driven by", tip, fixed = TRUE)
+  if (i < 0) "" else substring(tip, i)
+}
+.n_driver_rows <- function(tip) {
+  lengths(regmatches(.drivers_part(tip), gregexpr("[+-][0-9.]+ pp</span>", .drivers_part(tip))))
+}
+
+test_that("only sectors that drag are listed as drivers", {
+  s <- stress_ahead(fx_industry(), fx_weights())
+  w <- s[s$GEOID == "13295", ]; cap <- s[s$GEOID == "09110", ]
+  expect_false(is.na(w$sa_drv2_label))
+  expect_true(is.na(w$sa_drv3_label) && is.na(w$sa_drv3_pp))   # fewer than 3 negatives
+  expect_true(is.na(cap$sa_drv1_label))                          # no drag at all
+  l <- build_county_layers(fx_county_base(), fx_momentum(), stress_ahead = fx_stress_ahead())
+  tips <- vapply(.county_tooltips(l, "stress_ahead", RISK_LAYERS$stress_ahead,
+                                  attr(l, "asof")[["stress_ahead"]], "ok"), as.character, "")
+  expect_equal(.n_driver_rows(tips[l$GEOID == "13295"]), 2)
+  expect_false(grepl("Driven by", tips[l$GEOID == "09110"], fixed = TRUE))
+})
+
+test_that("per-element driver labels line up across counties", {
+  w <- fx_weights(); w$m_pct[w$group == "educ_health"] <- -2    # Capitol now drags too
+  sa <- stress_ahead(fx_industry(), w); attr(sa, "weights") <- w
+  l <- build_county_layers(fx_county_base(), fx_momentum(), stress_ahead = sa)
+  tips <- vapply(.county_tooltips(l, "stress_ahead", RISK_LAYERS$stress_ahead,
+                                  attr(l, "asof")[["stress_ahead"]], "ok"), as.character, "")
+  walker <- .drivers_part(tips[l$GEOID == "13295"])
+  cap <- .drivers_part(tips[l$GEOID == "09110"])
+  expect_equal(sa$sa_drv1_label[sa$GEOID == "09110"], "Education & health")
+  expect_true(grepl("Education &amp; health", cap, fixed = TRUE))
+  expect_false(grepl("Manufacturing", cap, fixed = TRUE))
+  expect_true(grepl("Manufacturing", walker, fixed = TRUE))
+  expect_equal(.n_driver_rows(cap), 1)
+})
+
+test_that("Stress ahead shows 2 decimals; Stress now keeps 1", {
+  expect_equal(RISK_LAYERS$stress_ahead$digits, 2)
+  expect_equal(.risk_fmt(0.08, "pp", 2), "+0.08 pp")
+  expect_equal(.risk_fmt(-0.004, "pp", 2), "+0.00 pp")          # signed zero normalised
+  expect_equal(.risk_fmt(-0.04, "pp"), "+0.0 pp")
+  expect_equal(.risk_fmt(c(-0.35, NA), "pp", 2), c("-0.35 pp", NA))
+  expect_equal(.bin_labels(RISK_LAYERS$stress_ahead$bins, "pp", 2)[c(1, 4, 7)],
+               c("below −0.60", "−0.10 to +0.10", "above +0.60"))
+  expect_equal(.legend_format(RISK_LAYERS$stress_ahead)(type = "numeric", cuts = 0.25)[1], "0.25 pp")
+})
+
+test_that("a value that displays as zero is never a red pill", {
+  cfg <- RISK_LAYERS$stress_ahead
+  expect_equal(.rank_bad(c(40, 40, 40), cfg, c(-0.004, -0.04, 0.08)), c(FALSE, TRUE, FALSE))
+  # Stress now (1 dp, higher is worse): +0.04 displays +0.0 and is not red either.
+  expect_equal(.rank_bad(c(60, 60), RISK_LAYERS$stress_now, c(0.04, 0.2)), c(FALSE, TRUE))
+  l <- build_county_layers(fx_county_base(), fx_momentum(), stress_ahead = fx_stress_ahead())
+  l$stress_ahead_pp <- c(-0.004, 0.08)
+  tips <- vapply(.county_tooltips(l, "stress_ahead", cfg, "x", "ok"), as.character, "")
+  expect_true(grepl("+0.00 pp", tips[1], fixed = TRUE))
+  expect_false(grepl("#ff8787", tips[1], fixed = TRUE))          # pill text colour of a red pill
+  expect_true(grepl("+0.08 pp", tips[2], fixed = TRUE))
 })
