@@ -26,9 +26,13 @@ ACS_VARS <- c(
   vacant_units           = "B25002_003",
   median_home_value      = "B25077_001",
   median_rent            = "B25064_001",
-  # Rent burden
-  rent_burden_30_34      = "B25070_007",
-  rent_burden_35_plus    = "B25070_008",
+  # Rent burden: renters paying >=30% of income (B25070 bins 30-34.9 ... 50+)
+  rent_burden_universe   = "B25070_001",
+  rb_30_34               = "B25070_007",
+  rb_35_39               = "B25070_008",
+  rb_40_49               = "B25070_009",
+  rb_50_plus             = "B25070_010",
+  rb_not_computed        = "B25070_011",
   # Education (human capital)
   education_total_25plus = "B15003_001",
   bachelors              = "B15003_022",
@@ -60,8 +64,8 @@ ACS_VARS <- c(
     lfp_rate        = round(labor_forceE / total_popE * 100,                       2),
     poverty_rate    = round(poverty_countE / poverty_universeE * 100,              2),
     vacancy_rate    = round(vacant_unitsE / housing_unitsE * 100,                  2),
-    rent_burden_rate= round((rent_burden_30_34E + rent_burden_35_plusE) /
-                             occupied_unitsE * 100,                                2),
+    rent_burden_rate= round((rb_30_34E + rb_35_39E + rb_40_49E + rb_50_plusE) /
+                             (rent_burden_universeE - rb_not_computedE) * 100,     2),
     bachelors_plus_rate = round((bachelorsE + mastersE + professionalE + doctorateE) /
                                  education_total_25plusE * 100,                    2),
     med_income      = median_hh_incomeE,
@@ -224,7 +228,8 @@ build_metro_summary <- function(metro_row, us_avg, kpis = NULL) {
   if (!is.na(lfp) && lfp > (us_avg$lfp_rate %||% 63)) strengths <- c(strengths, "Strong labor force participation")
   if (!is.na(pov) && pov < (us_avg$poverty_rate %||% 12)) strengths <- c(strengths, "Low poverty rate")
 
-  if (!is.na(rb)  && rb  > 30) risks <- c(risks, "Housing affordability pressure (rent burden >30%)")
+  if (!is.na(rb)  && rb  > (us_avg$rent_burden_rate %||% 50) + 3)
+    risks <- c(risks, "Housing affordability pressure (rent burden >3 pp above US)")
   if (!is.na(u)   && u   > (us_avg$unemp_rate %||% 4) + 1) risks <- c(risks, "Elevated unemployment")
   if (!is.na(lfp) && lfp < (us_avg$lfp_rate %||% 63) - 2) risks <- c(risks, "Weak labor force participation — hidden slack")
   if (!is.na(pov) && pov > (us_avg$poverty_rate %||% 12) + 3) risks <- c(risks, "High poverty concentration")
@@ -276,7 +281,7 @@ build_metro_summary <- function(metro_row, us_avg, kpis = NULL) {
       vacancy_rate       = list(value=round(vac/100, 3),
                                  trend=get_trend(vac, us_avg$vacancy_rate %||% 7, FALSE)),
       rent_burden_rate   = list(value=round(rb/100, 3),
-                                 trend=get_trend(rb, 30, FALSE))
+                                 trend=get_trend(rb, us_avg$rent_burden_rate %||% 50, FALSE))
     ),
     poverty = list(
       poverty_rate = list(
