@@ -286,18 +286,135 @@ test_that("tax base follows its inputs", {
   expect_equal(l$tax_base, tax_base_proxy(l))
 })
 
-test_that("a stale credit source marks the credit layers and tax base stale", {
-  cr <- cr_credit()
-  attr(cr$hpi, "stale") <- TRUE
+test_that("a stale source marks only the layers that rest on it", {
+  st <- function(l) attr(l, "layer_status")
+  cr <- cr_credit(); attr(cr$hpi, "stale") <- TRUE
   l <- cr_layers(cr)
-  st <- attr(l, "layer_status")
-  for (id in c(cr_ids, "tax_base")) expect_equal(st[[id]], "stale", info = id)
+  for (id in c("credit_score", "credit_collateral", "tax_base")) expect_equal(st(l)[[id]], "stale", info = id)
+  for (id in c("credit_mortgage", "credit_consumer", "credit_jobs"))
+    expect_equal(st(l)[[id]], "ok", info = id)          # FHFA staleness is not CFPB's
   expect_true(grepl("(stale)", cr_legend_title(l, "credit_score"), fixed = TRUE))
   # asof is kept so the legend still says what is stale
   expect_false(is.na(attr(l, "asof")[["credit_score"]]))
-  # An unrelated stale source flag of FALSE is ok
+  cr <- cr_credit(); attr(cr$cfpb, "stale") <- TRUE
+  l <- cr_layers(cr)
+  expect_equal(st(l)[["credit_mortgage"]], "stale")
+  expect_equal(st(l)[["credit_score"]], "stale")
+  expect_equal(st(l)[["credit_collateral"]], "ok")
+  expect_equal(st(l)[["tax_base"]], "ok")
+  cr <- cr_credit(); attr(cr$urban, "stale") <- TRUE
+  expect_equal(st(cr_layers(cr))[["credit_consumer"]], "stale")
+  cr <- cr_credit(); attr(cr$msad, "stale") <- TRUE
+  expect_equal(st(cr_layers(cr))[["credit_collateral"]], "stale")
+  # PEP staleness reaches the tax base only
+  mig <- cr_migration(); attr(mig, "stale") <- TRUE
+  l <- cr_layers(migration = mig)
+  expect_equal(st(l)[["tax_base"]], "stale")
+  expect_equal(st(l)[["credit_score"]], "ok")
+  # A FALSE stale flag is ok
   cr2 <- cr_credit(); attr(cr2$cfpb, "stale") <- FALSE
-  expect_equal(attr(cr_layers(cr2), "layer_status")[["credit_score"]], "ok")
+  expect_equal(st(cr_layers(cr2))[["credit_score"]], "ok")
+})
+
+test_that("job pressure inputs carry their staleness into the credit and assistance layers", {
+  st <- function(l) attr(l, "layer_status")
+  l <- cr_layers(laus_stale = TRUE)
+  expect_equal(st(l)[["stress_now"]], "stale")
+  expect_equal(st(l)[["credit_jobs"]], "stale")
+  expect_equal(st(l)[["credit_score"]], "stale")
+  for (id in c("credit_mortgage", "credit_consumer", "credit_collateral", "tax_base"))
+    expect_equal(st(l)[[id]], "ok", info = id)
+  l <- cr_layers(laus_partial = TRUE)
+  expect_equal(st(l)[["credit_jobs"]], "partial")
+  expect_equal(st(l)[["credit_score"]], "partial")
+  expect_true(grepl("(partial: some job inputs", cr_legend_title(l, "credit_jobs"), fixed = TRUE))
+  sa <- fx_stress_ahead(); attr(sa, "partial") <- TRUE
+  l <- cr_layers(stress_ahead = sa)
+  expect_equal(st(l)[["stress_ahead"]], "partial")
+  expect_equal(st(l)[["credit_jobs"]], "partial")
+  expect_equal(st(l)[["credit_score"]], "partial")
+  # stale beats partial
+  l <- cr_layers(stress_ahead = sa, laus_stale = TRUE)
+  expect_equal(st(l)[["credit_jobs"]], "stale")
+  # the assistance layers rest on job pressure too
+  a <- build_county_layers(fx_county_base(), fx_momentum(), stress_ahead = fx_stress_ahead(),
+                           laus_stale = TRUE)
+  expect_equal(st(a)[["assist_score"]], "stale")
+  a <- build_county_layers(fx_county_base(), fx_momentum(), stress_ahead = fx_stress_ahead(),
+                           laus_partial = TRUE)
+  expect_equal(st(a)[["assist_score"]], "partial")
+})
+
+test_that("a credit layer is not_loaded (not unavailable) until the credit sources are requested", {
+  l <- cr_layers(NULL, credit_requested = FALSE)
+  for (id in cr_ids) expect_equal(attr(l, "layer_status")[[id]], "not_loaded", info = id)
+  expect_true(is.na(attr(l, "asof")[["credit_score"]]))
+  # requested but failed is a real failure
+  for (id in cr_ids) expect_equal(attr(cr_layers(NULL), "layer_status")[[id]], "unavailable")
+  expect_equal(attr(l, "asof")[["tax_base"]], "PEP V2025 (home prices not loaded)")
+  h <- cr_panel(l)
+  expect_true(grepl("not loaded — open the Credit lens", h, fixed = TRUE))
+  expect_false(grepl(">unavailable<", regmatches(h, regexpr("Household credit risk score.*?</tr>", h)),
+                     fixed = TRUE))
+  # loading wins over not_loaded
+  expect_equal(attr(cr_layers(NULL, loading = "credit", credit_requested = FALSE),
+                    "layer_status")[["credit_score"]], "loading")
+  # a not-yet-loaded layer reads as loading in the legend and tooltips, never as an error
+  expect_true(grepl("loading", cr_legend_title(l, "credit_score"), fixed = TRUE))
+  expect_true(all(grepl("Loading…", cr_labels(l, "credit_score"), fixed = TRUE)))
+})
+
+test_that("tax base loading text names what it is waiting for", {
+  txt <- function(l) .legend_title(risk_layer_cfg("tax_base", l), "loading", NA)
+  expect_true(grepl("loading CFPB", txt(cr_layers(NULL, loading = "credit")), fixed = TRUE))
+  expect_true(grepl("loading Census population estimates",
+                    txt(cr_layers(NULL, loading = "migration")), fixed = TRUE))
+  # both: the credit text
+  expect_true(grepl("loading CFPB", txt(cr_layers(NULL, loading = c("credit", "migration"))),
+                    fixed = TRUE))
+  expect_true(grepl("loading Census population estimates",
+                    cr_legend_title(cr_layers(NULL, loading = "migration"), "tax_base"), fixed = TRUE))
+})
+
+test_that("long legend titles wrap", {
+  lg <- cr_legend_title(cr_layers(), "tax_base")
+  expect_true(grepl("max-width:260px;white-space:normal", lg, fixed = TRUE))
+  expect_true(grepl("max-width:260px", cr_legend_title(cr_layers(), "credit_score"), fixed = TRUE))
+})
+
+test_that("the loading legend replaces only the legend control", {
+  m <- risk_loading_legend(leaflet::leaflet(), "credit_score", cr_layers(NULL, loading = "credit"))
+  methods <- vapply(m$x$calls, `[[`, "", "method")
+  expect_equal(methods, c("removeControl", "addControl"))
+  ctl <- m$x$calls[[2]]$args
+  expect_true(grepl("Household credit risk score", ctl[[1]], fixed = TRUE))
+  expect_true(grepl("loading CFPB, Urban Institute and FHFA data", ctl[[1]], fixed = TRUE))
+  expect_equal(ctl[[2]], "bottomright")
+  expect_equal(ctl[[3]], "risk_legend")
+  # the tax base asks for population estimates when that is what is loading
+  m2 <- risk_loading_legend(leaflet::leaflet(), "tax_base", cr_layers(NULL, loading = "migration"))
+  expect_true(grepl("Census population estimates", m2$x$calls[[2]]$args[[1]], fixed = TRUE))
+  expect_true(.is_credit_layer("tax_base") && .is_credit_layer("credit_jobs"))
+  expect_false(.is_credit_layer("stress_now") || .is_credit_layer("mig_dom") || .is_credit_layer("assist_score"))
+})
+
+test_that("tax base population-change driver is red for a shrinking county", {
+  l <- cr_layers()
+  expect_true("pct_pop_chg_pct" %in% names(l))
+  tip <- cr_labels(l, "tax_base")
+  red <- function(t) grepl("Population change 2020–25</span><span style=\"font-weight:600;color:#ff6b6b;\">", t, fixed = TRUE)
+  expect_true(red(tip[["13001"]]))     # Appling: -3.0%, the lowest
+  expect_false(red(tip[["13295"]]))    # Walker: +4.0%, the highest
+})
+
+test_that("a county in a state without a CFPB non-metro row has no mortgage value", {
+  # CFPB's metro file has no "09-non" row (Connecticut): NA is honest, not a fallback bug.
+  cr <- cr_credit()
+  cr$cfpb$metro90 <- cr$cfpb$metro90[cr$cfpb$metro90$id != "09-non", ]
+  cr$cfpb$metro3089 <- cr$cfpb$metro3089[cr$cfpb$metro3089$id != "09-non", ]
+  l <- cr_layers(cr)
+  expect_true(is.na(l$dq90[l$GEOID == "09110"]))
+  expect_match(l$credit_missing[l$GEOID == "09110"], "mortgage")
 })
 
 test_that("derived assistance layers go stale/partial with their inputs", {

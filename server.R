@@ -1325,7 +1325,7 @@ server <- function(input, output, session) {
         incProgress(0.7, detail = "Drawing counties…")
         rv$risk_base <- base
         rv$risk_parts <- list(momentum = NULL, laus_stale = FALSE, laus_partial = FALSE,
-                              migration = NULL,
+                              migration = NULL, credit_requested = FALSE,
                               loading = c("stress_now", "migration", "stress_ahead"))
         if (tryCatch({ risk_rebuild(); TRUE }, error = function(e) {
           message("[Risk] county layers failed: ", conditionMessage(e)); FALSE
@@ -1443,11 +1443,15 @@ server <- function(input, output, session) {
     req(rv$risk_ready, rv$risk_base)
     if (!risk_needs_credit(input$risk_lens, input$risk_layer) || isTRUE(rv$credit_requested)) return()
     rv$credit_requested <- TRUE
-    if (!risk_try_part("Credit loading", loading = union(rv$risk_parts$loading, "credit"))) return()
-    # A lens switch reaches the layer select a round trip later: paint the layer it will pick.
-    if (!risk_needs_credit(NULL, input$risk_layer)) {
-      risk_redraw_safe(risk_lens_default(input$risk_lens))
-    }
+    if (!risk_try_part("Credit loading", credit_requested = TRUE,
+                       loading = union(rv$risk_parts$loading, "credit"))) return()
+    # Only the legend changes here: resending every county polygon would delay the fetch by
+    # seconds. A lens switch reaches the layer select a round trip later, so name the layer
+    # it will pick.
+    layer <- if (.is_credit_layer(input$risk_layer)) input$risk_layer else
+      risk_lens_default(input$risk_lens)
+    tryCatch(risk_loading_legend(leaflet::leafletProxy("risk_map"), layer, rv$county_layers),
+             error = function(e) message("[Risk] loading legend failed: ", conditionMessage(e)))
     session$onFlushed(function() rv$credit_go <- TRUE, once = TRUE)
   })
 
@@ -1468,8 +1472,8 @@ server <- function(input, output, session) {
     }, finally = {
       if ("credit" %in% rv$risk_parts$loading)
         risk_try_part("Credit loading flag", loading = risk_unload("credit"))
-      # A pending lens switch redraws itself with the new data; only repaint a layer on screen.
-      if (risk_needs_credit(NULL, input$risk_layer)) risk_redraw_safe()
+      # A pending lens switch redraws itself with the new data; repaint a credit layer on screen.
+      if (.is_credit_layer(input$risk_layer)) risk_redraw_safe()
     })
   })
 
@@ -1495,6 +1499,10 @@ server <- function(input, output, session) {
   observeEvent(input$risk_layer, ignoreInit = TRUE, {
     req(rv$county_layers)
     proxy <- leaflet::leafletProxy("risk_map")
+    # First credit open: the credit fetch repaints when done; until then only the legend.
+    if (.is_credit_layer(input$risk_layer) && "credit" %in% rv$risk_parts$loading) {
+      return(risk_loading_legend(proxy, input$risk_layer, rv$county_layers))
+    }
     if (!is.null(rv$risk_tracts)) {
       add_tract_layer(proxy, rv$risk_tracts$tracts, input$risk_layer, rv$county_layers,
                       fit = FALSE)

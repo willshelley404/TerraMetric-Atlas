@@ -310,6 +310,7 @@ ui <- dashboardPage(
                   " Credit: household credit risk score (0-100, needs 3 of 4 components): CFPB mortgage delinquency (county, else metro or state non-metro estimate), Urban Institute card and auto delinquency (release date shown, not the data month), county job pressure and FHFA home price change (metro division, metro or state). Loads on first use.",
                   tags$br(),
                   " Context layers: Census ACS 5-year estimates. Tax base pressure is a proxy from migration, population change and home prices, not a bond default model.",
+                  tags$br(),
                   " Migration: Census PEP county components of change (per 1,000 residents).",
                   tags$br(),
                   " Click a county to load its tracts, ranked within the metro and the state.",

@@ -152,12 +152,14 @@ RISK_LAYERS <- c(
     list(
       credit_score = cr("Household credit risk score (0–100)", "credit_score", "score",
                         "CFPB · Urban · FHFA · BLS", bins = c(0, 20, 35, 50, 65, 80, 101),
+                        partial_text = "partial: some job inputs missing or incomplete",
                         bin_labels = c("0–20", "20–35", "35–50", "50–65", "65–80", "80–100")),
       credit_mortgage = cr("Mortgages 90+ days delinquent (%)", "dq90", "%",
                            "CFPB mortgage performance"),
       credit_consumer = cr("Card & auto loans delinquent (%)", "consumer_del", "%",
                            "Urban Institute (Debt in America)"),
-      credit_jobs = cr("Job pressure (percentile)", "cr_jobs", "score", "BLS LAUS / CES"),
+      credit_jobs = cr("Job pressure (percentile)", "cr_jobs", "score", "BLS LAUS / CES",
+                       partial_text = "partial: some job inputs missing or incomplete"),
       credit_collateral = cr("Home prices, year over year (%)", "hpi_yoy", "pct_signed",
                              "FHFA house price index", pal = "RdBu", rev = FALSE,
                              higher_is_worse = FALSE, digits = 1,
@@ -409,7 +411,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 }
 
 .county_tooltips <- function(d, id, cfg, asof, status = "ok") {
-  if (identical(status, "loading")) {
+  if (any(status %in% c("loading", "not_loaded"))) {
     return(risk_tooltips_vec(title = d$name, value_text = "Loading…",
                              footer = paste(cfg$source, "— loading")))
   }
@@ -495,17 +497,45 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
     paste("above", inner[k]))
 }
 
+#' The layer's config with the loading text that fits why it is loading: the tax base also
+#' waits on Census population estimates, which are not the credit sources.
+risk_layer_cfg <- function(layer_id, county_layers) {
+  cfg <- RISK_LAYERS[[layer_id]]
+  ld <- attr(county_layers, "loading")
+  if (identical(layer_id, "tax_base") && !"credit" %in% ld && "migration" %in% ld)
+    cfg$loading_text <- RISK_LAYERS$mig_dom$loading_text
+  cfg
+}
+
+#' Credit lens layers, and the tax base (which needs the credit sources for home prices).
+.is_credit_layer <- function(layer_id) {
+  identical(RISK_LAYERS[[layer_id]]$lens, "credit") || identical(layer_id, "tax_base")
+}
+
+#' Swap only the legend for a "loading" one; the polygons already on screen stay. Used for
+#' the first Credit open, where resending every county polygon would delay the fetch.
+risk_loading_legend <- function(map, layer_id, county_layers = NULL) {
+  cfg <- if (is.null(county_layers)) RISK_LAYERS[[layer_id]] else
+    risk_layer_cfg(layer_id, county_layers)
+  map |>
+    leaflet::removeControl("risk_legend") |>
+    leaflet::addControl(html = .legend_title(cfg, "loading", NA), layerId = "risk_legend",
+                        position = "bottomright", className = "info legend")
+}
+
 .legend_title <- function(cfg, status, asof, scope = NULL) {
   head <- htmltools::htmlEscape(cfg$label)
   sub <- if (identical(status, "unavailable")) "unavailable" else
-    if (identical(status, "loading")) {
+    if (any(status %in% c("loading", "not_loaded"))) {
       cfg$loading_text %||% "loading…"
     } else
       paste0(if (!is.null(scope)) paste0(scope, " · "), cfg$source, ", ", asof,
              if (identical(status, "stale")) " (stale)",
              if (identical(status, "partial"))
                paste0(" (", cfg$partial_text %||% "partial: some counties missing, retrying later", ")"))
-  paste0(head, "<br><small style='font-weight:400;'>", htmltools::htmlEscape(sub), "</small>")
+  # Long titles (credit score, tax base) wrap instead of running ~600 px wide.
+  paste0("<div style='max-width:260px;white-space:normal;'>", head,
+         "<br><small style='font-weight:400;'>", htmltools::htmlEscape(sub), "</small></div>")
 }
 
 .legend_format <- function(cfg) {
@@ -525,7 +555,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
   asof <- attr(county_layers, "asof")[[layer_id]]
   status <- attr(county_layers, "layer_status")[[layer_id]]
   lbl_fmt <- .legend_format(cfg)
-  title <- .legend_title(cfg, status, asof)
+  title <- .legend_title(risk_layer_cfg(layer_id, county_layers), status, asof)
   add_legend <- function(m) {
     if (is.null(cfg$bins)) {
       return(leaflet::addLegend(m, pal = pal, values = vals, opacity = 0.9,
@@ -939,6 +969,7 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
       st_id <- sa$status; asof_id <- sa$asof
     }
     when <- if (identical(st_id, "unavailable")) "unavailable" else
+      if (identical(st_id, "not_loaded")) "not loaded — open the Credit lens" else
       if (is.na(asof_id)) "loading" else
         paste0(asof_id, if (st_id %in% c("stale", "partial")) paste0(" (", st_id, ")") else "")
     pcts <- if (level == "county") list(td(rk(get(paste0("pct_", cfg$col)), cfg$higher_is_worse))) else
