@@ -10,7 +10,38 @@ RISK_CFG <- list(
   laus_min_months     = 2,
   # Flag a tract value when its 90% MOE exceeds the estimate itself (CV > ~61%,
   # "very unreliable"). 0.5 flagged ~2/3 of tracts in TN+GA, which says nothing.
-  moe_flag_ratio      = 1.0
+  moe_flag_ratio      = 1.0,
+  # Sector risk weights (spec §9.2)
+  sector_momentum_months = 6,
+  recession_since     = as.Date("2000-01-01"),
+  peak_lead_months    = 6,    # a payroll peak can precede the NBER start
+  trough_lag_months   = 24,   # payrolls keep falling after the NBER end
+  w_structural        = 0.5,
+  w_current           = 0.5
+)
+
+# FRED payroll series and ACS C24030 detail lines per industry group. `cns` are
+# the LEHD-style sector codes Phase 3 maps to tract exposure.
+RISK_SECTORS <- data.frame(
+  group = c("ag_mining", "construction", "manufacturing", "wholesale", "retail",
+            "transport_util", "information", "finance_re", "prof_admin",
+            "educ_health", "arts_food", "other_services", "public_admin"),
+  label = c("Agriculture & mining", "Construction", "Manufacturing", "Wholesale trade",
+            "Retail trade", "Transportation & utilities", "Information",
+            "Finance & real estate", "Professional & admin services",
+            "Education & health", "Leisure & hospitality", "Other services",
+            "Public administration"),
+  fred  = c("USMINE", "USCONS", "MANEMP", "USWTRADE", "USTRADE", "CES4300000001",
+            "USINFO", "USFIRE", "USPBS", "USEHS", "USLAH", "USSERV", "USGOVT"),
+  acs_m = c("C24030_003", "C24030_006", "C24030_007", "C24030_008", "C24030_009",
+            "C24030_010", "C24030_013", "C24030_014", "C24030_017", "C24030_021",
+            "C24030_024", "C24030_027", "C24030_028"),
+  acs_f = c("C24030_030", "C24030_033", "C24030_034", "C24030_035", "C24030_036",
+            "C24030_037", "C24030_040", "C24030_041", "C24030_044", "C24030_048",
+            "C24030_051", "C24030_054", "C24030_055"),
+  cns   = c("01,02", "04", "05", "06", "07", "03,08", "09", "10,11", "12,13,14",
+            "15,16", "17,18", "19", "20"),
+  stringsAsFactors = FALSE
 )
 
 # ── Ranking helpers ──────────────────────────────────────────────────────────
@@ -270,5 +301,99 @@ parse_pep_county <- function(raw, vintage) {
   for (y in yrs) out[[paste0("mig_dom_rate_", y)]] <- num(paste0("RDOMESTICMIG", y))
   out <- dplyr::mutate(out, dplyr::across(-GEOID, \(x) round(x, 2)))
   attr(out, "vintage") <- v
+  out
+}
+
+# ── Stress ahead: sector momentum and risk weights (spec §9.2) ───────────────
+# FRED monthly dates are always the 1st, so month arithmetic is exact.
+.months_back <- function(d, k) {
+  lt <- as.POSIXlt(d)
+  lt$mon <- lt$mon - k
+  as.Date(lt)
+}
+
+# Annualized k-month % change at every observation (NA where the base is absent).
+.momentum_series <- function(date, value, months) {
+  base <- value[match(.months_back(date, months), date)]
+  100 * ((value / base)^(12 / months) - 1)
+}
+
+#' Latest annualized change per series: v[t] vs the observation `months` earlier.
+sector_momentum <- function(fred, months = RISK_CFG$sector_momentum_months) {
+  fred <- dplyr::filter(fred, series_id != "USREC", !is.na(value))
+  rows <- lapply(split(fred, fred$series_id), function(d) {
+    d <- d[order(d$date), ]
+    n <- nrow(d)
+    tibble::tibble(series_id = d$series_id[1],
+                   m_pct = .momentum_series(d$date, d$value, months)[n],
+                   ref_month = d$date[n])
+  })
+  dplyr::bind_rows(rows)
+}
+
+#' Runs of consecutive USREC == 1 months that start on/after `since`.
+recession_episodes <- function(fred, since = RISK_CFG$recession_since) {
+  rec <- fred[fred$series_id == "USREC" & !is.na(fred$value) & fred$value == 1, ]
+  rec <- rec[order(rec$date), ]
+  if (nrow(rec) == 0) return(data.frame(start = as.Date(character()), end = as.Date(character())))
+  lt <- as.POSIXlt(rec$date)
+  run <- cumsum(c(TRUE, diff(lt$year * 12 + lt$mon) != 1))
+  ep <- data.frame(start = as.Date(as.vector(tapply(rec$date, run, min)), origin = "1970-01-01"),
+                   end   = as.Date(as.vector(tapply(rec$date, run, max)), origin = "1970-01-01"))
+  ep <- ep[ep$start >= since, , drop = FALSE]
+  rownames(ep) <- NULL
+  ep
+}
+
+# Mean peak-to-trough % loss across recessions; 0 for a series that never fell.
+.structural_decline <- function(d, episodes, cfg) {
+  losses <- vapply(seq_len(nrow(episodes)), function(i) {
+    win <- d[d$date >= .months_back(episodes$start[i], cfg$peak_lead_months) &
+             d$date <= episodes$end[i], ]
+    if (nrow(win) == 0) return(NA_real_)
+    pk <- which.max(win$value)
+    after <- d[d$date >= win$date[pk] &
+               d$date <= .months_back(episodes$end[i], -cfg$trough_lag_months), ]
+    100 * (1 - min(after$value) / win$value[pk])
+  }, numeric(1))
+  if (all(is.na(losses))) NA_real_ else mean(losses, na.rm = TRUE)
+}
+
+.rescale01 <- function(x) {
+  r <- range(x, na.rm = TRUE)
+  if (!all(is.finite(r)) || r[2] - r[1] == 0) return(rep(0.5, length(x)))
+  (x - r[1]) / (r[2] - r[1])
+}
+
+#' Risk weight per industry group: half "how badly it fell in past recessions"
+#' (structural), half "how weak it is now versus its own history" (current_z).
+#' Attributes: ref_month (latest sector obs), temphelp_m_pct (NA if absent).
+sector_weights <- function(fred, cfg = RISK_CFG) {
+  episodes <- recession_episodes(fred, cfg$recession_since)
+  months <- cfg$sector_momentum_months
+  mom <- sector_momentum(fred, months)
+
+  rows <- lapply(RISK_SECTORS$fred, function(s) {
+    d <- fred[fred$series_id == s & !is.na(fred$value), ]
+    d <- d[order(d$date), ]
+    hist <- .momentum_series(d$date, d$value, months)
+    hist <- -hist[d$date >= cfg$recession_since & !is.na(hist)]
+    m_now <- mom$m_pct[mom$series_id == s]
+    if (length(m_now) == 0) m_now <- NA_real_
+    sdv <- if (length(hist) > 1) stats::sd(hist) else NA_real_
+    # Flat or constant-growth history has no spread; call that "not unusual".
+    z <- if (is.na(sdv) || sdv < 1e-8 || is.na(m_now)) 0 else (-m_now - mean(hist)) / sdv
+    tibble::tibble(fred = s, m_pct = m_now,
+                   structural = .structural_decline(d, episodes, cfg), current_z = z)
+  })
+  out <- dplyr::left_join(RISK_SECTORS[c("group", "label", "fred")],
+                          dplyr::bind_rows(rows), by = "fred")
+  out$w <- cfg$w_structural * .rescale01(out$structural) +
+           cfg$w_current * .rescale01(out$current_z)
+  out <- tibble::as_tibble(out)
+  attr(out, "ref_month") <- suppressWarnings(
+    max(mom$ref_month[mom$series_id %in% RISK_SECTORS$fred]))
+  tp <- mom$m_pct[mom$series_id == "TEMPHELPS"]
+  attr(out, "temphelp_m_pct") <- if (length(tp)) tp else NA_real_
   out
 }

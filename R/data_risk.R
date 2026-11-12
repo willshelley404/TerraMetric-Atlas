@@ -443,3 +443,29 @@ fetch_pep_county <- function(vintage = NULL) {
     parse_pep_county(raw, vintage)
   })
 }
+
+# ── FRED sector payrolls (spec §9.2) ─────────────────────────────────────────
+
+#' Monthly SA payrolls for the 13 sector series, TEMPHELPS (optional) and the
+#' NBER USREC flag since `start`, cached 1 day. NULL when there is no API key or
+#' any sector series / USREC fails.
+fetch_fred_sectors <- function(start = as.Date("2000-01-01")) {
+  required <- c(RISK_SECTORS$fred, "USREC")
+  risk_cached("fred_sectors_v1", 1, fail_ttl_days = 1 / 24,
+              bg = list(id = "fred_sectors", fn = "fetch_fred_sectors", args = list()),
+              fetch_fn = function() {
+    if (!nzchar(Sys.getenv("FRED_API_KEY"))) return(NULL)
+    pull <- function(s) {
+      r <- fredr::fredr(series_id = s, observation_start = start)
+      tibble::tibble(series_id = s, date = as.Date(r$date), value = as.numeric(r$value))
+    }
+    got <- lapply(c(required, "TEMPHELPS"), function(s)
+      tryCatch(pull(s), error = function(e) {
+        message(sprintf("[risk] FRED %s failed: %s", s, conditionMessage(e)))
+        NULL
+      }))
+    names(got) <- c(required, "TEMPHELPS")
+    if (any(vapply(got[required], is.null, logical(1)))) return(NULL)
+    dplyr::bind_rows(got)
+  })
+}
