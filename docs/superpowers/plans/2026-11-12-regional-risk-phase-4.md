@@ -17,8 +17,14 @@
 **Spec:** `docs/superpowers/specs/2026-11-12-regional-risk-map-design.md`. Read §8 (CFPB, Urban, FHFA rows), §9.5, §9.6, §10 (Credit lens, drill-down note), §12 (Phase 4) and §14 (risks).
 
 **Builds on:**
-- Phase 2: PEP columns `mig_dom_rate`, `pop_chg_pct`; `risk_set_parts` / `risk_rebuild`; `loading_text`; `digits`.
-- Phase 3: `job_pressure(county_layers)` returns 0..1.
+- Phase 2: PEP columns `mig_dom_rate`, `pop_chg_pct`; `risk_set_parts` / `risk_try_part` / `risk_rebuild`; `loading_text`; `digits`.
+- Phase 3 (as amended by its final-review fix wave):
+  - **Job pressure:** `build_county_layers` always computes the county columns `job_pressure` (a 0..1 index, the mean of the available Stress now and inverted Stress ahead percentiles / 100) and `job_pressure_n` (the number of inputs used). This is independent of assistance.
+  - **Credit's job component:** `cr_jobs = 100 * job_pressure`. When `job_pressure_n == 1` the side panel says which input is missing.
+  - **Derived layers:** layer entries whose columns are computed inside `build_county_layers` carry `derived = TRUE`, so they get percentiles in the second pass. Credit layers must set it.
+  - **`.county_tooltips`** branches on lens/id. When Credit adds its branches, prefer moving drivers into an optional per-layer `cfg$drivers(d)` function if that keeps the chain from growing (implementer's call; existing tests must pass).
+  - **Side panel:** the county side-panel table lists every `RISK_LAYERS` row (about 25 after this phase). Task 4 groups the rows under lens sub-headings (one header row per lens). The `<tr` count test changes by design to `length(RISK_LAYERS) + 1 + number of lenses`.
+  - **Never use `%||%` on vectors or data frames** (the app overrides it with scalar semantics).
 
 ## Global Constraints
 
@@ -146,7 +152,7 @@
   - **`credit_components(cl, cfpb, urban, hpi) -> tibble`**, keyed by GEOID with national percentiles:
     - `cr_mortgage` = mean(`pct_rank(dq90)`, `pct_rank(dq3089_chg)`), the available ones;
     - `consumer_del` = mean(`card_del`, `auto_del`), the available ones; `cr_consumer` = `pct_rank(consumer_del)`;
-    - `cr_jobs` = `100 × job_pressure(cl)`;
+    - `cr_jobs` = `100 × cl$job_pressure` (the column `build_county_layers` already computes);
     - `cr_collateral` = `100 − pct_rank(hpi_yoy)`;
     - `credit_n` = the count of non-NA components;
     - `credit_score` = `round(mean(available), 1)` if `credit_n >= RISK_CFG$credit_min_components`, else NA;
@@ -226,7 +232,7 @@
   - `"score tooltip names the CFPB fallback and the missing components"`: `"(state non-metro est.)"` and `"Missing: consumer, job pressure"` appear for the relevant fixture rows.
   - `"tax base layer is labelled proxy everywhere"`: its legend title and tooltip footer both contain `"proxy — not a bond default model"`.
   - `"side panel lists credit components with sources"`: contains `"Credit components"`, `"CFPB"` and `"FHFA"`; with `urban = NULL` it contains `"score uses 3 components"`.
-  - **Existing tests:** the side-panel `<tr` count stays `length(RISK_LAYERS) + 1`.
+  - **Existing tests:** county side-panel rows are grouped under one header row per lens, so the `<tr` count becomes `length(RISK_LAYERS) + 1 + length(RISK_LENSES)`. Update that test, and add `"side panel groups rows by lens"`.
 - [ ] **Step 2: Run.** **Step 3: Implement.** **Step 4: Run the full suite.** Expected: PASS.
 - [ ] **Step 5: Live check** (port 8123, Playwright):
   - Choose the Credit lens: the legend says loading, then the score shades counties.
