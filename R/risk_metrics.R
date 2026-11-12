@@ -19,7 +19,9 @@ RISK_CFG <- list(
   w_structural        = 0.5,
   w_current           = 0.5,
   # LODES has no usable coverage here: AK is thin, MI is missing from LODES8.
-  lodes_exclude_states = c("02", "26")
+  lodes_exclude_states = c("02", "26"),
+  # Assistance cushion: mean of available percentiles, at least this many inputs.
+  cushion_min_inputs  = 2
 )
 
 # FRED payroll series and ACS C24030 detail lines per industry group. `cns` are
@@ -516,4 +518,103 @@ lodes_ct_remap <- function(lodes, acs_geoids) {
                                .name_repair = "minimal")
   }
   lodes
+}
+
+# ── Assistance: exposure, cushion, job pressure, score ───────────────────────
+# Job tables carry GEOID, jobs_total, jobs_<group> x13, low_wage_share and
+# young_share. Zero jobs yields NA (never NaN/Inf).
+.JOB_COLS <- paste0("jobs_", RISK_SECTORS$group)
+
+.safe_pct <- function(num, den) {
+  out <- 100 * num / den
+  out[!is.finite(out)] <- NA_real_
+  out
+}
+
+#' Sum LODES CNS columns into the 13 industry groups (RISK_SECTORS$cns).
+lodes_group_jobs <- function(lodes) {
+  d <- as.data.frame(lodes)
+  out <- tibble::tibble(GEOID = as.character(d$GEOID), jobs_total = as.numeric(d$C000))
+  for (i in seq_len(nrow(RISK_SECTORS))) {
+    cols <- paste0("CNS", strsplit(RISK_SECTORS$cns[i], ",")[[1]])
+    out[[.JOB_COLS[i]]] <- rowSums(d[cols], na.rm = TRUE)
+  }
+  out$low_wage_share <- .safe_pct(d$CE01, d$C000)
+  out$young_share    <- .safe_pct(d$CA01, d$C000)
+  out
+}
+
+#' Same shape from ACS industry counts (emp_total, emp_<group>). The ACS has no
+#' wage or age bands, so those shares stay NA.
+acs_group_jobs <- function(ind) {
+  d <- as.data.frame(ind)
+  out <- tibble::tibble(GEOID = as.character(d$GEOID), jobs_total = as.numeric(d$emp_total))
+  for (i in seq_len(nrow(RISK_SECTORS))) {
+    out[[.JOB_COLS[i]]] <- as.numeric(d[[paste0("emp_", RISK_SECTORS$group[i])]])
+  }
+  out$low_wage_share <- NA_real_
+  out$young_share    <- NA_real_
+  out
+}
+
+#' Exposure = job-share-weighted mean of sector weights (0..1); exp_workers is
+#' the same weighting on headcount (an index-like count, not a layoff forecast);
+#' weak_share = % of jobs in sectors with negative recent momentum (m_pct < 0).
+exposure_from_jobs <- function(jobs, weights) {
+  na <- rep(NA_real_, nrow(jobs))
+  out <- tibble::tibble(GEOID = jobs$GEOID, exposure = na, exp_workers = na, weak_share = na)
+  if (is.null(weights) || nrow(jobs) == 0) return(out)
+  idx <- match(RISK_SECTORS$group, weights$group)
+  w <- weights$w[idx]
+  weak <- !is.na(weights$m_pct[idx]) & weights$m_pct[idx] < 0
+  J <- as.matrix(as.data.frame(jobs)[.JOB_COLS])
+  J[is.na(J)] <- 0
+  ok <- !is.na(jobs$jobs_total) & jobs$jobs_total > 0
+  wj <- J %*% ifelse(is.na(w), 0, w)
+  out$exposure    <- ifelse(ok, as.numeric(wj) / jobs$jobs_total, NA_real_)
+  out$exp_workers <- ifelse(ok, round(as.numeric(wj)), NA_real_)
+  out$weak_share  <- ifelse(ok, 100 * as.numeric(J %*% as.numeric(weak)) / jobs$jobs_total,
+                            NA_real_)
+  out
+}
+
+#' County job pressure 0..1: mean of the available Stress-now percentile and the
+#' inverted Stress-ahead percentile (lower Stress ahead = more pressure).
+job_pressure <- function(county_layers) {
+  n <- nrow(county_layers)
+  now <- if ("pct_momentum_pp" %in% names(county_layers))
+    as.numeric(county_layers$pct_momentum_pp) / 100 else rep(NA_real_, n)
+  ahead <- if ("pct_stress_ahead_pp" %in% names(county_layers))
+    (100 - as.numeric(county_layers$pct_stress_ahead_pp)) / 100 else rep(NA_real_, n)
+  out <- rowMeans(cbind(now, ahead), na.rm = TRUE)
+  out[is.nan(out)] <- NA_real_
+  out
+}
+
+# pct_rank within a grouping vector; NA group or NA value stays NA.
+.pct_in_group <- function(x, group) {
+  out <- rep(NA_real_, length(x))
+  for (g in unique(group[!is.na(group)])) {
+    i <- which(group == g)
+    out[i] <- pct_rank(x[i])
+  }
+  out[is.nan(out)] <- NA_real_
+  out
+}
+
+#' Assistance score = geometric mean of exposure percentile, cushion percentile
+#' (higher = thinner) and job pressure J, ranked within `group` (the frame id).
+#' Cushion needs at least RISK_CFG$cushion_min_inputs available inputs.
+assistance_score <- function(exposure, cushion_inputs, J, group, cfg = RISK_CFG) {
+  pct_exposure <- .pct_in_group(exposure, group)
+  pcts <- vapply(as.data.frame(cushion_inputs), .pct_in_group, numeric(length(exposure)),
+                 group = group)
+  pcts <- matrix(pcts, nrow = length(exposure))
+  n_ok <- rowSums(!is.na(pcts))
+  cushion <- rowMeans(pcts, na.rm = TRUE)
+  cushion[n_ok < cfg$cushion_min_inputs] <- NA_real_
+  pct_cushion <- .pct_in_group(cushion, group)
+  score <- round(100 * ((pct_exposure / 100) * (pct_cushion / 100) * J)^(1 / 3), 1)
+  tibble::tibble(pct_exposure = pct_exposure, cushion = cushion,
+                 pct_cushion = pct_cushion, score = score)
 }
