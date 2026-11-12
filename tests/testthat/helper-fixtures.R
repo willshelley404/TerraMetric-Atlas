@@ -36,3 +36,15 @@ fx_momentum <- function() {
                  rate_now = c(3.2, 5.37), rate_yr_ago = c(3.37, 4.27),
                  momentum_pp = c(-0.17, 1.1), flag = c("None", "Trigger"))
 }
+
+fx_migration <- function() {
+  m <- tibble::tibble(
+    GEOID = c("13295", "09110"),
+    mig_dom_rate = c(8.2, -0.11), mig_intl_rate = c(1.0, 4.78), mig_net_rate = c(9.2, 4.67),
+    nat_chg_rate = c(-1.5, 0.23), mig_dom_cum = c(40.1, -12.0), pop_chg_pct = c(4.0, 1.2),
+    mig_dom_n = c(560, -110), pop_avg = c(69000, 990000),
+    mig_dom_rate_2021 = c(3, -2), mig_dom_rate_2022 = c(10, -4), mig_dom_rate_2023 = c(12, -1),
+    mig_dom_rate_2024 = c(6, 0.5), mig_dom_rate_2025 = c(8.2, -0.11))
+  attr(m, "vintage") <- 2025
+  m
+}

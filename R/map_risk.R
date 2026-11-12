@@ -55,22 +55,35 @@ risk_tooltips_vec <- function(title, subtitle = NA, value_text, rank_text = NA,
   lapply(out, htmltools::HTML)
 }
 
+#' "Driven by" blocks, one per element. labels: character(k); values: list of k
+#' character vectors (one value per element); worse: list of k logical vectors.
+#' Elements whose values are all NA get "".
+risk_drivers_vec <- function(labels, values, worse) {
+  c <- .RISK_COL
+  n <- length(values[[1]])
+  vm <- matrix(unlist(lapply(values, rep_len, n)), nrow = n)          # n x k
+  wm <- matrix(unlist(lapply(worse, function(w) rep_len(w, n))), nrow = n) %in% TRUE
+  rows <- matrix(sprintf(
+    paste0('<div style="display:flex;justify-content:space-between;gap:8px;">',
+           '<span>%s</span><span style="font-weight:600;color:%s;">%s</span></div>'),
+    .tt_esc(rep(labels, each = n)), ifelse(wm, c$worse, c$text), .tt_esc(vm)), nrow = n)
+  rows[is.na(vm)] <- ""
+  out <- paste0(
+    sprintf('<hr style="border:0;border-top:1px solid %s;margin:7px 0;"/>', c$border),
+    sprintf('<div style="color:%s;font-size:11px;">Driven by</div>', c$muted),
+    apply(rows, 1, paste, collapse = ""))
+  ifelse(rowSums(!is.na(vm)) > 0, out, "")
+}
+
 #' Single tooltip. drivers: data.frame(label, value_text, worse) — first 3 shown.
 risk_tooltip_html <- function(title, subtitle = NULL, value_text, rank_text = NULL,
                               rank_sub = NULL, drivers = NULL, footer) {
-  c <- .RISK_COL
   na1 <- function(x) if (is.null(x) || length(x) == 0) NA else x
   drivers_html <- ""
   if (!is.null(drivers) && nrow(drivers) > 0) {
     d <- utils::head(drivers, 3)
-    rows <- sprintf(paste0('<div style="display:flex;justify-content:space-between;gap:8px;">',
-                           '<span>%s</span><span style="font-weight:600;color:%s;">%s</span></div>'),
-                    .tt_esc(d$label), ifelse(d$worse %in% TRUE, c$worse, c$text),
-                    .tt_esc(d$value_text))
-    drivers_html <- paste0(
-      sprintf('<hr style="border:0;border-top:1px solid %s;margin:7px 0;"/>', c$border),
-      sprintf('<div style="color:%s;font-size:11px;">Driven by</div>', c$muted),
-      paste(rows, collapse = ""))
+    drivers_html <- risk_drivers_vec(d$label, as.list(as.character(d$value_text)),
+                                     as.list(d$worse %in% TRUE))
   }
   risk_tooltips_vec(title, na1(subtitle), na1(value_text), na1(rank_text), na1(rank_sub),
                     footer, drivers_html)[[1]]
@@ -91,11 +104,24 @@ RISK_LAYERS <- c(
     list(label = v$label, col = id, fmt = v$fmt, pal = v$pal, rev = v$rev,
          higher_is_worse = v$rev, source = "Census ACS 5-yr", levels = c("county", "tract"),
          lens = "context")
-  }), names(VAR_CFG))
+  }), names(VAR_CFG)),
+  local({
+    mig <- function(label, col, bins) list(
+      label = label, col = col, fmt = "per1k", pal = "PuOr", rev = FALSE,
+      higher_is_worse = NA, source = "Census PEP", levels = "county", lens = "migration",
+      rank_frame = "for in-migration", bins = bins)
+    rate_bins <- c(-1000, -10, -5, -2, -0.5, 0.5, 2, 5, 10, 1000)
+    list(
+      mig_dom = mig("Net domestic migration (per 1,000)", "mig_dom_rate", rate_bins),
+      mig_intl = mig("Net international migration (per 1,000)", "mig_intl_rate", rate_bins),
+      mig_net = mig("Total net migration (per 1,000)", "mig_net_rate", rate_bins),
+      mig_dom_cum = mig("Net domestic migration since 2020 (per 1,000 of 2020 pop.)",
+                        "mig_dom_cum", c(-1000, -50, -25, -10, -2, 2, 10, 25, 50, 1000)))
+  })
 )
 
 # Lenses in display order; only lenses that have layers.
-RISK_LENSES <- c("Context" = "context")
+RISK_LENSES <- c("Migration" = "migration", "Context" = "context")
 
 #' Layer ids (values) and labels (names) of one lens, in registry order.
 risk_lens_choices <- function(lens) {
@@ -111,6 +137,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
   out <- switch(fmt,
     "$"  = paste0("$", formatC(round(v), format = "d", big.mark = ",")),
     "pp" = sprintf("%+.1f pp", v),
+    "per1k" = sprintf("%+.1f per 1,000", v),
     sprintf("%.1f%%", v))
   out[is.na(v)] <- NA_character_
   out
@@ -127,6 +154,21 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
                     na.color = "#555566")
 }
 
+#' Plain-text standing line per county ("" when the value or the vintage is missing).
+.migration_line <- function(d, vintage) {
+  n <- nrow(d)
+  if (is.null(vintage) || !"mig_dom_rate" %in% names(d)) return(rep("", n))
+  v <- d$mig_dom_rate
+  ifelse(is.na(v), "", sprintf("Net domestic migration: %s (%s)",
+                               .risk_fmt(v, "per1k"), pep_year_label(vintage)))
+}
+
+.standing_html <- function(lines) {
+  ifelse(.tt_has(lines), sprintf(
+    '<div style="color:%s;font-size:11px;margin-top:4px;">%s</div>', .RISK_COL$muted,
+    .tt_esc(lines)), "")
+}
+
 .county_tooltips <- function(d, id, cfg, asof, status = "ok") {
   if (identical(status, "loading")) {
     return(risk_tooltips_vec(title = d$name, value_text = "Loading…",
@@ -141,9 +183,18 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
   subs <- ifelse(is.na(d$cbsa_name), NA_character_, paste(d$cbsa_name, d$cbsa_type))
   footer <- if (is.na(asof)) paste(cfg$source, "— unavailable") else
     paste0(cfg$source, ", ", asof)
+  drivers <- if (identical(cfg$lens, "migration")) {
+    risk_drivers_vec(
+      c("Domestic", "International", "Natural change (births − deaths)"),
+      lapply(c("mig_dom_rate", "mig_intl_rate", "nat_chg_rate"),
+             function(col) .risk_fmt(d[[col]], "per1k")),
+      rep(list(FALSE), 3))
+  } else ""
   risk_tooltips_vec(title = d$name, subtitle = subs, value_text = vtxt,
-                    rank_text = rank_label(pct, "nationally"), footer = footer,
-                    rank_bad = .rank_bad(pct, cfg, d[[cfg$col]]))
+                    rank_text = rank_label(pct, cfg$rank_frame %||% "nationally"),
+                    footer = footer, drivers_html = drivers,
+                    rank_bad = .rank_bad(pct, cfg, d[[cfg$col]]),
+                    standing = .standing_html(.migration_line(d, attr(d, "pep_vintage"))))
 }
 
 #' Ranks always read in value terms ("Top" = highest value). The pill is red only
@@ -176,7 +227,10 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 .legend_title <- function(cfg, status, asof, scope = NULL) {
   head <- htmltools::htmlEscape(cfg$label)
   sub <- if (identical(status, "unavailable")) "unavailable" else
-    if (identical(status, "loading")) "loading county unemployment from BLS…" else
+    if (identical(status, "loading")) {
+      if (identical(cfg$source, "Census PEP")) "loading Census population estimates…" else
+        "loading county unemployment from BLS…"
+    } else
       paste0(if (!is.null(scope)) paste0(scope, " · "), cfg$source, ", ", asof,
              if (identical(status, "stale")) " (stale)",
              if (identical(status, "partial")) " (partial: some counties missing, retrying later)")
@@ -187,6 +241,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
   switch(cfg$fmt,
     "$"  = leaflet::labelFormat(prefix = "$", big.mark = ",", digits = 0),
     "pp" = leaflet::labelFormat(suffix = " pp", digits = 1),
+    "per1k" = leaflet::labelFormat(suffix = " per 1,000", digits = 1),
     leaflet::labelFormat(suffix = "%", digits = 1))
 }
 
@@ -296,6 +351,41 @@ reset_to_us <- function(map, county_layers, layer_id) {
     leaflet::setView(lng = -96, lat = 38, zoom = 4)
 }
 
+#' Migration blocks for the county side panel: one bar per year (divs, not rows) and
+#' the population change since 2020. NULL when the area has no PEP values.
+.migration_panel <- function(a, vintage) {
+  tg <- htmltools::tags; c <- .RISK_COL
+  yrs <- 2021:vintage
+  v <- vapply(yrs, function(y) {
+    col <- paste0("mig_dom_rate_", y)
+    if (col %in% names(a)) as.numeric(a[[col]]) else NA_real_
+  }, numeric(1))
+  if (all(is.na(v))) return(NULL)
+  top <- max(abs(v), na.rm = TRUE)
+  bars <- lapply(seq_along(yrs), function(i) {
+    w <- if (is.na(v[i]) || top == 0) 0 else max(2, 100 * abs(v[i]) / top)
+    tg$div(
+      style = "display:flex;align-items:center;gap:8px;margin:2px 0;",
+      tg$span(style = sprintf("width:52px;color:%s;", c$muted), pep_year_label(yrs[i])),
+      tg$div(style = "flex:1;", tg$div(style = sprintf(
+        "height:10px;border-radius:2px;width:%.0f%%;background:%s;", w,
+        if (!is.na(v[i]) && v[i] < 0) "#b35806" else "#542788"))),
+      tg$span(style = "width:90px;text-align:right;font-weight:600;",
+              if (is.na(v[i])) "—" else .risk_fmt(v[i], "per1k")))
+  })
+  pc <- as.numeric(a$pop_chg_pct)
+  tg$div(
+    style = sprintf("margin-top:10px;border-top:1px solid %s;padding-top:8px;", c$border),
+    tg$div(style = sprintf("color:%s;margin-bottom:4px;", c$muted),
+           sprintf("Net domestic migration per 1,000, %s to %s",
+                   pep_year_label(min(yrs)), pep_year_label(vintage))),
+    bars,
+    if (length(pc) == 1 && !is.na(pc)) tg$div(
+      style = "margin-top:6px;",
+      sprintf("Population change 2020–%s: %+.1f%%", substr(vintage, 3, 4), pc)),
+    tg$div(style = sprintf("color:%s;", c$muted), sprintf("Census PEP V%d", vintage)))
+}
+
 # ── Side panel: full component breakdown for the selected county or tract ────
 risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
                             missing_states = character(0)) {
@@ -323,7 +413,8 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
     if (level == "tract" && isTRUE(get(paste0("noisy_", cfg$col)))) {
       noisy_labels <<- c(noisy_labels, cfg$label)
     }
-    when <- if (identical(status[[id]], "unavailable")) "unavailable" else asof[[id]]
+    when <- if (identical(status[[id]], "unavailable")) "unavailable" else
+      if (is.na(asof[[id]])) "loading" else asof[[id]]
     pcts <- if (level == "county") list(td(rk(get(paste0("pct_", cfg$col)), cfg$higher_is_worse))) else
       list(td(rk(get(paste0("lm_pct_", cfg$col)), cfg$higher_is_worse)),
            td(rk(get(paste0("st_pct_", cfg$col)), cfg$higher_is_worse)))
@@ -339,15 +430,21 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
   } else paste("Ranked", get("frame_label"), "and", get("state_label"))
   st_names <- stats::setNames(.plain_df(county_layers)$state_name, .plain_df(county_layers)$state_fips)
 
+  vintage <- attr(county_layers, "pep_vintage")
+  standing <- if (level == "county" && !is.null(vintage)) .migration_line(a, vintage) else ""
   tg$div(
     style = sprintf("background:%s;color:%s;border-radius:8px;padding:14px 16px;margin-top:12px;font-size:12px;",
                     c$page, c$text),
     tg$div(style = sprintf("color:%s;font-weight:700;font-size:16px;", c$accent), title),
-    tg$div(style = sprintf("color:%s;margin-bottom:8px;", c$muted), sub),
+    tg$div(style = sprintf("color:%s;margin-bottom:%s;", c$muted,
+                           if (nzchar(standing)) "2px" else "8px"), sub),
+    if (nzchar(standing)) tg$div(style = sprintf("color:%s;margin-bottom:8px;", c$muted),
+                                 standing),
     tg$div(style = "overflow-x:auto;", tg$table(
       style = "border-collapse:collapse;width:100%;",
       tg$tr(style = sprintf("color:%s;text-align:left;", c$muted), lapply(head, tg$th)),
       rows)),
+    if (level == "county" && !is.null(vintage)) .migration_panel(a, vintage),
     if (length(noisy_labels)) tg$div(
       style = sprintf("color:%s;margin-top:8px;", c$warn),
       sprintf("Dashed outline: the margin of error is larger than the value for %s.",

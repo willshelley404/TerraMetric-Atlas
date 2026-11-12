@@ -176,14 +176,23 @@ tracts_for_county <- function(county_geoid, county_base, fetch = fetch_state_tra
 # ── County layers: join Stress now, add national percentiles, status/as-of ───
 #' laus_loading = TRUE marks Stress now as still loading (progressive tab load:
 #' the map draws from shapes + ACS first, BLS fills in when it arrives).
+#' migration: parse_pep_county() output (attr "stale" from risk_cached) or NULL.
+#' loading: component names still loading ("migration").
 build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
-                                laus_loading = FALSE, laus_partial = FALSE) {
+                                laus_loading = FALSE, laus_partial = FALSE,
+                                migration = NULL, loading = character(0)) {
   out <- county_base
   if (is.null(momentum)) {
     out$ref_month <- as.Date(NA); out$rate_now <- NA_real_; out$rate_yr_ago <- NA_real_
     out$momentum_pp <- NA_real_; out$flag <- NA_character_
   } else {
     out <- dplyr::left_join(out, dplyr::rename(momentum, GEOID = fips), by = "GEOID")
+  }
+  if (is.null(migration)) {
+    for (col in c("mig_dom_rate", "mig_intl_rate", "mig_net_rate", "nat_chg_rate",
+                  "mig_dom_cum", "pop_chg_pct", "mig_dom_n", "pop_avg")) out[[col]] <- NA_real_
+  } else {
+    out <- dplyr::left_join(out, migration, by = "GEOID")
   }
   for (id in names(RISK_LAYERS)) {
     col <- RISK_LAYERS[[id]]$col
@@ -202,9 +211,18 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
     if (isTRUE(laus_partial)) status[["stress_now"]] <- "partial"
     if (isTRUE(laus_stale)) status[["stress_now"]] <- "stale"
   }
+  v <- if (is.null(migration)) NULL else attr(migration, "vintage")
+  for (id in ids[vapply(RISK_LAYERS, function(l) identical(l$lens, "migration"), TRUE)]) {
+    status[[id]] <- if ("migration" %in% loading) "loading" else
+      if (is.null(migration)) "unavailable" else
+        if (isTRUE(attr(migration, "stale"))) "stale" else "ok"
+    asof[[id]] <- if (is.null(v)) NA_character_ else if (id == "mig_dom_cum")
+      sprintf("V%d, 2020–%s", v, substr(v, 3, 4)) else sprintf("V%d, %s", v, pep_year_label(v))
+  }
   attr(out, "layer_status") <- status
   attr(out, "asof") <- asof
   attr(out, "acs_year") <- yr
+  if (!is.null(v)) attr(out, "pep_vintage") <- v
   out
 }
 
