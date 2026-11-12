@@ -105,3 +105,57 @@ test_that("lehdr tract output is normalised to the block shape", {
   tr <- tibble::tibble(state = "AL", year = 2024, h_tract = "01001020100", C000 = 5L)
   expect_equal(.lodes_as_blocks(tr)$h_geocode, "01001020100")
 })
+
+test_that("CT tracts sharing a 6-digit code fold into one row", {
+  lodes <- tibble::tibble(GEOID = c("09001500100", "09003500100", "09003500200"),
+                          C000 = c(10, 5, 2), CA01 = c(1, 2, 3))
+  out <- lodes_ct_remap(lodes, c("09110500100", "09110500200"))
+  expect_false(anyDuplicated(out$GEOID) > 0)
+  expect_equal(out$C000[out$GEOID == "09110500100"], 15)
+  expect_equal(out$CA01[out$GEOID == "09110500100"], 3)
+  expect_equal(out$C000[out$GEOID == "09110500200"], 2)
+})
+
+test_that("gz RAC file reads with h_geocode as character", {
+  f <- tempfile(fileext = ".csv.gz")
+  con <- gzfile(f, "wt"); writeLines(readLines(test_path("fixtures", "lodes_rac_sample.csv")), con); close(con)
+  out <- .lodes_read_gz(f)
+  expect_true(is.character(out$h_geocode))
+  expect_true("010010201001000" %in% out$h_geocode)
+  expect_equal(nrow(out), 6)
+  expect_true(is.numeric(out$C000))
+  expect_equal(aggregate_lodes_rac(out), aggregate_lodes_rac(lodes_fixture()))
+})
+
+test_that("an incomplete lehdr frame falls back to the direct download", {
+  direct <- 0
+  dfn <- function(st, yr) { direct <<- direct + 1; lodes_fixture() }
+  bad <- tibble::tibble(h_tract = "01001020100", C000 = 5L)   # no CA01, CE01, CNS
+  out <- .lodes_download("al", 2024, lehdr_fn = function(st, yr) bad, direct_fn = dfn)
+  expect_equal(direct, 1)
+  expect_equal(nrow(out), 6)
+  # an erroring lehdr also falls back
+  .lodes_download("al", 2024, lehdr_fn = function(st, yr) stop("boom"), direct_fn = dfn)
+  expect_equal(direct, 2)
+})
+
+test_that("a complete lehdr tract frame is used without downloading", {
+  full <- aggregate_lodes_rac(lodes_fixture())
+  names(full)[1] <- "h_tract"
+  out <- .lodes_download("al", 2024, lehdr_fn = function(st, yr) full,
+                         direct_fn = function(...) stop("must not download"))
+  expect_equal(out$h_geocode, full$h_tract)
+  expect_equal(aggregate_lodes_rac(out)$C000, full$C000)
+})
+
+test_that("a failed download is remembered briefly, not retried at once", {
+  risk_cache_clear_memory()
+  d <- tempfile("lodes"); dir.create(d)
+  n <- 0
+  dl <- function(...) { n <<- n + 1; stop("offline") }
+  suppressMessages({
+    fetch_lodes_rac("01", 2024, cache_dir = d, download = dl)
+    fetch_lodes_rac("01", 2024, cache_dir = d, download = dl)
+  })
+  expect_equal(n, 1)
+})

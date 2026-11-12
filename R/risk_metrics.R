@@ -492,9 +492,9 @@ stress_ahead <- function(ind, weights) {
 aggregate_lodes_rac <- function(blocks) {
   cols <- c("C000", "CA01", "CE01", sprintf("CNS%02d", 1:20))
   b <- as.data.frame(blocks)
-  b$GEOID <- substr(as.character(b$h_geocode), 1, 11)
-  out <- stats::aggregate(b[cols], by = list(GEOID = b$GEOID), FUN = sum, na.rm = TRUE)
-  tibble::as_tibble(out[order(out$GEOID), c("GEOID", cols)])
+  sums <- rowsum(b[cols], substr(as.character(b$h_geocode), 1, 11), na.rm = TRUE)
+  tibble::as_tibble(cbind(GEOID = rownames(sums), sums, stringsAsFactors = FALSE),
+                    .name_repair = "minimal")
 }
 
 #' LODES still keys Connecticut tracts by the old counties (09001-09015); ACS uses
@@ -507,5 +507,13 @@ lodes_ct_remap <- function(lodes, acs_geoids) {
   new <- lodes$GEOID
   new[is_ct] <- ct[hit[is_ct]]
   lodes$GEOID <- new
-  lodes[!(is_ct & is.na(lodes$GEOID)), , drop = FALSE]
+  lodes <- lodes[!(is_ct & is.na(lodes$GEOID)), , drop = FALSE]
+  # Two old counties can share a tract code; fold them so GEOID stays unique.
+  if (anyDuplicated(lodes$GEOID)) {
+    num <- vapply(lodes, is.numeric, logical(1))
+    sums <- rowsum(lodes[num], lodes$GEOID, reorder = FALSE)
+    lodes <- tibble::as_tibble(cbind(GEOID = rownames(sums), sums, stringsAsFactors = FALSE),
+                               .name_repair = "minimal")
+  }
+  lodes
 }

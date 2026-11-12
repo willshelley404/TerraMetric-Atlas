@@ -605,28 +605,42 @@ lodes_latest_year <- function(probe = .lodes_head_ok, today = Sys.Date(),
   x
 }
 
-#' Block-level RAC table for one state-year. Prefers lehdr when installed, else
-#' downloads the gzip straight from the LEHD server. h_geocode stays character
-#' (a numeric read drops the leading zero of states 01-09).
-.lodes_download <- function(st_abbr, year) {
-  if (requireNamespace("lehdr", quietly = TRUE)) {
-    viaL <- tryCatch(suppressMessages(lehdr::grab_lodes(
-      state = st_abbr, year = year, lodes_type = "rac", job_type = "JT00",
-      segment = "S000", agg_geo = "tract")), error = function(e) NULL)
-    if (is.data.frame(viaL) && nrow(viaL) > 0 &&
-        any(c("h_geocode", "h_tract") %in% names(viaL))) return(.lodes_as_blocks(viaL))
-  }
+.LODES_NEED <- c("C000", "CA01", "CE01", sprintf("CNS%02d", 1:20))
+
+#' readr reads .gz natively and streams; h_geocode must stay character (a numeric
+#' read drops the leading zero of states 01-09).
+.lodes_read_gz <- function(path) {
+  readr::read_csv(path, progress = FALSE,
+                  col_types = readr::cols(h_geocode = "c", createdate = "c", .default = "d"))
+}
+
+.lodes_direct <- function(st_abbr, year) {
   f <- tempfile(fileext = ".csv.gz")
   on.exit(unlink(f), add = TRUE)
   httr2::request(.lodes_url(st_abbr, year)) |>
     httr2::req_user_agent(.RISK_UA) |>
     httr2::req_timeout(300) |>
     httr2::req_perform(path = f)
-  # fread cannot open .gz without R.utils (not a dependency): decompress via gzfile.
-  con <- gzfile(f, "rt")
-  on.exit(close(con), add = TRUE, after = FALSE)
-  data.table::fread(text = readLines(con), colClasses = list(character = "h_geocode"),
-                    data.table = FALSE)
+  .lodes_read_gz(f)
+}
+
+#' Block-level RAC table for one state-year. Uses lehdr when installed and its
+#' result has every column aggregate_lodes_rac() needs; otherwise downloads the
+#' gzip straight from the LEHD server. `lehdr_fn` and `direct_fn` are injectable.
+.lodes_download <- function(st_abbr, year, lehdr_fn = NULL, direct_fn = .lodes_direct) {
+  if (is.null(lehdr_fn) && requireNamespace("lehdr", quietly = TRUE)) {
+    lehdr_fn <- function(st, yr) lehdr::grab_lodes(
+      state = st, year = yr, lodes_type = "rac", job_type = "JT00",
+      segment = "S000", agg_geo = "tract")
+  }
+  if (!is.null(lehdr_fn)) {
+    viaL <- tryCatch(suppressMessages(lehdr_fn(st_abbr, year)), error = function(e) NULL)
+    if (is.data.frame(viaL) && nrow(viaL) > 0) {
+      viaL <- .lodes_as_blocks(viaL)
+      if ("h_geocode" %in% names(viaL) && all(.LODES_NEED %in% names(viaL))) return(viaL)
+    }
+  }
+  direct_fn(st_abbr, year)
 }
 
 #' LODES RAC (all jobs, all segments) by residence tract for one state, cached 90
@@ -640,6 +654,7 @@ fetch_lodes_rac <- function(state_fips, year = NULL, cache_dir = risk_cache_dir(
   if (is.null(year)) return(NULL)
   year <- as.integer(year)
   risk_cached(sprintf("lodes_rac_%s_%d", state_fips, year), 90, cache_dir = cache_dir,
+              fail_ttl_days = 1 / 24,
               fetch_fn = function() {
     fips <- unique(tigris::fips_codes[, c("state_code", "state")])
     st <- tolower(fips$state[match(state_fips, fips$state_code)])
