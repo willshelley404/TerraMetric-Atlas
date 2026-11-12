@@ -7532,7 +7532,7 @@
       "checksum": "db77731de193cb91d5725a99422fdd92"
     },
     "R/data_risk.R": {
-      "checksum": "c8fd2a70d2e571e32183d4fd96c2520b"
+      "checksum": "773044306b0e144dcac116a5c3353e4e"
     },
     "R/forecasting.R": {
       "checksum": "ee58eebf253f07d7bf62fb9f8cfc6af2"
@@ -7541,10 +7541,10 @@
       "checksum": "c37f4cdab97c3a296a61934b099c6baa"
     },
     "R/map_risk.R": {
-      "checksum": "ce8b5417284d8d7d410fdd49d2181f82"
+      "checksum": "0296e44dd1acf67e944532a4e7c7312c"
     },
     "R/risk_metrics.R": {
-      "checksum": "561949e397c2f5c3df1464d2947efb6c"
+      "checksum": "16af49cb82f563170b97778a9482d662"
     },
     "R/synopsis_tier1.R": {
       "checksum": "c2f0474652fb6c07661b932d1200e172"
