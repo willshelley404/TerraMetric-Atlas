@@ -125,6 +125,8 @@ test_that("gz RAC file reads with h_geocode as character", {
   expect_equal(nrow(out), 6)
   expect_true(is.numeric(out$C000))
   expect_equal(aggregate_lodes_rac(out), aggregate_lodes_rac(lodes_fixture()))
+  # Only the key and the count columns are read (createdate and the rest are skipped).
+  expect_setequal(names(out), c("h_geocode", .LODES_NEED))
 })
 
 test_that("an incomplete lehdr frame falls back to the direct download", {
@@ -158,4 +160,54 @@ test_that("a failed download is remembered briefly, not retried at once", {
     fetch_lodes_rac("01", 2024, cache_dir = d, download = dl)
   })
   expect_equal(n, 1)
+})
+
+test_that("year probe rejects a 200 that is an HTML page", {
+  reply <- function(type) function(req) httr2::response(
+    status_code = 200L, headers = if (is.null(type)) list() else list("Content-Type" = type))
+  probe <- function(type) httr2::with_mocked_responses(reply(type), .lodes_head_ok("https://x/y.csv.gz"))
+  expect_false(probe("text/html; charset=utf-8"))
+  expect_true(probe("application/gzip"))
+  expect_true(probe("application/octet-stream"))
+  expect_true(probe(NULL))
+  not_found <- function(req) httr2::response(status_code = 404L)
+  expect_false(httr2::with_mocked_responses(not_found, .lodes_head_ok("https://x/y.csv.gz")))
+})
+
+test_that("a state LODES file one year behind falls back to the previous year once", {
+  risk_cache_clear_memory()
+  d <- tempfile("lodes"); dir.create(d)
+  tried <- integer()
+  miss <- function(yr) structure(class = c("httr2_http_404", "httr2_http", "httr2_error", "error", "condition"),
+                                 list(message = "HTTP 404 Not Found.", call = NULL))
+  dl <- function(st, yr) {
+    tried <<- c(tried, as.integer(yr))
+    if (as.integer(yr) == 2024L) stop(miss(yr))
+    lodes_fixture()
+  }
+  out <- fetch_lodes_rac("01", 2024, cache_dir = d, download = dl)
+  expect_equal(tried, c(2024L, 2023L))
+  expect_equal(attr(out, "lodes_year"), 2023L)
+  # A message-only 404 (lehdr wraps errors) counts too; other errors do not retry.
+  risk_cache_clear_memory()
+  tried <- integer()
+  d2 <- tempfile("lodes"); dir.create(d2)
+  out2 <- fetch_lodes_rac("01", 2024, cache_dir = d2,
+                          download = function(st, yr) { tried <<- c(tried, as.integer(yr))
+                            if (yr == 2024) stop("cannot open: HTTP status was '404 Not Found'")
+                            lodes_fixture() })
+  expect_equal(attr(out2, "lodes_year"), 2023L)
+  risk_cache_clear_memory()
+  tried <- integer()
+  d3 <- tempfile("lodes"); dir.create(d3)
+  expect_null(suppressMessages(fetch_lodes_rac("01", 2024, cache_dir = d3,
+    download = function(st, yr) { tried <<- c(tried, as.integer(yr)); stop("offline") })))
+  expect_equal(tried, 2024L)
+  # Y-1 missing as well: one retry only.
+  risk_cache_clear_memory()
+  tried <- integer()
+  d4 <- tempfile("lodes"); dir.create(d4)
+  expect_null(suppressMessages(fetch_lodes_rac("01", 2024, cache_dir = d4,
+    download = function(st, yr) { tried <<- c(tried, as.integer(yr)); stop(miss(yr)) })))
+  expect_equal(tried, c(2024L, 2023L))
 })

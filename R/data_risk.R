@@ -591,7 +591,8 @@ fetch_county_industry <- function(year = NULL) {
           st, st, as.integer(year))
 }
 
-#' 200 means the file exists; an unpublished year is a clean 404.
+#' 200 means the file exists; an unpublished year is a clean 404. An HTML 200 (a
+#' proxy or error page) is not the file.
 .lodes_head_ok <- function(url) {
   resp <- httr2::request(url) |>
     httr2::req_method("HEAD") |>
@@ -599,7 +600,8 @@ fetch_county_industry <- function(year = NULL) {
     httr2::req_timeout(30) |>
     httr2::req_error(is_error = \(r) FALSE) |>
     httr2::req_perform()
-  httr2::resp_status(resp) == 200L
+  type <- httr2::resp_content_type(resp)
+  httr2::resp_status(resp) == 200L && !(length(type) == 1 && !is.na(type) && type == "text/html")
 }
 
 #' Newest LODES year (current year - 1 down to - 5) with a published Delaware
@@ -630,10 +632,12 @@ lodes_latest_year <- function(probe = .lodes_head_ok, today = Sys.Date(),
 .LODES_NEED <- c("C000", "CA01", "CE01", sprintf("CNS%02d", 1:20))
 
 #' readr reads .gz natively and streams; h_geocode must stay character (a numeric
-#' read drops the leading zero of states 01-09).
+#' read drops the leading zero of states 01-09). Only the columns the aggregation
+#' needs are read.
 .lodes_read_gz <- function(path) {
-  readr::read_csv(path, progress = FALSE,
-                  col_types = readr::cols(h_geocode = "c", createdate = "c", .default = "d"))
+  spec <- c(list(h_geocode = readr::col_character()),
+            stats::setNames(rep(list(readr::col_double()), length(.LODES_NEED)), .LODES_NEED))
+  readr::read_csv(path, progress = FALSE, col_types = do.call(readr::cols_only, spec))
 }
 
 .lodes_direct <- function(st_abbr, year) {
@@ -641,7 +645,7 @@ lodes_latest_year <- function(probe = .lodes_head_ok, today = Sys.Date(),
   on.exit(unlink(f), add = TRUE)
   httr2::request(.lodes_url(st_abbr, year)) |>
     httr2::req_user_agent(.RISK_UA) |>
-    httr2::req_timeout(300) |>
+    httr2::req_timeout(90) |>
     httr2::req_perform(path = f)
   .lodes_read_gz(f)
 }
@@ -650,6 +654,8 @@ lodes_latest_year <- function(probe = .lodes_head_ok, today = Sys.Date(),
 #' result has every column aggregate_lodes_rac() needs; otherwise downloads the
 #' gzip straight from the LEHD server. `lehdr_fn` and `direct_fn` are injectable.
 .lodes_download <- function(st_abbr, year, lehdr_fn = NULL, direct_fn = .lodes_direct) {
+  # lehdr exposes neither a User-Agent nor its version; any error or shape mismatch
+  # falls back to the direct download below, which sends .RISK_UA.
   if (is.null(lehdr_fn) && requireNamespace("lehdr", quietly = TRUE)) {
     lehdr_fn <- function(st, yr) lehdr::grab_lodes(
       state = st, year = yr, lodes_type = "rac", job_type = "JT00",
@@ -665,10 +671,17 @@ lodes_latest_year <- function(probe = .lodes_head_ok, today = Sys.Date(),
   direct_fn(st_abbr, year)
 }
 
+# A missing file (a state publishes a year behind the probe state): httr2's 404
+# class, or a 404 in the message of a wrapped error.
+.lodes_is_miss <- function(e) {
+  inherits(e, "httr2_http_404") || grepl("404|not found", conditionMessage(e), ignore.case = TRUE)
+}
+
 #' LODES RAC (all jobs, all segments) by residence tract for one state, cached 90
 #' days. NULL for states LODES does not cover (RISK_CFG$lodes_exclude_states),
-#' when no year is published, or when the download fails. `download(st, year)`
-#' is injectable for tests.
+#' when no year is published, or when the download fails. A 404 for the year
+#' retries the previous year once; attr "lodes_year" is the year actually read.
+#' `download(st, year)` is injectable for tests.
 fetch_lodes_rac <- function(state_fips, year = NULL, cache_dir = risk_cache_dir(),
                             download = .lodes_download) {
   if (state_fips %in% RISK_CFG$lodes_exclude_states) return(NULL)
@@ -681,8 +694,14 @@ fetch_lodes_rac <- function(state_fips, year = NULL, cache_dir = risk_cache_dir(
     fips <- unique(tigris::fips_codes[, c("state_code", "state")])
     st <- tolower(fips$state[match(state_fips, fips$state_code)])
     if (is.na(st)) stop("unknown state FIPS ", state_fips)
-    out <- aggregate_lodes_rac(download(st, year))
-    attr(out, "lodes_year") <- year
+    used <- year
+    blocks <- tryCatch(download(st, year), error = function(e) {
+      if (!.lodes_is_miss(e)) stop(e)
+      used <<- year - 1L
+      download(st, used)
+    })
+    out <- aggregate_lodes_rac(blocks)
+    attr(out, "lodes_year") <- used
     out
   })
 }
