@@ -42,6 +42,7 @@ test_that("CFPB falls back county -> metro -> state non-metro with source", {
   out <- cfpb_county_components(
     county_ids = c("13121", "13295", "13001", "99001"),
     cbsa_of = c("12060", "16860", NA, "99999"),
+    cbsa_type_of = c("metro", "metro", NA, "metro"),
     state_of = c("13", "13", "13", "99"),
     c90, c3089, m90, m3089)
   expect_equal(out$GEOID, c("13121", "13295", "13001", "99001"))
@@ -55,19 +56,37 @@ test_that("CFPB falls back county -> metro -> state non-metro with source", {
   # Appling: non-CBSA GA -> 13-non row
   expect_equal(out$dq90[3], 1.2)
   expect_equal(out$dq3089_chg[3], 2.5 - 2.4, tolerance = 1e-9)
-  # no county row, CBSA not in the metro file, no state row
+  # no county row, metro-type CBSA not in the metro file -> NA, no state fallback
   expect_true(is.na(out$dq90[4]) && is.na(out$dq3089_chg[4]))
   expect_equal(out$cfpb_month[1:3], rep(as.Date("2026-03-01"), 3))
   expect_true(is.na(out$cfpb_month[4]))
 })
 
-test_that("a CBSA missing from the metro file falls through to state non-metro", {
+test_that("state non-metro applies to micro-area or no-CBSA counties, never metro ones", {
   c90 <- cfpb_fx("cfpb_county_90.csv", "FIPSCode")
   c3089 <- cfpb_fx("cfpb_county_3089.csv", "FIPSCode")
   m90 <- cfpb_fx("cfpb_metro_90.csv", "CBSACode")
   m3089 <- cfpb_fx("cfpb_metro_3089.csv", "CBSACode")
-  out <- cfpb_county_components("13001", "99999", "13", c90, c3089, m90, m3089)
-  expect_equal(out$cfpb_source, "state non-metro")
+  out <- cfpb_county_components(c("13001", "13003", "13005"), c("99999", "99998", NA),
+                                c("micro area", "metro", NA), c("13", "13", "13"),
+                                c90, c3089, m90, m3089)
+  expect_equal(out$cfpb_source, c("state non-metro", NA, "state non-metro"))
+  expect_equal(out$dq90, c(1.2, NA, 1.2))
+  expect_true(is.na(out$dq3089_chg[2]) && is.na(out$cfpb_month[2]))
+})
+
+test_that("12-month change is anchored to the 90+ latest month, NA if a month is absent", {
+  c90 <- cfpb_fx("cfpb_county_90.csv", "FIPSCode")
+  c3089 <- cfpb_fx("cfpb_county_3089.csv", "FIPSCode")
+  m90 <- cfpb_fx("cfpb_metro_90.csv", "CBSACode")
+  m3089 <- cfpb_fx("cfpb_metro_3089.csv", "CBSACode")
+  call <- function(t3089) cfpb_county_components("13121", "12060", "metro", "13",
+                                                 c90, t3089, m90, m3089)
+  # 30-89 lacks the 90+ latest month: no mixing with its own latest month
+  expect_true(is.na(call(c3089[c3089$date != as.Date("2026-03-01"), ])$dq3089_chg))
+  # 30-89 lacks the month 12 months back
+  expect_true(is.na(call(c3089[c3089$date != as.Date("2025-03-01"), ])$dq3089_chg))
+  expect_equal(call(c3089)$dq90, 1.8)
 })
 
 test_that("a county the 30-89 file lacks keeps dq90 and gets NA change", {
@@ -76,7 +95,7 @@ test_that("a county the 30-89 file lacks keeps dq90 and gets NA change", {
   c3089 <- c3089[c3089$id != "47065", ]
   m90 <- cfpb_fx("cfpb_metro_90.csv", "CBSACode")
   m3089 <- cfpb_fx("cfpb_metro_3089.csv", "CBSACode")
-  out <- cfpb_county_components("47065", "16860", "47", c90, c3089, m90, m3089)
+  out <- cfpb_county_components("47065", "16860", "metro", "47", c90, c3089, m90, m3089)
   expect_equal(out$cfpb_source, "county")
   expect_equal(out$dq90, 0.6)
   expect_true(is.na(out$dq3089_chg))
@@ -100,5 +119,25 @@ test_that("fetch keeps 13 months and returns NULL when a file fails", {
   expect_equal(length(unique(out$county90$date)), 13)
   expect_equal(min(out$county90$date), as.Date("2025-03-01"))
   expect_true("01003" %in% out$county90$id)
-  expect_null(.cfpb_build(function(url) if (grepl("Metro.*30-89", url)) stop("boom") else get_text(url)))
+  expect_message(
+    res <- .cfpb_build(function(url) if (grepl("Metro.*30-89", url)) stop("boom") else get_text(url)),
+    "cfpb")
+  expect_null(res)
+})
+
+test_that("thru is the oldest of the four chosen files", {
+  b <- "https://files.consumerfinance.gov/d/"
+  html <- paste0('<a href="', b, c("CountyMortgagesPercent-90-plusDaysLate-thru-2026-03.csv",
+                                    "CountyMortgagesPercent-30-89DaysLate-thru-2026-03.csv",
+                                    "MetroAreaMortgagesPercent-90-plusDaysLate-thru-2025-12.csv",
+                                    "MetroAreaMortgagesPercent-30-89DaysLate-thru-2025-12.csv"), '">')
+  expect_equal(cfpb_links(paste(html, collapse = "
+"))$thru, "2025-12")
+})
+
+test_that("an NA RegionType does not crash the parser", {
+  df <- data.frame(RegionType = c("County", NA), State = "AL", Name = "x",
+                   FIPSCode = c("'01003'", "'01005'"), `2026-03` = c("0.8", "0.9"),
+                   check.names = FALSE, stringsAsFactors = FALSE)
+  expect_equal(parse_cfpb_wide(df, "FIPSCode")$id, c("01003", "01005"))
 })

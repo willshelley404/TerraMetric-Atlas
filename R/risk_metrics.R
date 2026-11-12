@@ -797,7 +797,7 @@ parse_cfpb_wide <- function(df, id_col) {
   months <- grep("^\\d{4}-\\d{2}$", names(df), value = TRUE)
   id <- gsub("[' ]", "", as.character(df[[id_col]]))
   keep <- !is.na(id) & nzchar(id) & !grepl("^-+$", id)
-  if ("RegionType" %in% names(df)) keep <- keep & df$RegionType != "National"
+  if ("RegionType" %in% names(df)) keep <- keep & !(df$RegionType %in% "National")
   if (!any(keep) || !length(months)) {
     return(tibble::tibble(id = character(), date = as.Date(character()), pct = numeric()))
   }
@@ -811,12 +811,16 @@ parse_cfpb_wide <- function(df, id_col) {
 
 #' Per-county CFPB inputs for the credit score. Lookup order per county: its own
 #' county row, then its CBSA's metro row, then the state's non-metro row ("{ss}-non").
-#' dq90 = 90+ days late at the file's latest month; dq3089_chg = 30-89 latest minus
-#' 12 months earlier (pp), read from the same source row.
-cfpb_county_components <- function(county_ids, cbsa_of, state_of,
+#' CFPB's metro file covers metropolitan areas only and its non-metro row covers micro
+#' plus rural, so the state row applies only to counties with no CBSA or a micro one
+#' (`cbsa_type_of` = "micro area"); a metro-CBSA county missing from the metro file is NA.
+#' dq90 = 90+ days late at the 90+ file's latest month d; dq3089_chg = 30-89 at d minus
+#' 30-89 at d - 12 months (pp), from the same source row; NA if either month is absent.
+cfpb_county_components <- function(county_ids, cbsa_of, cbsa_type_of, state_of,
                                    county90, county3089, metro90, metro3089) {
   n <- length(county_ids)
   cbsa_of <- rep_len(as.character(cbsa_of), n)
+  cbsa_type_of <- rep_len(as.character(cbsa_type_of), n)
   state_of <- rep_len(as.character(state_of), n)
   key <- function(tbl) paste(tbl$id, format(tbl$date))
   latest <- function(tbl) if (nrow(tbl)) max(tbl$date) else as.Date(NA)
@@ -828,7 +832,8 @@ cfpb_county_components <- function(county_ids, cbsa_of, state_of,
 
   metro_ids <- ifelse(!is.na(cbsa_of) & !grepl("-non$", cbsa_of) &
                         cbsa_of %in% metro90$id, cbsa_of, NA_character_)
-  nonmetro_ids <- ifelse(!is.na(state_of) & nzchar(state_of),
+  nonmetro_ok <- is.na(cbsa_of) | cbsa_type_of %in% "micro area"
+  nonmetro_ids <- ifelse(nonmetro_ok & !is.na(state_of) & nzchar(state_of),
                          paste0(state_of, "-non"), NA_character_)
   levels <- list(
     list(src = "county", ids = as.character(county_ids), t90 = county90, t3089 = county3089),
@@ -843,8 +848,7 @@ cfpb_county_components <- function(county_ids, cbsa_of, state_of,
     v90 <- at(lv$t90, lv$ids, d)
     take <- is.na(out$cfpb_source) & !is.na(v90)
     if (!any(take)) next
-    d3 <- latest(lv$t3089)
-    chg <- at(lv$t3089, lv$ids, d3) - at(lv$t3089, lv$ids, back12(d3))
+    chg <- at(lv$t3089, lv$ids, d) - at(lv$t3089, lv$ids, back12(d))
     out$dq90[take] <- v90[take]
     out$dq3089_chg[take] <- round(chg[take], 2)
     out$cfpb_source[take] <- lv$src

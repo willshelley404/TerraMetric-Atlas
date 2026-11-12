@@ -724,7 +724,7 @@ cfpb_links <- function(html) {
   thru <- sub("^.*thru-(\\d{4}-\\d{2})\\.csv$", "\\1", url)
   type <- paste0(ifelse(grepl("/CountyMortgages", url), "county", "metro"), "_",
                  ifelse(grepl("90-plusDaysLate", url), "90", "3089"))
-  https <- sub("^http://files\\.consumerfinance\\.gov(\\.s3\\.amazonaws\\.com)?/",
+  https <- sub("^https?://files\\.consumerfinance\\.gov(\\.s3\\.amazonaws\\.com)?/",
                "https://files.consumerfinance.gov/", url)
   https <- sub("^https?://s3\\.amazonaws\\.com/files\\.consumerfinance\\.gov/",
                "https://files.consumerfinance.gov/", https)
