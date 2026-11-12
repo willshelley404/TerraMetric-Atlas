@@ -134,6 +134,124 @@ RISK_LAYERS <- c(
                        labFormat = lbl_fmt)
 }
 
+# ── Tract drill-down layer ───────────────────────────────────────────────────
+.tract_tooltips <- function(t, cfg, asof, noisy) {
+  vtxt <- .risk_fmt(as.numeric(t[[cfg$col]]), cfg$fmt)
+  lm <- rank_label(t[[paste0("lm_pct_", cfg$col)]], t$frame_label, cfg$higher_is_worse)
+  st <- rank_label(t[[paste0("st_pct_", cfg$col)]], t$state_label, cfg$higher_is_worse)
+  footer <- paste0(cfg$source, ", ", asof, ifelse(noisy, " · High margin of error", ""))
+  lapply(seq_len(nrow(t)), function(i) risk_tooltip_html(
+    title = t$tract_name[i], value_text = vtxt[i], rank_text = lm[i],
+    rank_sub = st[i], footer = footer[i]))
+}
+
+#' Dim counties and draw the frame's tracts for a tract-level layer. For a
+#' county-only layer (Stress now) the counties are restored and no tracts drawn.
+add_tract_layer <- function(map, tracts, layer_id, county_layers) {
+  cfg <- RISK_LAYERS[[layer_id]]
+  map <- leaflet::clearGroup(map, "tracts")
+  if (!"tract" %in% cfg$levels || is.null(tracts) || nrow(tracts) == 0) {
+    return(.add_county_polygons(map, county_layers, layer_id, 0.82))
+  }
+  asof <- attr(county_layers, "asof")[[layer_id]]
+  vals <- as.numeric(tracts[[cfg$col]])
+  pal <- .risk_palette(cfg, vals)
+  noisy_col <- paste0("noisy_", cfg$col)
+  noisy <- if (noisy_col %in% names(tracts)) tracts[[noisy_col]] %in% TRUE else
+    rep(FALSE, nrow(tracts))
+  bb <- as.numeric(sf::st_bbox(tracts))
+  lbl_fmt <- if (cfg$fmt == "$") leaflet::labelFormat(prefix = "$", big.mark = ",") else
+    leaflet::labelFormat(suffix = "%")
+
+  .add_county_polygons(map, county_layers, layer_id, 0.25) |>
+    leaflet::addPolygons(
+      data = tracts, layerId = tracts$GEOID, group = "tracts",
+      fillColor = pal(vals), fillOpacity = 0.85,
+      color = ifelse(noisy, .RISK_COL$warn, "#0f1117"),
+      weight = ifelse(noisy, 1.5, 0.4), dashArray = ifelse(noisy, "4", NA),
+      label = .tract_tooltips(tracts, cfg, asof, noisy),
+      labelOptions = leaflet::labelOptions(
+        style = list(background = "transparent", border = "none", padding = "0",
+                     "box-shadow" = "none"), direction = "auto"),
+      highlightOptions = leaflet::highlightOptions(color = .RISK_COL$accent, weight = 2)
+    ) |>
+    leaflet::removeControl("risk_legend") |>
+    leaflet::addLegend(pal = pal, values = vals, opacity = 0.9, layerId = "risk_legend",
+                       position = "bottomright", labFormat = lbl_fmt,
+                       title = sprintf("%s — tracts %s — %s, %s", cfg$label,
+                                       tracts$frame_label[1], cfg$source, asof)) |>
+    leaflet::fitBounds(bb[1], bb[2], bb[3], bb[4])
+}
+
+reset_to_us <- function(map, county_layers, layer_id) {
+  leaflet::clearGroup(map, "tracts") |>
+    .add_county_polygons(county_layers, layer_id, 0.82) |>
+    leaflet::setView(lng = -96, lat = 38, zoom = 4)
+}
+
+# ── Side panel: full component breakdown for the selected county or tract ────
+risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
+                            missing_states = character(0)) {
+  level <- match.arg(level)
+  tg <- htmltools::tags; c <- .RISK_COL
+  a <- .plain_df(area)[1, , drop = FALSE]
+  asof <- attr(county_layers, "asof"); status <- attr(county_layers, "layer_status")
+  ids <- names(RISK_LAYERS)
+  if (level == "tract") ids <- ids[vapply(RISK_LAYERS[ids], function(l) "tract" %in% l$levels, logical(1))]
+  get <- function(col) if (col %in% names(a)) a[[col]] else NA
+  rk <- function(p, hiw) { r <- rank_label(p, "", hiw); if (is.na(r)) "—" else trimws(r) }
+  td <- function(...) tg$td(style = "padding:3px 10px 3px 0;", ...)
+
+  noisy_labels <- character(0)
+  rows <- lapply(ids, function(id) {
+    cfg <- RISK_LAYERS[[id]]
+    v <- as.numeric(get(cfg$col))
+    vt <- .risk_fmt(v, cfg$fmt)
+    if (id == "stress_now" && !is.na(v)) {
+      vt <- sprintf("%s · %s (%.1f%% now vs %.1f%% a year ago)", vt, get("flag"),
+                    get("rate_now"), get("rate_yr_ago"))
+    }
+    moe <- get(paste0(cfg$col, "_moe"))
+    if (level == "tract" && !is.na(v) && !is.na(moe)) vt <- sprintf("%s ± %.1f", vt, moe)
+    if (level == "tract" && isTRUE(get(paste0("noisy_", cfg$col)))) {
+      noisy_labels <<- c(noisy_labels, cfg$label)
+    }
+    when <- if (identical(status[[id]], "unavailable")) "unavailable" else asof[[id]]
+    pcts <- if (level == "county") list(td(rk(get(paste0("pct_", cfg$col)), cfg$higher_is_worse))) else
+      list(td(rk(get(paste0("lm_pct_", cfg$col)), cfg$higher_is_worse)),
+           td(rk(get(paste0("st_pct_", cfg$col)), cfg$higher_is_worse)))
+    tg$tr(td(cfg$label), td(tg$b(if (is.na(vt)) "—" else vt)), pcts, td(when), td(cfg$source))
+  })
+  head <- c("Component", "Value",
+            if (level == "county") "National rank" else c("Labor market", "State"),
+            "As of", "Source")
+
+  title <- if (level == "county") get("name") else get("tract_name")
+  sub <- if (level == "county") {
+    if (!is.na(get("cbsa_name"))) paste(get("cbsa_name"), get("cbsa_type")) else "Outside any metro or micro area"
+  } else paste("Ranked", get("frame_label"), "and", get("state_label"))
+  st_names <- stats::setNames(.plain_df(county_layers)$state_name, .plain_df(county_layers)$state_fips)
+
+  tg$div(
+    style = sprintf("background:%s;color:%s;border-radius:8px;padding:14px 16px;margin-top:12px;font-size:12px;",
+                    c$page, c$text),
+    tg$div(style = sprintf("color:%s;font-weight:700;font-size:16px;", c$accent), title),
+    tg$div(style = sprintf("color:%s;margin-bottom:8px;", c$muted), sub),
+    tg$div(style = "overflow-x:auto;", tg$table(
+      style = "border-collapse:collapse;width:100%;",
+      tg$tr(style = sprintf("color:%s;text-align:left;", c$muted), lapply(head, tg$th)),
+      rows)),
+    if (length(noisy_labels)) tg$div(
+      style = sprintf("color:%s;margin-top:8px;", c$warn),
+      sprintf("Dashed outline: the margin of error is larger than the value for %s.",
+              paste(noisy_labels, collapse = ", "))),
+    if (length(missing_states)) tg$div(
+      style = sprintf("color:%s;margin-top:8px;", c$warn),
+      paste("Tract data unavailable for:",
+            paste(unique(unname(st_names[missing_states])), collapse = ", ")))
+  )
+}
+
 #' US county choropleth for one layer. Polygons carry GEOID layerIds for clicks.
 build_risk_county_map <- function(county_layers, layer_id, fill_opacity = 0.82) {
   leaflet::leaflet(options = leaflet::leafletOptions(zoomControl = TRUE)) |>
