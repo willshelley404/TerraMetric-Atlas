@@ -11,6 +11,20 @@ RISK_CFG <- list(
   moe_flag_ratio      = 0.5
 )
 
+# ── Ranking helpers ──────────────────────────────────────────────────────────
+pct_rank <- function(x) 100 * dplyr::percent_rank(x)
+
+#' "Top 12% nationally" / "Bottom 30% in Georgia". `w` is pct oriented so that
+#' high means worse; NA stays NA.
+rank_label <- function(pct, frame_label, higher_is_worse = TRUE) {
+  w <- if (higher_is_worse) pct else 100 - pct
+  out <- ifelse(w >= 50,
+                sprintf("Top %d%% %s", as.integer(pmax(1, ceiling(100 - w))), frame_label),
+                sprintf("Bottom %d%% %s", as.integer(pmax(1, ceiling(w))), frame_label))
+  out[is.na(w)] <- NA_character_
+  out
+}
+
 # ── Stress now: Sahm-style YoY unemployment momentum (spec §9.1) ─────────────
 #' County data is not seasonally adjusted, so the latest 3 months are compared
 #' with the same 3 months a year earlier. Each window needs laus_min_months.
