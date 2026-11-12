@@ -25,7 +25,8 @@ test_that("every tract layer gets a MOE and a noise flag", {
   x <- tract_moe_flags(.derive_metrics(tract_wide(
     labor_forceE = 50, unemployedE = 2, unemployedM = 10, labor_forceM = 5,
     median_hh_incomeE = 50000, median_hh_incomeM = 60000)))
-  for (v in .tract_vars()) {
+  # Assistance layers are derived from these ACS columns and carry no MOE of their own.
+  for (v in intersect(.tract_vars(), names(VAR_CFG))) {
     expect_true(paste0(v, "_moe") %in% names(x), info = v)
     expect_true(paste0("noisy_", v) %in% names(x), info = v)
   }

@@ -305,6 +305,8 @@ ui <- dashboardPage(
                   tags$br(),
                   " Stress ahead: national sector payroll momentum (6-mo.) applied to each county's resident industry mix; gap vs. the US.",
                   tags$br(),
+                  " Assistance: where help may be needed soonest. Exposure of the local industry mix (LODES jobs by home tract, ACS where unavailable) to weakening sectors, thin financial cushion (rent burden, poverty, low-wage and young workers) and county job pressure. Counts are index headcounts, not layoff forecasts.",
+                  tags$br(),
                   " Context layers: Census ACS 5-year estimates.",
                   " Migration: Census PEP county components of change (per 1,000 residents).",
                   tags$br(),

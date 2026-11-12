@@ -54,7 +54,7 @@ test_that("migration layers are registered with a per1k diverging palette", {
   ids <- c("mig_dom", "mig_intl", "mig_net", "mig_dom_cum")
   expect_equal(unname(risk_lens_choices("migration")), ids)
   expect_equal(risk_lens_default("migration"), "mig_dom")
-  expect_equal(unname(RISK_LENSES), c("migration", "context"))
+  expect_equal(unname(RISK_LENSES), c("assistance", "migration", "context"))
   expect_equal(.risk_fmt(c(5.5, -0.11, NA), "per1k"),
                c("+5.5 per 1,000", "-0.1 per 1,000", NA))
 })

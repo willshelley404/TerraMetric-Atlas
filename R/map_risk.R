@@ -59,24 +59,30 @@ risk_tooltips_vec <- function(title, subtitle = NA, value_text, rank_text = NA,
 #' character vectors when the label differs per element; values: list of k
 #' character vectors (one value per element); worse: list of k logical vectors.
 #' A NULL element of values/worse (a missing column) counts as all-NA/FALSE; `n` is the
-#' element count (default: the longest of values). Elements whose values are all NA get "".
-risk_drivers_vec <- function(labels, values, worse, n = max(lengths(values))) {
+#' element count (default: the longest of values). Rows with an NA value are omitted,
+#' and each element shows at most its first `max_rows` present rows. Elements whose
+#' values are all NA get "".
+risk_drivers_vec <- function(labels, values, worse, n = max(lengths(values)), max_rows = 3) {
   c <- .RISK_COL
   fill <- function(x, na) rep_len(if (is.null(x)) na else x, n)    # NULL = missing column
   labels <- if (is.list(labels)) unlist(lapply(labels, fill, NA_character_)) else
     rep(labels, each = n)
   vm <- matrix(unlist(lapply(values, fill, NA_character_)), nrow = n)   # n x k
   wm <- matrix(unlist(lapply(worse, fill, FALSE)), nrow = n) %in% TRUE
+  seen <- matrix(0L, nrow = n, ncol = ncol(vm))   # present rows so far, left to right
+  run <- rep(0L, n)
+  for (j in seq_len(ncol(vm))) { run <- run + !is.na(vm[, j]); seen[, j] <- run }
+  hide <- is.na(vm) | seen > max_rows
   rows <- matrix(sprintf(
     paste0('<div style="display:flex;justify-content:space-between;gap:8px;">',
            '<span>%s</span><span style="font-weight:600;color:%s;">%s</span></div>'),
     .tt_esc(labels), ifelse(wm, c$worse, c$text), .tt_esc(vm)), nrow = n)
-  rows[is.na(vm)] <- ""
+  rows[hide] <- ""
   out <- paste0(
     sprintf('<hr style="border:0;border-top:1px solid %s;margin:7px 0;"/>', c$border),
     sprintf('<div style="color:%s;font-size:11px;">Driven by</div>', c$muted),
     apply(rows, 1, paste, collapse = ""))
-  ifelse(rowSums(!is.na(vm)) > 0, out, "")
+  ifelse(rowSums(!hide) > 0, out, "")
 }
 
 #' Single tooltip. drivers: data.frame(label, value_text, worse) — first 3 shown.
@@ -112,6 +118,26 @@ RISK_LAYERS <- c(
     loading_text = "loading sector payrolls and county industry mix…",
     partial_text = "partial: some sector data missing",
     bins = c(-50, -0.6, -0.3, -0.1, 0.1, 0.3, 0.6, 50))),
+  local({
+    # A tract is noisy here when either cushion input from the ACS is.
+    asg <- function(label, col, fmt, source, ...) list(
+      label = label, col = col, fmt = fmt, pal = "YlOrRd", rev = FALSE,
+      higher_is_worse = TRUE, source = source, levels = c("county", "tract"),
+      lens = "assistance", noisy_cols = c("noisy_poverty_rate", "noisy_rent_burden_rate"),
+      loading_text = "loading sector payrolls and county industry mix…", ...)
+    src <- "LODES / ACS × CES sector weights"
+    list(
+      assist_score = asg("Assistance need score (0–100)", "assist_score", "score", src,
+                         bins = c(0, 20, 35, 50, 65, 80, 101),
+                         bin_labels = c("0–20", "20–35", "35–50", "50–65", "65–80", "80–100")),
+      assist_exposure = asg("Exposure to weakening sectors (index)", "assist_exposure",
+                            "score", src),
+      assist_cushion = asg("Thin financial cushion (percentile)", "assist_cushion", "score",
+                           "LODES / ACS"),
+      assist_workers = asg(
+        "Exposure-weighted workers (index headcount, not a layoff forecast)",
+        "assist_workers", "n", src))
+  }),
   stats::setNames(lapply(names(VAR_CFG), function(id) {
     v <- VAR_CFG[[id]]
     list(label = v$label, col = id, fmt = v$fmt, pal = v$pal, rev = v$rev,
@@ -135,7 +161,7 @@ RISK_LAYERS <- c(
 )
 
 # Lenses in display order; only lenses that have layers.
-RISK_LENSES <- c("Migration" = "migration", "Context" = "context")
+RISK_LENSES <- c("Assistance" = "assistance", "Migration" = "migration", "Context" = "context")
 
 #' Layer ids (values) and labels (names) of one lens, in registry order.
 risk_lens_choices <- function(lens) {
@@ -159,6 +185,8 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
       sprintf(paste0("%+.", digits, "f pp"), r)
     },
     "per1k" = sprintf("%+.1f per 1,000", v),
+    "score" = sprintf("%.0f", v),
+    "n"  = formatC(round(v), big.mark = ",", format = "d"),
     sprintf("%.1f%%", v))
   out[is.na(v)] <- NA_character_
   out
@@ -169,6 +197,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
     return(leaflet::colorBin(cfg$pal, domain = range(cfg$bins), reverse = cfg$rev,
                              bins = cfg$bins, na.color = "#555566"))
   }
+  if (all(is.na(vals))) vals <- c(0, 1)      # nothing loaded yet: a grey map, not an error
   brks <- unique(stats::quantile(vals, seq(0, 1, length.out = 8), na.rm = TRUE))
   if (length(brks) < 3) brks <- 7
   leaflet::colorBin(cfg$pal, domain = vals, bins = brks, reverse = cfg$rev,
@@ -208,6 +237,35 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
     .tt_esc(lines)), "")
 }
 
+# Assistance tooltip helpers: a missing column is NULL (risk_drivers_vec reads it as NA).
+.drv_text <- function(d, cols, fmt = "%") lapply(cols, function(col)
+  if (is.null(d[[col]])) NULL else .risk_fmt(as.numeric(d[[col]]), fmt))
+.drv_worse <- function(d, cols) lapply(cols, function(col)
+  if (is.null(d[[col]])) NULL else as.numeric(d[[col]]) >= 50)
+
+#' 82 -> "82nd".
+.ordinal <- function(n) {
+  n <- as.integer(round(n))
+  suf <- ifelse(n %% 100 %in% 11:13, "th",
+                c("th", "st", "nd", "rd", "th", "th", "th", "th", "th", "th")[n %% 10 + 1])
+  ifelse(is.na(n), NA_character_, paste0(n, suf))
+}
+
+.job_pressure_line <- function(j) {
+  ifelse(is.na(j), "Job pressure: missing (BLS/FRED unavailable)",
+         sprintf("Job pressure: %s percentile", .ordinal(100 * j)))
+}
+
+#' TRUE where a value's margin of error is flagged: any of the layer's noisy columns
+#' (default: its own), so assistance layers inherit the cushion inputs' flags.
+.noisy_flags <- function(d, cfg) {
+  cols <- if (is.null(cfg$noisy_cols)) paste0("noisy_", cfg$col) else cfg$noisy_cols
+  d <- .plain_df(d)
+  out <- rep(FALSE, nrow(d))
+  for (col in intersect(cols, names(d))) out <- out | (d[[col]] %in% TRUE)
+  out
+}
+
 .county_tooltips <- function(d, id, cfg, asof, status = "ok") {
   if (identical(status, "loading")) {
     return(risk_tooltips_vec(title = d$name, value_text = "Loading…",
@@ -244,12 +302,20 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
         ifelse(is.na(v), NA_character_, sprintf("%+.2f pp", v))
       }),
       lapply(1:3, function(k) has_drag & pick(k, "pp") < 0))
+  } else if (identical(cfg$lens, "assistance")) {
+    risk_drivers_vec(
+      c("Workers in weakening sectors", "Renters cost-burdened", "Poverty rate"),
+      .drv_text(d, c("weak_share", "rent_burden_rate", "poverty_rate")),
+      .drv_worse(d, c("pct_weak_share", "pct_rent_burden_rate", "pct_poverty_rate")))
   } else ""
+  job_line <- if (identical(cfg$lens, "assistance")) .standing_html(.job_pressure_line(
+    if (is.null(d$job_pressure)) rep(NA_real_, nrow(d)) else d$job_pressure)) else ""
   risk_tooltips_vec(title = d$name, subtitle = subs, value_text = vtxt,
                     rank_text = rank_label(pct, cfg$rank_frame %||% "nationally"),
                     footer = footer, drivers_html = drivers,
                     rank_bad = .rank_bad(pct, cfg, d[[cfg$col]]),
-                    standing = paste0(.standing_html(.migration_line(d, attr(d, "pep_vintage"))),
+                    standing = paste0(job_line,
+                                      .standing_html(.migration_line(d, attr(d, "pep_vintage"))),
                                       .standing_html(.metro_line_rows(d))))
 }
 
@@ -300,6 +366,8 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
     "$"  = leaflet::labelFormat(prefix = "$", big.mark = ",", digits = 0),
     "pp" = leaflet::labelFormat(suffix = " pp", digits = cfg$digits %||% 1),
     "per1k" = leaflet::labelFormat(suffix = " per 1,000", digits = 1),
+    "score" = leaflet::labelFormat(digits = 0),
+    "n"  = leaflet::labelFormat(big.mark = ",", digits = 0),
     leaflet::labelFormat(suffix = "%", digits = 1))
 }
 
@@ -347,11 +415,33 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
   lm <- rank_label(lm_pct, t$frame_label)
   st <- rank_label(t[[paste0("st_pct_", cfg$col)]], t$state_label)
   footer <- paste0(cfg$source, ", ", asof, ifelse(noisy, " · High margin of error", ""))
+  drivers <- if (identical(cfg$lens, "assistance")) {
+    ins <- c("weak_share", "low_wage_share", "rent_burden_rate")
+    risk_drivers_vec(
+      c("Workers in weakening sectors", "Low-wage workers (≤$1,250/mo)",
+        "Renters cost-burdened", "≈ Exposure-weighted workers"),
+      c(.drv_text(t, ins), .drv_text(t, "assist_workers", "n")),
+      c(.drv_worse(t, paste0("lm_pct_", ins)), list(FALSE)),   # above the median is red
+      n = nrow(t), max_rows = 4)
+  } else ""
   risk_tooltips_vec(title = t$tract_name, value_text = vtxt, rank_text = lm,
-                    rank_sub = st, footer = footer,
+                    rank_sub = st, footer = footer, drivers_html = drivers,
                     rank_bad = .rank_bad(lm_pct, cfg, as.numeric(t[[cfg$col]])),
                     standing = .standing_html(
                       .metro_line_rows(t, county_layers, key = "county_geoid")))
+}
+
+# A binned layer keeps its own bin labels (no "80 – 101"); others use the palette's.
+add_tract_legend <- function(map, pal, vals, cfg, lbl_fmt, title) {
+  if (is.null(cfg$bin_labels)) {
+    return(leaflet::addLegend(map, pal = pal, values = vals, opacity = 0.9,
+                              layerId = "risk_legend", position = "bottomright",
+                              labFormat = lbl_fmt, title = title))
+  }
+  b <- cfg$bins
+  leaflet::addLegend(map, colors = pal((b[-1] + b[-length(b)]) / 2), labels = cfg$bin_labels,
+                     opacity = 0.9, layerId = "risk_legend", position = "bottomright",
+                     title = title)
 }
 
 #' Dim counties and draw the frame's tracts for a tract-level layer. For a
@@ -371,9 +461,7 @@ add_tract_layer <- function(map, tracts, layer_id, county_layers, fit = TRUE) {
   asof <- attr(county_layers, "asof")[[layer_id]]
   vals <- as.numeric(tracts[[cfg$col]])
   pal <- .risk_palette(cfg, vals)
-  noisy_col <- paste0("noisy_", cfg$col)
-  noisy <- if (noisy_col %in% names(tracts)) tracts[[noisy_col]] %in% TRUE else
-    rep(FALSE, nrow(tracts))
+  noisy <- .noisy_flags(tracts, cfg)
   lbl_fmt <- .legend_format(cfg)
 
   .add_county_polygons(map, county_layers, layer_id, 0.25) |>
@@ -389,10 +477,8 @@ add_tract_layer <- function(map, tracts, layer_id, county_layers, fit = TRUE) {
       highlightOptions = leaflet::highlightOptions(color = .RISK_COL$accent, weight = 2)
     ) |>
     leaflet::removeControl("risk_legend") |>
-    leaflet::addLegend(pal = pal, values = vals, opacity = 0.9, layerId = "risk_legend",
-                       position = "bottomright", labFormat = lbl_fmt,
-                       title = .legend_title(cfg, "ok", asof,
-                                             scope = paste("tracts", tracts$frame_label[1]))) |>
+    add_tract_legend(pal, vals, cfg, lbl_fmt,
+                     .legend_title(cfg, "ok", asof, scope = paste("tracts", tracts$frame_label[1]))) |>
     fit_to()
 }
 
@@ -479,9 +565,50 @@ reset_to_us <- function(map, county_layers, layer_id) {
                      "a leading indicator, not in the score."), tp)))
 }
 
+#' Assistance notes for the side panel (divs, not rows): industry-mix source, the
+#' exposure-weighted headcount with its caveat, rent-burdened households (tract only)
+#' and county job pressure. NULL when the area has no assistance values.
+#' `sources`: state FIPS -> source text of the loaded tract frame (fallback for a tract
+#' missing from the job table; per-state list when LODES and ACS are mixed).
+.assist_panel <- function(a, level, county_layers, st_names, sources = character(0)) {
+  get <- function(col) if (col %in% names(a)) a[[col]][1] else NA
+  workers <- as.numeric(get("assist_workers"))
+  if (is.na(workers) && is.na(as.numeric(get("assist_score")))) return(NULL)
+  tg <- htmltools::tags; c <- .RISK_COL
+  line <- function(txt, color = c$text) tg$div(style = sprintf("color:%s;margin:2px 0;", color), txt)
+  src <- if (level == "tract") {
+    s <- as.character(get("assist_source"))
+    if (is.na(s)) s <- unname(sources[substr(get("GEOID"), 1, 2)])
+    if (length(s) == 0) NA_character_ else s
+  } else {
+    y <- attr(county_layers, "acs_year")
+    if (is.null(y)) NA_character_ else sprintf("ACS %d–%d (county)", y - 4, y)
+  }
+  have <- sources[!is.na(sources)]
+  mixed <- level == "tract" && length(unique(have)) > 1
+  hh <- as.numeric(get("rent_burdened_hh"))
+  j <- as.numeric(get("job_pressure"))
+  tg$div(
+    style = sprintf("margin-top:10px;border-top:1px solid %s;padding-top:8px;", c$border),
+    tg$div(style = sprintf("color:%s;margin-bottom:4px;", c$muted), "Assistance score inputs"),
+    if (!is.na(src)) line(paste("Industry mix source:", src)),
+    if (mixed) line(color = c$warn, paste0(
+      "Industry mix source by state: ",
+      paste(sprintf("%s — %s%s", unname(st_names[names(have)]), have,
+                    ifelse(startsWith(have, "ACS"), " (cushion uses 2 inputs there)", "")),
+            collapse = "; "))),
+    if (!is.na(workers)) line(sprintf(
+      "Exposure-weighted workers: %s (index headcount, not a layoff forecast)",
+      .risk_fmt(workers, "n"))),
+    if (level == "tract" && !is.na(hh)) line(sprintf(
+      "Rent-burdened renter households: %s (ACS estimate)", .risk_fmt(hh, "n"))),
+    line(if (is.na(j)) "County job pressure: missing (BLS/FRED unavailable)" else
+      sprintf("County job pressure: %s percentile", .ordinal(100 * j))))
+}
+
 # ── Side panel: full component breakdown for the selected county or tract ────
 risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
-                            missing_states = character(0)) {
+                            missing_states = character(0), sources = character(0)) {
   level <- match.arg(level)
   tg <- htmltools::tags; c <- .RISK_COL
   a <- .plain_df(area)[1, , drop = FALSE]
@@ -505,9 +632,7 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
     }
     moe <- get(paste0(cfg$col, "_moe"))
     if (level == "tract" && !is.na(v) && !is.na(moe)) vt <- sprintf("%s ± %.1f", vt, moe)
-    if (level == "tract" && isTRUE(get(paste0("noisy_", cfg$col)))) {
-      noisy_labels <<- c(noisy_labels, cfg$label)
-    }
+    if (level == "tract" && .noisy_flags(a, cfg)) noisy_labels <<- c(noisy_labels, cfg$label)
     when <- if (identical(status[[id]], "unavailable")) "unavailable" else
       if (is.na(asof[[id]])) "loading" else asof[[id]]
     pcts <- if (level == "county") list(td(rk(get(paste0("pct_", cfg$col)), cfg$higher_is_worse))) else
@@ -544,6 +669,7 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
       style = "border-collapse:collapse;width:100%;",
       tg$tr(style = sprintf("color:%s;text-align:left;", c$muted), lapply(head, tg$th)),
       rows)),
+    .assist_panel(a, level, county_layers, st_names, sources),
     if (level == "county" && !is.null(vintage)) .migration_panel(a, vintage),
     if (level == "county") .industry_panel(a, attr(county_layers, "sector_weights"),
                                           attr(county_layers, "acs_year")),

@@ -1540,8 +1540,11 @@ server <- function(input, output, session) {
     }
     row <- risk_selected_row()
     req(row, nrow(row) > 0)
+    # Not %||%: it is scalar in the app.
+    src <- rv$risk_tracts$sources
     risk_side_panel(row, rv$risk_sel$level, rv$county_layers,
-                    rv$risk_tracts$missing_states %||% character(0))
+                    rv$risk_tracts$missing_states %||% character(0),
+                    sources = if (is.null(src)) character(0) else src)
   })
 
   # Metro CBSA rankings table

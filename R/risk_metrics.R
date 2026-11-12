@@ -230,7 +230,7 @@ tracts_for_county <- function(county_geoid, county_base, fetch = fetch_state_tra
   jobs_all <- if (all(vapply(jobs, is.null, logical(1)))) NULL else dplyr::bind_rows(jobs)
   tr <- assistance_tracts(do.call(rbind, got), jobs_all, weights, county_base, fr$counties)
   rank_vars <- union(vars, c("assist_score", "assist_exposure", "assist_cushion",
-                             "assist_workers"))
+                             "assist_workers", "weak_share", "low_wage_share"))
   ranked <- rank_tracts(tr, cb, fr$counties, rank_vars)
   out$tracts <- ranked[ranked$county_geoid %in% fr$counties, ]
   out
@@ -267,7 +267,7 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
   if (is.null(stress_ahead)) {
     for (col in c("proj_pct", "us_proj_pct", "stress_ahead_pp", paste0("sa_drv", 1:3, "_pp"),
                   paste0("sa_lift", 1:3, "_pp"),
-                  paste0("share_", RISK_SECTORS$group))) out[[col]] <- NA_real_
+                  paste0("share_", RISK_SECTORS$group), "emp_total")) out[[col]] <- NA_real_
     for (col in c(paste0("sa_drv", 1:3, "_label"), paste0("sa_lift", 1:3, "_label")))
       out[[col]] <- NA_character_
   } else {
@@ -283,10 +283,22 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
                          metro_ref_month = metro_momentum$ref_month)
     out <- dplyr::left_join(out, mm, by = "cbsa_geoid")
   }
-  for (id in names(RISK_LAYERS)) {
-    col <- RISK_LAYERS[[id]]$col
-    out[[paste0("pct_", col)]] <- pct_rank(out[[col]])
+  # Not %||%: the app redefines it, and a data frame is not a scalar.
+  weights <- if (!is.null(sector_weights)) sector_weights else
+    if (is.null(stress_ahead)) NULL else attr(stress_ahead, "weights")
+  is_assist <- vapply(RISK_LAYERS, function(l) identical(l$lens, "assistance"), TRUE)
+  add_pct <- function(out, ids) {
+    for (id in ids) {
+      col <- RISK_LAYERS[[id]]$col
+      out[[paste0("pct_", col)]] <- pct_rank(out[[col]])
+    }
+    out
   }
+  out <- add_pct(out, names(RISK_LAYERS)[!is_assist])
+  # The assistance score needs J, which needs the Stress now / ahead percentiles above.
+  out <- county_assistance(out, weights)
+  out <- add_pct(out, names(RISK_LAYERS)[is_assist])
+  out$pct_weak_share <- pct_rank(out$weak_share)
 
   yr <- attr(county_base, "acs_year")
   ids <- names(RISK_LAYERS)
@@ -315,13 +327,47 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
   rm_sa <- if (is.null(stress_ahead)) NULL else attr(stress_ahead, "ref_month")
   asof[["stress_ahead"]] <- if (is.null(rm_sa) || is.na(rm_sa)) NA_character_ else
     sprintf("CES %s · ACS %d–%d", format(rm_sa, "%b %Y"), yr - 4, yr)
+  # Assistance needs the county industry mix as well as the weights.
+  ces <- if (is.null(weights)) NULL else attr(weights, "ref_month")
+  for (id in names(RISK_LAYERS)[is_assist]) {
+    status[[id]] <- if ("stress_ahead" %in% loading) "loading" else
+      if (is.null(weights) || is.null(stress_ahead)) "unavailable" else "ok"
+    asof[[id]] <- if (status[[id]] != "ok") NA_character_ else
+      paste0(sprintf("ACS %d–%d", yr - 4, yr),
+             if (length(ces) == 1 && !is.na(ces)) format(ces, " · CES %b %Y") else "")
+  }
   attr(out, "layer_status") <- status
   attr(out, "asof") <- asof
   attr(out, "acs_year") <- yr
-  # Not %||%: the app redefines it, and a data frame is not a scalar.
-  attr(out, "sector_weights") <- if (!is.null(sector_weights)) sector_weights else
-    if (is.null(stress_ahead)) NULL else attr(stress_ahead, "weights")
+  attr(out, "sector_weights") <- weights
   if (!is.null(v)) attr(out, "pep_vintage") <- v
+  out
+}
+
+#' County assistance values (national frame): exposure to weakening sectors from the
+#' county industry mix (jobs = share x emp_total), cushion from rent burden and poverty,
+#' and the job pressure J from the Stress now / ahead percentiles already on `out`.
+#' All NA when `weights` is NULL or the county shares are missing.
+county_assistance <- function(out, weights) {
+  n <- nrow(out)
+  d <- .plain_df(out)
+  total <- if ("emp_total" %in% names(d)) as.numeric(d$emp_total) else rep(NA_real_, n)
+  jobs <- tibble::tibble(GEOID = d$GEOID, jobs_total = total)
+  for (i in seq_len(nrow(RISK_SECTORS))) {
+    jobs[[.JOB_COLS[i]]] <- as.numeric(d[[paste0("share_", RISK_SECTORS$group[i])]]) * total
+  }
+  e <- exposure_from_jobs(jobs, weights)
+  out$job_pressure <- job_pressure(d)
+  out$exposure <- e$exposure
+  out$exp_workers <- e$exp_workers
+  out$weak_share <- e$weak_share
+  s <- assistance_score(e$exposure, d[c("rent_burden_rate", "poverty_rate")],
+                        out$job_pressure, rep("us", n))
+  blank <- is.null(weights)
+  out$assist_score <- s$score
+  out$assist_exposure <- round(100 * e$exposure, 1)
+  out$assist_cushion <- if (blank) rep(NA_real_, n) else s$pct_cushion
+  out$assist_workers <- e$exp_workers
   out
 }
 
@@ -510,6 +556,7 @@ stress_ahead <- function(ind, weights) {
   out <- add_top(out, "sa_drv", top3(FALSE), function(pp) pp < 0)    # only real drags
   out <- add_top(out, "sa_lift", top3(TRUE), function(pp) pp > 0)    # shown when none drag
   for (i in seq_along(groups)) out[[paste0("share_", groups[i])]] <- share[, i]
+  out$emp_total <- as.numeric(total)   # share x emp_total recovers jobs for the assistance lens
   for (a in c("ref_month", "temphelp_m_pct")) attr(out, a) <- attr(weights, a)
   attr(out, "acs_year") <- attr(ind, "acs_year")
   attr(out, "partial") <- partial
