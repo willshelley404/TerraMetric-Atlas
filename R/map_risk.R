@@ -107,6 +107,7 @@ RISK_LAYERS <- c(
     higher_is_worse = FALSE, digits = 2, source = "BLS CES (FRED) × ACS industry mix",
     levels = "county", lens = "context",
     loading_text = "loading sector payrolls and county industry mix…",
+    partial_text = "partial: some sector data missing",
     bins = c(-50, -0.6, -0.3, -0.1, 0.1, 0.3, 0.6, 50))),
   stats::setNames(lapply(names(VAR_CFG), function(id) {
     v <- VAR_CFG[[id]]
@@ -278,7 +279,8 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
     } else
       paste0(if (!is.null(scope)) paste0(scope, " · "), cfg$source, ", ", asof,
              if (identical(status, "stale")) " (stale)",
-             if (identical(status, "partial")) " (partial: some counties missing, retrying later)")
+             if (identical(status, "partial"))
+               paste0(" (", cfg$partial_text %||% "partial: some counties missing, retrying later", ")"))
   paste0(head, "<br><small style='font-weight:400;'>", htmltools::htmlEscape(sub), "</small>")
 }
 

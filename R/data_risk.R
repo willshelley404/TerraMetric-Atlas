@@ -508,19 +508,25 @@ fetch_pep_county <- function(vintage = NULL) {
 
 #' Monthly SA payrolls for the 13 sector series, TEMPHELPS (optional) and the
 #' NBER USREC flag since `start`, cached 1 day. NULL when there is no API key or
-#' any sector series / USREC fails.
-fetch_fred_sectors <- function(start = as.Date("2000-01-01")) {
+#' any sector series / USREC fails or comes back empty (a missing sector must not
+#' pass for zero momentum). `pull(series_id, start)` is injectable for tests.
+.fred_pull_series <- function(s, start) {
+  r <- fredr::fredr(series_id = s, observation_start = start)
+  tibble::tibble(series_id = s, date = as.Date(r$date), value = as.numeric(r$value))
+}
+
+fetch_fred_sectors <- function(start = as.Date("2000-01-01"), pull = .fred_pull_series) {
   required <- c(RISK_SECTORS$fred, "USREC")
   risk_cached("fred_sectors_v1", 1, fail_ttl_days = 1 / 24,
               bg = list(id = "fred_sectors", fn = "fetch_fred_sectors", args = list()),
               fetch_fn = function() {
     if (!nzchar(Sys.getenv("FRED_API_KEY"))) return(NULL)
-    pull <- function(s) {
-      r <- fredr::fredr(series_id = s, observation_start = start)
-      tibble::tibble(series_id = s, date = as.Date(r$date), value = as.numeric(r$value))
-    }
     got <- lapply(c(required, "TEMPHELPS"), function(s)
-      tryCatch(pull(s), error = function(e) {
+      tryCatch({
+        d <- pull(s, start)
+        if (nrow(d) == 0) stop("no observations")
+        d
+      }, error = function(e) {
         message(sprintf("[risk] FRED %s failed: %s", s, conditionMessage(e)))
         NULL
       }))

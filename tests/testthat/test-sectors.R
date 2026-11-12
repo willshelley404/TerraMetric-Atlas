@@ -66,7 +66,7 @@ test_that("recession episodes split on gaps and honour `since`", {
 
 test_that("structural decline is peak to trough", {
   w <- sector_weights(sector_fixture())
-  expect_equal(w$structural[w$group == "manufacturing"], 10, tolerance = 0.5)
+  expect_lt(abs(w$structural[w$group == "manufacturing"] - 10), 0.5)
   expect_equal(w$structural[w$group == "educ_health"], 0, tolerance = 1e-6)
 })
 
@@ -98,4 +98,55 @@ test_that("fetch_fred_sectors returns NULL without an API key", {
   risk_cache_clear_memory()
   expect_null(suppressMessages(fetch_fred_sectors()))
   risk_cache_clear_memory()
+})
+
+# fetch_fred_sectors with a fake per-series pull (no network, throwaway cache).
+fred_with <- function(pull) {
+  key <- Sys.getenv("FRED_API_KEY", unset = NA)
+  old <- options(risk.cache_dir = tempfile("riskcache"), risk.seed_dir = "")
+  on.exit({
+    options(old)
+    if (is.na(key)) Sys.unsetenv("FRED_API_KEY") else Sys.setenv(FRED_API_KEY = key)
+    risk_cache_clear_memory()
+  })
+  dir.create(getOption("risk.cache_dir"))
+  Sys.setenv(FRED_API_KEY = "test-key")
+  risk_cache_clear_memory()
+  suppressMessages(fetch_fred_sectors(pull = pull))
+}
+fake_pull <- function(fail = character(0), empty = character(0)) {
+  function(s, start) {
+    if (s %in% fail) stop("boom")
+    if (s %in% empty) return(tibble::tibble(series_id = character(), date = as.Date(character()),
+                                            value = numeric()))
+    tibble::tibble(series_id = s, date = as.Date(c("2026-09-01", "2026-10-01")), value = c(1, 2))
+  }
+}
+
+test_that("fetch_fred_sectors binds every series when all pulls succeed", {
+  out <- fred_with(fake_pull())
+  expect_setequal(unique(out$series_id), c(RISK_SECTORS$fred, "USREC", "TEMPHELPS"))
+})
+
+test_that("a failed required series makes the whole pull NULL; TEMPHELPS is optional", {
+  expect_null(fred_with(fake_pull(fail = "USMINE")))
+  expect_null(fred_with(fake_pull(fail = "USREC")))
+  out <- fred_with(fake_pull(fail = "TEMPHELPS"))
+  expect_false("TEMPHELPS" %in% out$series_id)
+})
+
+test_that("a 0-row required series counts as failed, not as zero momentum", {
+  expect_null(fred_with(fake_pull(empty = "USCONS")))
+  expect_null(fred_with(fake_pull(empty = "USREC")))
+})
+
+test_that("a sector with no momentum has NA current_z, not 0, and a finite weight", {
+  f <- sector_fixture()
+  # Drop USCONS' base month (6 back from the last obs) so its momentum is NA.
+  f <- f[!(f$series_id == "USCONS" & f$date == as.Date("2026-04-01")), ]
+  w <- sector_weights(f)
+  expect_true(is.na(w$m_pct[w$group == "construction"]))
+  expect_true(is.na(w$current_z[w$group == "construction"]))
+  expect_equal(w$current_z[w$group == "retail"], 0)    # real momentum, no spread: still 0
+  expect_true(all(is.finite(w$w)))
 })

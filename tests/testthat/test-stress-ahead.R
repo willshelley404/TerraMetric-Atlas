@@ -145,3 +145,25 @@ test_that("a value that displays as zero is never a red pill", {
   expect_false(grepl("#ff8787", tips[1], fixed = TRUE))          # pill text colour of a red pill
   expect_true(grepl("+0.08 pp", tips[2], fixed = TRUE))
 })
+
+test_that("missing sector momentum counts as 0 in the sum but flags the result partial", {
+  w <- fx_weights(); w$m_pct[w$group == "retail"] <- NA
+  s <- stress_ahead(fx_industry(), w)
+  expect_true(isTRUE(attr(s, "partial")))
+  w0 <- fx_weights(); w0$m_pct[w0$group == "retail"] <- 0
+  expect_equal(s$stress_ahead_pp, stress_ahead(fx_industry(), w0)$stress_ahead_pp)
+  expect_false(isTRUE(attr(stress_ahead(fx_industry(), fx_weights()), "partial")))
+})
+
+test_that("partial Stress ahead is marked partial in status and legend; stale wins", {
+  w <- fx_weights(); w$m_pct[w$group == "retail"] <- NA
+  sa <- stress_ahead(fx_industry(), w)
+  l <- build_county_layers(fx_county_base(), fx_momentum(), stress_ahead = sa, sector_weights = w)
+  expect_equal(attr(l, "layer_status")[["stress_ahead"]], "partial")
+  m <- build_risk_county_map(l, "stress_ahead")
+  title <- Filter(function(cl) cl$method == "addLegend", m$x$calls)[[1]]$args[[1]]$title
+  expect_true(grepl("partial", title, fixed = TRUE))
+  attr(sa, "stale") <- TRUE
+  l2 <- build_county_layers(fx_county_base(), fx_momentum(), stress_ahead = sa)
+  expect_equal(attr(l2, "layer_status")[["stress_ahead"]], "stale")
+})

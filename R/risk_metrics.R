@@ -276,7 +276,8 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
   }
   status[["stress_ahead"]] <- if ("stress_ahead" %in% loading) "loading" else
     if (is.null(stress_ahead)) "unavailable" else
-      if (isTRUE(attr(stress_ahead, "stale"))) "stale" else "ok"
+      if (isTRUE(attr(stress_ahead, "stale"))) "stale" else
+        if (isTRUE(attr(stress_ahead, "partial"))) "partial" else "ok"
   rm_sa <- if (is.null(stress_ahead)) NULL else attr(stress_ahead, "ref_month")
   asof[["stress_ahead"]] <- if (is.null(rm_sa) || is.na(rm_sa)) NA_character_ else
     sprintf("CES %s · ACS %d–%d", format(rm_sa, "%b %Y"), yr - 4, yr)
@@ -413,15 +414,19 @@ sector_weights <- function(fred, cfg = RISK_CFG) {
     m_now <- mom$m_pct[mom$series_id == s]
     if (length(m_now) == 0) m_now <- NA_real_
     sdv <- if (length(hist) > 1) stats::sd(hist) else NA_real_
-    # Flat or constant-growth history has no spread; call that "not unusual".
-    z <- if (is.na(sdv) || sdv < 1e-8 || is.na(m_now)) 0 else (-m_now - mean(hist)) / sdv
+    # No momentum now is unknown (NA). Flat or constant-growth history has no spread;
+    # call that "not unusual" (0).
+    z <- if (is.na(m_now)) NA_real_ else
+      if (is.na(sdv) || sdv < 1e-8) 0 else (-m_now - mean(hist)) / sdv
     tibble::tibble(fred = s, m_pct = m_now,
                    structural = .structural_decline(d, episodes, cfg), current_z = z)
   })
   out <- dplyr::left_join(RISK_SECTORS[c("group", "label", "fred")],
                           dplyr::bind_rows(rows), by = "fred")
-  out$w <- cfg$w_structural * .rescale01(out$structural) +
-           cfg$w_current * .rescale01(out$current_z)
+  cur <- .rescale01(out$current_z)
+  # A sector with no current reading is weighed on its recession history alone.
+  out$w <- ifelse(is.na(cur), .rescale01(out$structural),
+                  cfg$w_structural * .rescale01(out$structural) + cfg$w_current * cur)
   out <- tibble::as_tibble(out)
   attr(out, "ref_month") <- suppressWarnings(
     max(mom$ref_month[mom$series_id %in% RISK_SECTORS$fred]))
@@ -438,7 +443,8 @@ stress_ahead <- function(ind, weights) {
   groups <- RISK_SECTORS$group
   labels <- RISK_SECTORS$label
   m <- weights$m_pct[match(groups, weights$group)]
-  m[is.na(m)] <- 0                        # a sector with no momentum is neutral
+  partial <- anyNA(m)
+  m[is.na(m)] <- 0                        # counted as neutral, but the result is flagged
   emp <- as.matrix(as.data.frame(ind)[paste0("emp_", groups)])
   total <- ind$emp_total
   has <- !is.na(total) & total > 0
@@ -465,5 +471,6 @@ stress_ahead <- function(ind, weights) {
   for (i in seq_along(groups)) out[[paste0("share_", groups[i])]] <- share[, i]
   for (a in c("ref_month", "temphelp_m_pct")) attr(out, a) <- attr(weights, a)
   attr(out, "acs_year") <- attr(ind, "acs_year")
+  attr(out, "partial") <- partial
   out
 }
