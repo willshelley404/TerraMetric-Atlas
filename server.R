@@ -1444,7 +1444,10 @@ server <- function(input, output, session) {
     if (!risk_needs_credit(input$risk_lens, input$risk_layer) || isTRUE(rv$credit_requested)) return()
     rv$credit_requested <- TRUE
     if (!risk_try_part("Credit loading", credit_requested = TRUE,
-                       loading = union(rv$risk_parts$loading, "credit"))) return()
+                       loading = union(rv$risk_parts$loading, "credit"))) {
+      rv$credit_requested <- FALSE   # the parts were rolled back: let a later open retry
+      return()
+    }
     # Only the legend changes here: resending every county polygon would delay the fetch by
     # seconds. A lens switch reaches the layer select a round trip later, so name the layer
     # it will pick.

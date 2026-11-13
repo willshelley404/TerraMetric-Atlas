@@ -14,6 +14,9 @@ test_that("links pick newest thru and https", {
   expect_true(all(startsWith(urls, "https://files.consumerfinance.gov/")))
   expect_true(all(grepl("thru-2026-03[.]csv$", urls)))
   expect_match(ln$county_3089, "CountyMortgagesPercent-30-89DaysLate", fixed = FALSE)
+  # State files are optional extras: picked up (https) but not part of `thru`
+  expect_match(ln$state_90, "^https://files[.]consumerfinance[.]gov/.*StateMortgagesPercent-90-plus")
+  expect_match(ln$state_3089, "StateMortgagesPercent-30-89DaysLate-thru-2026-03[.]csv$")
 })
 
 test_that("a type with no link comes back NA", {
@@ -107,10 +110,11 @@ test_that("fetch keeps 13 months and returns NULL when a file fails", {
   fx <- function(name) paste(readLines(test_path("fixtures", name), warn = FALSE),
                              collapse = "\n")
   texts <- c(county_90 = fx("cfpb_county_90.csv"), county_3089 = fx("cfpb_county_3089.csv"),
-             metro_90 = fx("cfpb_metro_90.csv"), metro_3089 = fx("cfpb_metro_3089.csv"))
+             metro_90 = fx("cfpb_metro_90.csv"), metro_3089 = fx("cfpb_metro_3089.csv"),
+             state_90 = fx("cfpb_state_90.csv"), state_3089 = fx("cfpb_state_3089.csv"))
   get_text <- function(url) {
     if (grepl("download-the-data", url)) return(html)
-    kind <- if (grepl("MetroArea", url)) "metro" else "county"
+    kind <- if (grepl("MetroArea", url)) "metro" else if (grepl("State", url)) "state" else "county"
     sev <- if (grepl("90-plus", url)) "90" else "3089"
     texts[[paste0(kind, "_", sev)]]
   }
@@ -119,10 +123,45 @@ test_that("fetch keeps 13 months and returns NULL when a file fails", {
   expect_equal(length(unique(out$county90$date)), 13)
   expect_equal(min(out$county90$date), as.Date("2025-03-01"))
   expect_true("01003" %in% out$county90$id)
+  # State rows (national dropped, quotes stripped), last 13 months too
+  expect_setequal(out$state90$id, c("09", "13", "47"))
+  expect_equal(length(unique(out$state3089$date)), 13)
+  expect_equal(min(out$state90$date), as.Date("2025-03-01"))
+  # a failing state file leaves the rest intact (it is only a fallback)
+  no_state <- .cfpb_build(function(url) if (grepl("State", url)) stop("boom") else get_text(url))
+  expect_false(is.null(no_state))
+  expect_null(no_state$state90)
+  expect_equal(no_state$thru, "2026-03")
   expect_message(
     res <- .cfpb_build(function(url) if (grepl("Metro.*30-89", url)) stop("boom") else get_text(url)),
     "cfpb")
   expect_null(res)
+})
+
+test_that("state fallback fills counties the county, metro and non-metro rows miss", {
+  c90 <- cfpb_fx("cfpb_county_90.csv", "FIPSCode")
+  c3089 <- cfpb_fx("cfpb_county_3089.csv", "FIPSCode")
+  m90 <- cfpb_fx("cfpb_metro_90.csv", "CBSACode")
+  m3089 <- cfpb_fx("cfpb_metro_3089.csv", "CBSACode")
+  s90 <- cfpb_fx("cfpb_state_90.csv", "FIPSCode")
+  s3089 <- cfpb_fx("cfpb_state_3089.csv", "FIPSCode")
+  # CT planning region (no CBSA, no 09-non row), a GA county whose metro CBSA is missing
+  # from the metro file, a GA county with its own county row, and a state with no row.
+  args <- list(county_ids = c("09130", "13003", "13121", "99001"),
+               cbsa_of = c(NA, "99999", "12060", "99999"),
+               cbsa_type_of = c(NA, "metro", "metro", "metro"),
+               state_of = c("09", "13", "13", "99"),
+               county90 = c90, county3089 = c3089, metro90 = m90, metro3089 = m3089)
+  none <- do.call(cfpb_county_components, args)
+  expect_true(is.na(none$dq90[1]) && is.na(none$dq90[2]))        # NA without state tables
+  out <- do.call(cfpb_county_components, c(args, list(state90 = s90, state3089 = s3089)))
+  expect_equal(out$cfpb_source, c("state", "state", "county", NA))
+  expect_equal(out$dq90, c(1.3, 1.5, 1.8, NA))
+  expect_equal(out$dq3089_chg[1:2], c(2.1 - 1.6, 2.9 - 2.4), tolerance = 1e-9)
+  expect_equal(out$cfpb_month[1:3], rep(as.Date("2026-03-01"), 3))
+  # a state with a non-metro row still uses it before the state row
+  a <- cfpb_county_components("13001", NA, NA, "13", c90, c3089, m90, m3089, s90, s3089)
+  expect_equal(c(a$cfpb_source, a$dq90), c("state non-metro", "1.2"))
 })
 
 test_that("thru is the oldest of the four chosen files", {
@@ -287,4 +326,20 @@ test_that("msad build is NULL (with a log line) when tigris lacks metro_division
   expect_equal(got$msad_code, "16861")
   expect_message(bad <- .msad_build(fx_county_base(), function() stop("offline")), "offline")
   expect_null(bad)
+})
+
+test_that("credit sources remember a failure for an hour and time out after 30 s", {
+  seen <- list()
+  fake <- function(key, ttl_days, ...) { seen[[key]] <<- list(...); NULL }
+  orig <- risk_cached
+  assign("risk_cached", fake, envir = globalenv())
+  on.exit(assign("risk_cached", orig, envir = globalenv()), add = TRUE)
+  fetch_cfpb_mortgage(); fetch_urban_debt(); fetch_fhfa_hpi(); fetch_msad_xwalk()
+  expect_setequal(names(seen), c("cfpb_mortgage_v2", "urban_debt_v1", "fhfa_hpi_v1",
+                                 "msad_xwalk_2023"))
+  for (k in names(seen)) expect_equal(seen[[k]]$fail_ttl_days, 1 / 24, info = k)
+  got <- NULL
+  httr2::with_mocked_responses(function(req) { got <<- req; httr2::response_json(body = list()) },
+                               try(.cfpb_http_text("https://example.test/x.csv"), silent = TRUE))
+  expect_equal(got$options$timeout_ms, 30000)
 })

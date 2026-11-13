@@ -442,7 +442,8 @@ county_credit <- function(out, credit) {
   cfpb <- if (is.null(cf)) NULL else cfpb_county_components(
     county_ids = cb$GEOID, cbsa_of = cb$cbsa_geoid, cbsa_type_of = cb$cbsa_type,
     state_of = cb$state_fips, county90 = cf$county90, county3089 = cf$county3089,
-    metro90 = cf$metro90, metro3089 = cf$metro3089)
+    metro90 = cf$metro90, metro3089 = cf$metro3089,
+    state90 = cf$state90, state3089 = cf$state3089)
   hpi <- if (is.null(credit[["hpi"]])) NULL else
     county_hpi(cb, credit[["hpi"]], credit[["msad"]])
   comps <- credit_components(cb, cfpb, credit[["urban"]], hpi)
@@ -956,11 +957,14 @@ parse_cfpb_wide <- function(df, id_col) {
 #' county row, then its CBSA's metro row, then the state's non-metro row ("{ss}-non").
 #' CFPB's metro file covers metropolitan areas only and its non-metro row covers micro
 #' plus rural, so the state row applies only to counties with no CBSA or a micro one
-#' (`cbsa_type_of` = "micro area"); a metro-CBSA county missing from the metro file is NA.
+#' (`cbsa_type_of` = "micro area"). Counties still without a value take the state row
+#' (state90 / state3089, optional; source "state") as a last resort: metro-CBSA counties
+#' missing from the metro file and states with no non-metro row.
 #' dq90 = 90+ days late at the 90+ file's latest month d; dq3089_chg = 30-89 at d minus
 #' 30-89 at d - 12 months (pp), from the same source row; NA if either month is absent.
 cfpb_county_components <- function(county_ids, cbsa_of, cbsa_type_of, state_of,
-                                   county90, county3089, metro90, metro3089) {
+                                   county90, county3089, metro90, metro3089,
+                                   state90 = NULL, state3089 = NULL) {
   n <- length(county_ids)
   cbsa_of <- rep_len(as.character(cbsa_of), n)
   cbsa_type_of <- rep_len(as.character(cbsa_type_of), n)
@@ -982,6 +986,11 @@ cfpb_county_components <- function(county_ids, cbsa_of, cbsa_type_of, state_of,
     list(src = "county", ids = as.character(county_ids), t90 = county90, t3089 = county3089),
     list(src = "metro", ids = metro_ids, t90 = metro90, t3089 = metro3089),
     list(src = "state non-metro", ids = nonmetro_ids, t90 = metro90, t3089 = metro3089))
+  if (!is.null(state90) && !is.null(state3089)) {
+    # Last resort: the state's all-areas row, for counties no finer level covers.
+    levels[[4]] <- list(src = "state", ids = ifelse(!is.na(state_of) & nzchar(state_of), state_of, NA_character_),
+                        t90 = state90, t3089 = state3089)
+  }
 
   out <- tibble::tibble(GEOID = as.character(county_ids), dq90 = NA_real_,
                         dq3089_chg = NA_real_, cfpb_source = NA_character_,

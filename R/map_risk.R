@@ -318,12 +318,23 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
 
 # " (metro est.)" etc.: the CFPB value is not the county's own.
 .cfpb_note <- function(src) ifelse(src %in% "metro", " (metro est.)",
-                                   ifelse(src %in% "state non-metro", " (state non-metro est.)", ""))
+                                   ifelse(src %in% "state non-metro", " (state non-metro est.)",
+                                          ifelse(src %in% "state", " (state est.)", "")))
 .cfpb_where <- function(src) ifelse(src %in% "county", "county data",
                                     ifelse(src %in% "metro", "metro estimate",
                                            ifelse(src %in% "state non-metro",
-                                                  "state non-metro estimate", NA_character_)))
+                                                  "state non-metro estimate",
+                                                  ifelse(src %in% "state", "state estimate",
+                                                         NA_character_))))
 .month_label <- function(x) format(as.Date(x), "%b %Y")
+
+# Home price change in natural units, marked when only the state's value was available.
+.hpi_text <- function(d) {
+  yoy <- as.numeric(.col_or_na(d, "hpi_yoy"))
+  ifelse(is.na(yoy), NA_character_, paste0(
+    .risk_fmt(yoy, "pct_signed"),
+    ifelse(.col_or_na(d, "hpi_source", NA_character_) %in% "state", " (state est.)", "")))
+}
 
 #' "Driven by" for the credit score: the 3 components with the highest percentile, in
 #' natural units, red from the 50th percentile on. Order differs per county.
@@ -335,9 +346,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
     ifelse(is.na(g("dq90")), NA_character_, paste0(sprintf("%.1f%%", g("dq90")), .cfpb_note(src))),
     .risk_fmt(g("consumer_del"), "%"),
     ifelse(is.na(g("cr_jobs")), NA_character_, paste(.ordinal(g("cr_jobs")), "pct")),
-    ifelse(is.na(g("hpi_yoy")), NA_character_, paste0(
-      .risk_fmt(g("hpi_yoy"), "pct_signed"),
-      ifelse(.col_or_na(d, "hpi_source", NA_character_) %in% "state", " (state est.)", ""))))
+    .hpi_text(d))
   pct <- cbind(g("cr_mortgage"), g("cr_consumer"), g("cr_jobs"), g("cr_collateral"))
   pct[is.na(vals)] <- NA_real_
   labels <- c("Mortgages 90+ late", "Card & auto delinquent", "Job pressure", "Home prices YoY")
@@ -402,7 +411,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
             sprintf("Population change 2020–%s", substr(vint, 3, 4)),
           "Home prices YoY"),
         list(.risk_fmt(g("mig_dom_rate"), "per1k"), .risk_fmt(g("pop_chg_pct"), "pct_signed"),
-             .risk_fmt(g("hpi_yoy"), "pct_signed")),
+             .hpi_text(d)),
         # Low migration, shrinking population and falling prices all weaken the base.
         list(pct("mig_dom_rate") < 50, pct("pop_chg_pct") < 50, pct("hpi_yoy") < 50),
         n = nrow(d))

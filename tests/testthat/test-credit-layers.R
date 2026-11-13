@@ -288,6 +288,14 @@ test_that("tax base layer is labelled proxy everywhere", {
                     fixed = TRUE))
 })
 
+test_that("tax base home price driver says when the value is a state estimate", {
+  tip <- cr_labels(cr_layers(), "tax_base")
+  hp <- function(t) regmatches(t, regexpr("Home prices YoY</span><span[^>]*>[^<]*", t))
+  expect_true(grepl("+2.0% (state est.)", hp(tip[["13001"]]), fixed = TRUE))   # Appling: state
+  expect_false(grepl("est.", hp(tip[["13295"]]), fixed = TRUE))                # Walker: division
+  expect_false(grepl("est.", hp(tip[["47065"]]), fixed = TRUE))                # Hamilton: metro
+})
+
 test_that("tax base follows its inputs", {
   st <- function(l) attr(l, "layer_status")[["tax_base"]]
   expect_equal(st(cr_layers()), "ok")
@@ -502,6 +510,29 @@ test_that("a county in a state without a CFPB non-metro row has no mortgage valu
   l <- cr_layers(cr)
   expect_true(is.na(l$dq90[l$GEOID == "09110"]))
   expect_match(l$credit_missing[l$GEOID == "09110"], "mortgage")
+})
+
+test_that("a state-level CFPB row fills the gap and is labelled a state estimate", {
+  cr <- cr_credit()
+  cr$cfpb$metro90 <- cr$cfpb$metro90[cr$cfpb$metro90$id != "09-non", ]
+  cr$cfpb$metro3089 <- cr$cfpb$metro3089[cr$cfpb$metro3089$id != "09-non", ]
+  cr$cfpb$state90 <- cr_tbl(c("09", "13"), c(1.1, 1.3), c(1.3, 1.5))
+  cr$cfpb$state3089 <- cr_tbl(c("09", "13"), c(1.7, 2.6), c(2.1, 2.9))
+  l <- cr_layers_sa(cr)
+  i <- l$GEOID == "09110"
+  expect_equal(c(l$dq90[i], l$cfpb_source[i]), c("1.3", "state"))
+  expect_equal(l$dq3089_chg[i], 0.4)
+  # finer levels still win: Appling keeps the Georgia non-metro row, not the state row
+  expect_equal(l$cfpb_source[l$GEOID == "13001"], "state non-metro")
+  # labels name it in the tooltip, the component tooltip and the side panel
+  mort <- cr_labels(l, "credit_mortgage")[["09110"]]
+  expect_true(grepl("CFPB Mar 2026 · state estimate", mort, fixed = TRUE))
+  expect_true(grepl("state estimate", cr_panel(l, "09110"), fixed = TRUE))
+  expect_equal(.cfpb_note("state"), " (state est.)")
+  # CT still lacks consumer and job pressure here, so its score stays insufficient
+  expect_true(is.na(l$credit_score[i]))
+  expect_match(l$credit_missing[i], "consumer")
+  expect_false(grepl("mortgage", l$credit_missing[i], fixed = TRUE))
 })
 
 test_that("derived assistance layers go stale/partial with their inputs", {
