@@ -47,7 +47,7 @@ ui <- dashboardPage(
       menuItem("Housing",        tabName = "housing",     icon = icon("home")),
       menuItem("Consumer",       tabName = "consumer",    icon = icon("shopping-cart")),
       menuItem("Markets",        tabName = "markets",     icon = icon("chart-line")),
-      menuItem("Metro Map",      tabName = "metro",       icon = icon("map-marked-alt")),
+      menuItem("Regional Risk",  tabName = "metro",       icon = icon("map-marked-alt")),
       menuItem("Forecasting",    tabName = "forecasting", icon = icon("magic")),
       menuItem("AI Insights",    tabName = "ai",          icon = icon("robot"))
     ),
@@ -287,102 +287,68 @@ ui <- dashboardPage(
       # METRO MAP TAB
       # ══════════════════════════════════════════════════════
       tabItem("metro",
-        box(title = "Regional Economic Analysis — ACS Data", status = "primary",
-            solidHeader = TRUE, width = 12,
-          tabsetPanel(id = "metro_subtab",
-            # ── Sub-tab 1: State choropleth ──────────────────────────────────
-            tabPanel("State Choropleth",
-              br(),
-              fluidRow(
-                column(3,
-                  selectInput("map_var", "Map Variable:",
-                    choices = c(
-                      "Unemployment Rate"     = "unemp_rate",
-                      "Poverty Rate"          = "poverty_rate",
-                      "Labor Force Part. Rate"= "lfp_rate",
-                      "Median HH Income"      = "med_income",
-                      "Median Home Value"     = "med_home_val",
-                      "Housing Vacancy Rate"  = "vacancy_rate"
-                    ), selected = "unemp_rate"),
-                  div(style = "background:#1e2640;border-radius:6px;padding:12px;margin-top:10px;",
-                    div(style = "color:#9aa3b2;font-size:11px;line-height:1.9;",
-                      icon("info-circle", style="color:#00b4d8;"),
-                      " ACS 5-Year Estimates.", tags$br(),
-                      "Click any state for details.", tags$br(),
-                      "Hover for quick tooltip.", tags$br(),
-                      "Scroll to zoom."
-                    )
-                  )
-                ),
-                column(9,
-                  withSpinner(leafletOutput("metro_map", height = "480px"),
-                              type=4, color="#00b4d8", color.background="#161b27", size=0.7)
+        box(title = "Regional Risk", status = "primary", solidHeader = TRUE, width = 12,
+          fluidRow(
+            column(3,
+              selectInput("risk_lens", "Lens:", choices = RISK_LENSES, selected = "context"),
+              selectInput("risk_layer", "Layer:", choices = risk_lens_choices("context"),
+                          selected = risk_lens_default("context")),
+              selectizeInput("risk_jump_metro", "Jump to metro:", choices = NULL,
+                             options = list(placeholder = "Type a metro or micro area…")),
+              actionButton("risk_back_us", "Back to US", icon = icon("globe-americas"),
+                           style = "width:100%;margin-bottom:10px;"),
+              uiOutput("risk_breadcrumb"),
+              div(style = "background:#1e2640;border-radius:6px;padding:12px;margin-top:10px;",
+                div(style = "color:#9aa3b2;font-size:11px;line-height:1.9;",
+                  icon("info-circle", style = "color:#00b4d8;"),
+                  " Stress now: BLS county unemployment, latest 3 months vs. a year earlier.",
+                  tags$br(),
+                  " Stress ahead: national sector payroll momentum (6-mo.) applied to each county's resident industry mix; gap vs. the US.",
+                  tags$br(),
+                  " Assistance: where help may be needed soonest. Exposure of the local industry mix (LODES jobs by home tract, ACS where unavailable) to weakening sectors, thin financial cushion (rent burden, poverty, low-wage and young workers) and county job pressure. Counts are index headcounts, not layoff forecasts.",
+                  tags$br(),
+                  " Credit: household credit risk score (0-100, needs 3 of 4 components): CFPB mortgage delinquency (county, else metro or state non-metro estimate), Urban Institute card and auto delinquency (release date shown, not the data month), county job pressure and FHFA home price change (metro division, metro or state). Loads on first use.",
+                  tags$br(),
+                  " Context layers: Census ACS 5-year estimates. Tax base pressure is a proxy from migration, population change and home prices, not a bond default model.",
+                  tags$br(),
+                  " Migration: Census PEP county components of change (per 1,000 residents).",
+                  tags$br(),
+                  " Click a county to load its tracts, ranked within the metro and the state.",
+                  tags$br(),
+                  " Dashed outline: margin of error larger than the value."
                 )
-              ),
-              hr(style = "border-color:#2a3042; margin-top:16px;"),
-              div(style = "color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;",
-                  "State Rankings"),
-              DTOutput("tbl_metro")
+              )
             ),
-
-            # ── Sub-tab 2: Metro bubble map ──────────────────────────────────
-            tabPanel("Metro Bubble Map",
-              br(),
-              fluidRow(
-                column(3,
-                  selectInput("metro_map_var", "Map Variable:",
-                    choices = c(
-                      "Unemployment Rate"     = "unemp_rate",
-                      "Poverty Rate"          = "poverty_rate",
-                      "Labor Force Part. Rate"= "lfp_rate",
-                      "Median HH Income"      = "med_income",
-                      "Median Home Value"     = "med_home_val",
-                      "Rent Burden Rate"      = "rent_burden_rate",
-                      "Bachelor's+ Rate"      = "bachelors_plus_rate"
-                    ), selected = "unemp_rate"),
-                  sliderInput("metro_min_pop", "Min. Population (M):",
-                              min = 0.1, max = 3, value = 0.5, step = 0.1),
-                  div(style = "background:#1e2640;border-radius:6px;padding:12px;margin-top:10px;",
-                    div(style = "color:#9aa3b2;font-size:11px;line-height:1.9;",
-                      icon("circle", style="color:#00b4d8;"),
-                      " Bubble size = population.", tags$br(),
-                      " Colour = selected variable.", tags$br(),
-                      " Click for full detail.", tags$br(),
-                      " ACS 5-Year Estimates."
-                    )
-                  )
-                ),
-                column(9,
-                  withSpinner(leafletOutput("metro_bubble_map", height = "480px"),
-                              type=4, color="#7c5cbf", color.background="#161b27", size=0.7)
-                )
-              ),
-              hr(style = "border-color:#2a3042; margin-top:16px;"),
-              # Metro AI Analysis
-              box(title = tagList(icon("robot", style="color:#7c5cbf;"), " Metro AI Analysis"),
-                  status = "info", solidHeader = TRUE, width = 12,
-                fluidRow(
-                  column(4,
-                    selectInput("metro_ai_select", "Select Metro for Analysis:",
-                                choices = character(0)),
-                    actionButton("btn_metro_ai", "Generate Metro Analysis",
-                                 class="btn-ai", style="margin-top:8px;width:100%;"),
-                    div(style="color:#9aa3b2;font-size:11px;margin-top:8px;",
-                        "Synthesises ACS data + macro environment + news headlines into a structured regional economic assessment.")
-                  ),
-                  column(8,
-                    withSpinner(uiOutput("metro_ai_output"),
-                                type=4, color="#7c5cbf", color.background="#161b27", size=0.7)
-                  )
-                )
-              ),
-              hr(style = "border-color:#2a3042; margin-top:16px;"),
-              div(style = "color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;",
-                  "Major Metro Areas (CBSAs, 250k+ population)"),
-              withSpinner(DTOutput("tbl_metro_cbsa"),
-                          type=4, color="#7c5cbf", color.background="#161b27", size=0.7)
+            column(9,
+              withSpinner(leafletOutput("risk_map", height = "560px"),
+                          type = 4, color = "#00b4d8", color.background = "#161b27", size = 0.7)
             )
-          ) # end tabsetPanel
+          ),
+          uiOutput("risk_side_panel"),
+          hr(style = "border-color:#2a3042; margin-top:16px;"),
+          # Metro AI Analysis
+          box(title = tagList(icon("robot", style = "color:#7c5cbf;"), " Metro AI Analysis"),
+              status = "info", solidHeader = TRUE, width = 12,
+            fluidRow(
+              column(4,
+                selectInput("metro_ai_select", "Select Metro for Analysis:",
+                            choices = character(0)),
+                actionButton("btn_metro_ai", "Generate Metro Analysis",
+                             class = "btn-ai", style = "margin-top:8px;width:100%;"),
+                div(style = "color:#9aa3b2;font-size:11px;margin-top:8px;",
+                    "Synthesises ACS data + macro environment + news headlines into a structured regional economic assessment.")
+              ),
+              column(8,
+                withSpinner(uiOutput("metro_ai_output"),
+                            type = 4, color = "#7c5cbf", color.background = "#161b27", size = 0.7)
+              )
+            )
+          ),
+          hr(style = "border-color:#2a3042; margin-top:16px;"),
+          div(style = "color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin-bottom:10px;",
+              "Major Metro Areas (CBSAs, 250k+ population)"),
+          withSpinner(DTOutput("tbl_metro_cbsa"),
+                      type = 4, color = "#7c5cbf", color.background = "#161b27", size = 0.7)
         )
       ),
 
