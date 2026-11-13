@@ -47,7 +47,7 @@ cr_credit <- function(cfpb = TRUE, urban = TRUE, hpi = TRUE, msad = TRUE) {
     cfpb = if (cfpb) list(
       county90 = cr_tbl("13295", 1.0, 1.4), county3089 = cr_tbl("13295", 1.8, 1.9),
       metro90 = cr_tbl(c("16860", "09-non", "13-non"), c(1, 2, 3), c(2.6, 2.5, 3.2)),
-      metro3089 = cr_tbl(c("16860", "09-non", "13-non"), c(2, 2, 2), c(3.0, 2.4, 2.9)),
+      metro3089 = cr_tbl(c("16860", "09-non", "13-non"), c(2, 2, 2), c(2.3, 2.15, 2.9)),
       thru = "2026-03"),
     urban = if (urban) {
       u <- tibble::tibble(GEOID = c("13295", "47065", "13001"), card_del = c(10, 12, 20),
@@ -69,6 +69,20 @@ cr_layers <- function(credit = cr_credit(), loading = character(0), migration = 
                       loading = loading, ...)
 }
 
+# Default layers have no Stress ahead (unavailable); these carry one for the three counties
+# with momentum, ranked so job pressure keeps its Stress-now-only values (0, .5, 1).
+cr_sa <- function() {
+  sa <- fx_stress_ahead()
+  out <- rbind(sa[1, ], sa[1, ], sa[1, ])
+  out$GEOID <- c("13295", "47065", "13001")
+  out$stress_ahead_pp <- c(3, 2, 1)
+  for (a in c("ref_month", "temphelp_m_pct", "acs_year", "partial", "weights"))
+    attr(out, a) <- attr(sa, a)
+  out
+}
+
+cr_layers_sa <- function(...) cr_layers(..., stress_ahead = cr_sa())
+
 cr_ids <- c("credit_score", "credit_mortgage", "credit_consumer", "credit_jobs",
             "credit_collateral")
 
@@ -89,17 +103,17 @@ cr_panel <- function(l, geoid = "13295") {
 
 test_that("credit status loading then ok; unavailable when all sources fail", {
   st <- function(l, id) attr(l, "layer_status")[[id]]
-  ld <- cr_layers(NULL, loading = "credit")
+  ld <- cr_layers_sa(NULL, loading = "credit")
   for (id in cr_ids) expect_equal(st(ld, id), "loading", info = id)
-  ok <- cr_layers()
+  ok <- cr_layers_sa()
   for (id in cr_ids) expect_equal(st(ok, id), "ok", info = id)
-  none <- cr_layers(cr_credit(FALSE, FALSE, FALSE, FALSE))
+  none <- cr_layers_sa(cr_credit(FALSE, FALSE, FALSE, FALSE))
   for (id in cr_ids) expect_equal(st(none, id), "unavailable", info = id)
-  expect_equal(st(cr_layers(NULL), "credit_score"), "unavailable")
+  expect_equal(st(cr_layers_sa(NULL), "credit_score"), "unavailable")
   # Values match the status: nothing is shaded for an unavailable layer.
   expect_true(all(is.na(none$credit_score)) && all(is.na(none$cr_jobs)))
   # A component whose own source failed is unavailable; the rest still work.
-  nu <- cr_layers(cr_credit(urban = FALSE))
+  nu <- cr_layers_sa(cr_credit(urban = FALSE))
   expect_equal(st(nu, "credit_consumer"), "unavailable")
   expect_equal(st(nu, "credit_score"), "ok")
   expect_equal(st(nu, "credit_mortgage"), "ok")
@@ -148,13 +162,14 @@ test_that("credit components are joined to the layers", {
   expect_equal(l$credit_missing[3], "consumer, job pressure")
   expect_true(is.na(l$credit_score[3]))
   expect_false(any(is.na(l$credit_score[-3])))
-  expect_equal(l$cr_jobs[1], 100 * l$job_pressure[1])
+  expect_equal(l$cr_jobs, pct_rank(l$job_pressure))   # re-ranked: a true percentile
+  expect_equal(range(l$cr_jobs, na.rm = TRUE), c(0, 100))
 })
 
 test_that("credit as-of labels follow the spec and never call the Urban release a data month", {
   a <- attr(cr_layers(), "asof")
   expect_equal(a[["credit_score"]], paste0(
-    "CFPB Mar 2026 · Urban Institute (released Oct 2026) · FHFA 2026 Q1 · BLS/CES"))
+    "CFPB Mar 2026 · Urban Institute (released Oct 2026) · FHFA 2026 Q1 · BLS Sep 2026"))
   expect_equal(a[["credit_mortgage"]], "CFPB thru Mar 2026")
   expect_equal(a[["credit_consumer"]], "released Oct 2026")
   expect_equal(RISK_LAYERS$credit_consumer$source, "Urban Institute (Debt in America)")
@@ -166,7 +181,8 @@ test_that("credit as-of labels follow the spec and never call the Urban release 
   expect_false(grepl("Urban Institute (Debt in America), Oct 2026", lg, fixed = TRUE))
   # Sources missing from the label when unavailable.
   a2 <- attr(cr_layers(cr_credit(urban = FALSE)), "asof")
-  expect_equal(a2[["credit_score"]], "CFPB Mar 2026 · FHFA 2026 Q1 · BLS/CES")
+  expect_equal(a2[["credit_score"]],
+               "CFPB Mar 2026 · FHFA 2026 Q1 · BLS Sep 2026 (3 of 4 components: Urban Institute unavailable)")
 })
 
 test_that("credit_jobs as-of joins the Stress now and Stress ahead as-ofs", {
@@ -238,6 +254,15 @@ test_that("component tooltips show their own source and as-of per county", {
   expect_true(grepl("Job pressure:", jobs[["13295"]], fixed = TRUE))
 })
 
+test_that("the job pressure explanation quotes the 0..100 index, not its re-ranked percentile", {
+  l <- cr_layers()
+  l$job_pressure[l$GEOID == "47065"] <- 0.9
+  expect_true(grepl("Job pressure: 90/100", cr_labels(l, "credit_jobs")[["47065"]], fixed = TRUE))
+  expect_true(grepl("Job pressure</b>\\s+90/100", cr_panel(l, "47065")))
+  expect_true(grepl(sprintf("risk percentile %.0f", l$cr_jobs[l$GEOID == "47065"]),
+                    cr_panel(l, "47065"), fixed = TRUE))
+})
+
 test_that("collateral pill is red for falling prices, not for rising ones", {
   cfg <- RISK_LAYERS$credit_collateral
   expect_equal(.rank_bad(c(90, 10), cfg, c(3.2, -0.6)), c(FALSE, TRUE))
@@ -289,7 +314,7 @@ test_that("tax base follows its inputs", {
 test_that("a stale source marks only the layers that rest on it", {
   st <- function(l) attr(l, "layer_status")
   cr <- cr_credit(); attr(cr$hpi, "stale") <- TRUE
-  l <- cr_layers(cr)
+  l <- cr_layers_sa(cr)
   for (id in c("credit_score", "credit_collateral", "tax_base")) expect_equal(st(l)[[id]], "stale", info = id)
   for (id in c("credit_mortgage", "credit_consumer", "credit_jobs"))
     expect_equal(st(l)[[id]], "ok", info = id)          # FHFA staleness is not CFPB's
@@ -297,23 +322,23 @@ test_that("a stale source marks only the layers that rest on it", {
   # asof is kept so the legend still says what is stale
   expect_false(is.na(attr(l, "asof")[["credit_score"]]))
   cr <- cr_credit(); attr(cr$cfpb, "stale") <- TRUE
-  l <- cr_layers(cr)
+  l <- cr_layers_sa(cr)
   expect_equal(st(l)[["credit_mortgage"]], "stale")
   expect_equal(st(l)[["credit_score"]], "stale")
   expect_equal(st(l)[["credit_collateral"]], "ok")
   expect_equal(st(l)[["tax_base"]], "ok")
   cr <- cr_credit(); attr(cr$urban, "stale") <- TRUE
-  expect_equal(st(cr_layers(cr))[["credit_consumer"]], "stale")
+  expect_equal(st(cr_layers_sa(cr))[["credit_consumer"]], "stale")
   cr <- cr_credit(); attr(cr$msad, "stale") <- TRUE
-  expect_equal(st(cr_layers(cr))[["credit_collateral"]], "stale")
+  expect_equal(st(cr_layers_sa(cr))[["credit_collateral"]], "stale")
   # PEP staleness reaches the tax base only
   mig <- cr_migration(); attr(mig, "stale") <- TRUE
-  l <- cr_layers(migration = mig)
+  l <- cr_layers_sa(migration = mig)
   expect_equal(st(l)[["tax_base"]], "stale")
   expect_equal(st(l)[["credit_score"]], "ok")
   # A FALSE stale flag is ok
   cr2 <- cr_credit(); attr(cr2$cfpb, "stale") <- FALSE
-  expect_equal(st(cr_layers(cr2))[["credit_score"]], "ok")
+  expect_equal(st(cr_layers_sa(cr2))[["credit_score"]], "ok")
 })
 
 test_that("job pressure inputs carry their staleness into the credit and assistance layers", {
@@ -343,6 +368,61 @@ test_that("job pressure inputs carry their staleness into the credit and assista
   a <- build_county_layers(fx_county_base(), fx_momentum(), stress_ahead = fx_stress_ahead(),
                            laus_partial = TRUE)
   expect_equal(st(a)[["assist_score"]], "partial")
+})
+
+test_that("one missing job input (BLS quota) makes the job-fed layers partial, both missing unavailable", {
+  st <- function(l) attr(l, "layer_status")
+  build <- function(momentum = cr_momentum(), sa = fx_stress_ahead(), ...)
+    build_county_layers(cr_base(), momentum, migration = cr_migration(), credit = cr_credit(),
+                        stress_ahead = sa, ...)
+  # Stress now unavailable, Stress ahead fine
+  s <- st(build(momentum = NULL))
+  expect_equal(s[["stress_now"]], "unavailable")
+  for (id in c("credit_jobs", "credit_score", "assist_score", "assist_exposure"))
+    expect_equal(s[[id]], "partial", info = id)
+  for (id in c("credit_mortgage", "credit_consumer", "credit_collateral"))
+    expect_equal(s[[id]], "ok", info = id)
+  expect_true(grepl("(partial: some job inputs", cr_legend_title(build(momentum = NULL), "credit_jobs"),
+                    fixed = TRUE))
+  # Stress now still loading counts the same
+  s <- st(build(momentum = NULL, loading = "stress_now"))
+  expect_equal(s[["credit_jobs"]], "partial")
+  expect_equal(s[["credit_score"]], "partial")
+  # Stress ahead unavailable, Stress now fine
+  s <- st(build(sa = NULL))
+  expect_equal(s[["stress_ahead"]], "unavailable")
+  expect_equal(s[["credit_jobs"]], "partial")
+  expect_equal(s[["credit_score"]], "partial")
+  # Both gone: no job pressure at all; the score keeps its normal 3-of-4 logic
+  l <- build(momentum = NULL, sa = NULL)
+  s <- st(l)
+  expect_equal(s[["credit_jobs"]], "unavailable")
+  expect_equal(s[["credit_score"]], "ok")
+  expect_true(all(is.na(l$cr_jobs)) && !is.na(l$credit_score[1]))
+  # stale still beats partial
+  sa <- fx_stress_ahead(); attr(sa, "stale") <- TRUE
+  expect_equal(st(build(momentum = NULL, sa = sa))[["credit_jobs"]], "stale")
+})
+
+test_that("the score as-of names the BLS and CES months and any whole source that failed", {
+  a <- attr(cr_layers(), "asof")
+  expect_equal(a[["credit_score"]], paste0(
+    "CFPB Mar 2026 · Urban Institute (released Oct 2026) · FHFA 2026 Q1 · BLS Sep 2026"))
+  a <- attr(cr_layers(stress_ahead = fx_stress_ahead()), "asof")
+  expect_equal(a[["credit_score"]], paste0(
+    "CFPB Mar 2026 · Urban Institute (released Oct 2026) · FHFA 2026 Q1 · BLS Sep 2026 · ",
+    a[["stress_ahead"]]))
+  expect_false(grepl("BLS/CES", a[["credit_score"]], fixed = TRUE))
+  # a whole source missing is said in the legend text, not only in the tooltips
+  a1 <- attr(cr_layers(cr_credit(urban = FALSE)), "asof")[["credit_score"]]
+  expect_true(grepl("(3 of 4 components: Urban Institute unavailable)", a1, fixed = TRUE))
+  a2 <- attr(cr_layers(cr_credit(cfpb = FALSE)), "asof")[["credit_score"]]
+  expect_true(grepl("(3 of 4 components: CFPB unavailable)", a2, fixed = TRUE))
+  a3 <- attr(cr_layers(cr_credit(hpi = FALSE)), "asof")[["credit_score"]]
+  expect_true(grepl("(3 of 4 components: FHFA unavailable)", a3, fixed = TRUE))
+  expect_false(grepl("components", attr(cr_layers(), "asof")[["credit_score"]], fixed = TRUE))
+  expect_true(grepl("Urban Institute unavailable", cr_legend_title(cr_layers(cr_credit(urban = FALSE)),
+                                                                   "credit_score"), fixed = TRUE))
 })
 
 test_that("a credit layer is not_loaded (not unavailable) until the credit sources are requested", {

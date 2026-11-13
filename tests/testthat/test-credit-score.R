@@ -5,7 +5,7 @@ cr_fx <- function() {
   list(
     cl = tibble::tibble(GEOID = ids, job_pressure = c(0.1, 0.3, 0.5, 0.7, NA, 0.9)),
     cfpb = tibble::tibble(GEOID = ids, dq90 = c(1, 2, 3, 4, 5, 6),
-                          dq3089_chg = c(0.6, 0.5, 0.4, 0.3, 0.2, 0.1),
+                          dq3089_chg = c(0.3, 0.1, 0.2, 0.6, 0.4, 0.5),
                           cfpb_source = c("county", "county", "metro", "metro", "state non-metro", "county"),
                           cfpb_month = "2026-03"),
     urban = tibble::tibble(GEOID = ids, card_del = c(10, 12, 14, 16, NA, 20),
@@ -14,21 +14,37 @@ cr_fx <- function() {
                          hpi_source = "metro", hpi_q = "2025 Q4"))
 }
 
-test_that("components are national percentiles with mortgage as mean of level and change", {
+test_that("components are national percentiles; mortgage re-ranks the mean of level and change", {
   f <- cr_fx()
   r <- credit_components(f$cl, f$cfpb, f$urban, f$hpi)
   expect_equal(r$GEOID, f$cl$GEOID)
-  # level rises, change falls: the two percentiles offset exactly
-  expect_equal(r$cr_mortgage, rep(50, 6))
+  # level pct 0,20,..,100 and change pct 40,0,20,100,60,80 average to 20,10,30,80,70,90,
+  # which is then ranked again: a true percentile, not a mean of percentiles
+  expect_equal(r$cr_mortgage, c(20, 0, 40, 80, 60, 100))
   expect_equal(r$cr_consumer[1:4], c(0, 25, 50, 75))
   expect_equal(r$cr_consumer[6], 100)
   expect_true(is.na(r$cr_consumer[5]))
-  expect_equal(r$cr_jobs, c(10, 30, 50, 70, NA, 90))
+  expect_equal(r$cr_jobs, c(0, 25, 50, 75, NA, 100))
   expect_equal(r$cr_collateral, c(0, 20, 40, 60, 80, 100))
   expect_equal(r$credit_n, c(4, 4, 4, 4, 2, 4))
-  expect_equal(r$credit_score[1], round(mean(c(50, 0, 10, 0)), 1))
+  expect_equal(r$credit_score[1], round(mean(c(20, 0, 0, 0)), 1))
   expect_true(all(c("dq90", "dq3089_chg", "cfpb_source", "card_del", "auto_del",
                     "hpi_yoy", "hpi_source") %in% names(r)))
+})
+
+test_that("all four components span 0..100 and the score weights them equally", {
+  f <- cr_fx()
+  r <- credit_components(f$cl, f$cfpb, f$urban, f$hpi)
+  for (col in c("cr_mortgage", "cr_consumer", "cr_jobs", "cr_collateral"))
+    expect_equal(range(r[[col]], na.rm = TRUE), c(0, 100), info = col)
+  # 48201 is the worst county on every component: equal weights give exactly 100
+  expect_equal(unlist(r[r$GEOID == "48201", c("cr_mortgage", "cr_consumer", "cr_jobs",
+                                              "cr_collateral", "credit_score")], use.names = FALSE),
+               rep(100, 5))
+  full <- !is.na(r$credit_score) & r$credit_n == 4
+  expect_equal(r$credit_score[full],
+               round(rowMeans(as.matrix(r[full, c("cr_mortgage", "cr_consumer", "cr_jobs",
+                                                  "cr_collateral")])), 1))
 })
 
 test_that("mortgage uses whichever of level and change is available", {
@@ -57,7 +73,7 @@ test_that("score runs on 3 components when Urban missing", {
   expect_true(all(!is.na(r$credit_score[ok])))
   expect_equal(r$credit_missing[ok], rep("consumer", 5))
   expect_equal(r$credit_n[ok], rep(3, 5))
-  expect_equal(r$credit_score[1], round(mean(c(50, 10, 0)), 1))
+  expect_equal(r$credit_score[1], round(mean(c(20, 0, 0)), 1))
   expect_true(all(is.na(r$card_del)))
 })
 

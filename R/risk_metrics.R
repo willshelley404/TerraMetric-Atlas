@@ -359,7 +359,8 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
   sa_stale <- isTRUE(attr(stress_ahead, "stale")) || isTRUE(attr(weights, "stale")) ||
     any(status[c("stress_now", "stress_ahead")] == "stale")
   sa_partial <- isTRUE(attr(stress_ahead, "partial")) || isTRUE(attr(weights, "partial")) ||
-    any(status[c("stress_now", "stress_ahead")] == "partial")
+    any(status[c("stress_now", "stress_ahead")] == "partial") ||
+    .one_job_input_gone(status[c("stress_now", "stress_ahead")])
   for (id in names(RISK_LAYERS)[vapply(RISK_LAYERS, function(l) identical(l$lens, "assistance"), TRUE)]) {
     status[[id]] <- if ("stress_ahead" %in% loading) "loading" else
       if (is.null(weights) || is.null(stress_ahead)) "unavailable" else
@@ -409,6 +410,12 @@ county_assistance <- function(out, weights) {
   out$assist_workers <- e$exp_workers
   out
 }
+
+# Job pressure rests on Stress now and Stress ahead: one of them unavailable (e.g. the
+# BLS quota) or still loading leaves it resting on the other alone.
+.job_input_gone <- function(st) st %in% c("unavailable", "loading")
+.one_job_input_gone <- function(st) sum(.job_input_gone(st)) == 1L
+.job_inputs_gone <- function(st) all(.job_input_gone(st))
 
 # Which raw credit sources exist (CFPB, Urban, FHFA); `[[` on a NULL list is NULL.
 .credit_has <- function(credit) vapply(c(cfpb = "cfpb", urban = "urban", hpi = "hpi"),
@@ -460,8 +467,9 @@ credit_status_asof <- function(out, credit, loading, jobs_now, jobs_ahead, v, mi
   has <- .credit_has(credit)
   src_stale <- function(...) any(vapply(c(...),
                                         function(nm) isTRUE(attr(credit[[nm]], "stale")), TRUE))
-  jobs_state <- if (any(stress_status == "stale")) "stale" else
-    if (any(stress_status == "partial")) "partial" else "ok"
+  jobs_state <- if (.job_inputs_gone(stress_status)) "unavailable" else
+    if (any(stress_status == "stale")) "stale" else
+      if (any(stress_status == "partial") || .one_job_input_gone(stress_status)) "partial" else "ok"
   own <- list(
     credit_mortgage = if (src_stale("cfpb")) "stale" else "ok",
     credit_consumer = if (src_stale("urban")) "stale" else "ok",
@@ -496,11 +504,17 @@ credit_status_asof <- function(out, credit, loading, jobs_now, jobs_ahead, v, mi
   q <- out$hpi_q[!is.na(out$hpi_q)]
   fhfa_q <- if (length(q)) max(q) else NA_character_
   jobs <- c(jobs_now, jobs_ahead); jobs <- jobs[!is.na(jobs)]
+  # A source that failed for every county leaves the score on fewer components.
+  gone <- c(CFPB = !has[["cfpb"]], "Urban Institute" = !has[["urban"]], FHFA = !has[["hpi"]])
+  gone_note <- if (any(gone)) sprintf(" (%d of 4 components: %s unavailable)", 4L - sum(gone),
+                                      paste(names(gone)[gone], collapse = ", ")) else ""
   asof <- c(
-    credit_score = paste(c(if (!is.na(cfpb_m)) paste("CFPB", cfpb_m),
+    credit_score = paste0(paste(c(if (!is.na(cfpb_m)) paste("CFPB", cfpb_m),
                            if (!is.na(urban_rel)) paste0("Urban Institute (", urban_rel, ")"),
                            if (!is.na(fhfa_q)) paste("FHFA", fhfa_q),
-                           if (some("cr_jobs")) "BLS/CES"), collapse = " · "),
+                           if (some("cr_jobs")) c(if (!is.na(jobs_now)) paste("BLS", jobs_now),
+                                                  if (!is.na(jobs_ahead)) jobs_ahead)),
+                         collapse = " · "), gone_note),
     credit_mortgage = if (is.na(cfpb_m)) NA_character_ else paste("CFPB thru", cfpb_m),
     credit_consumer = urban_rel,
     credit_jobs = if (length(jobs)) paste(jobs, collapse = " · ") else NA_character_,
@@ -799,7 +813,7 @@ exposure_from_jobs <- function(jobs, weights) {
 
 #' County job pressure, a 0..1 index (not a percentile): the mean of the available
 #' Stress-now percentile and the inverted Stress-ahead percentile (lower Stress ahead
-#' = more pressure), divided by 100. The Credit lens uses 100 * job_pressure as its
+#' = more pressure), divided by 100. The Credit lens uses pct_rank(job_pressure) as its
 #' component. Attributes: "n_inputs" (integer, 0-2 inputs used per county) and
 #' "inputs" ("both", "now", "ahead" or NA).
 job_pressure <- function(county_layers) {
@@ -1070,7 +1084,8 @@ county_hpi <- function(cb, hpi, msad_xwalk = NULL) {
 #' Credit lens components, one row per county in `cl`, each a national percentile
 #' (0-100, high = more credit risk). `cfpb`, `urban`, `hpi` are the per-county tables
 #' from cfpb_county_components(), parse_urban_county() and county_hpi(), joined by
-#' GEOID; any may be NULL. cr_jobs is 100 * cl$job_pressure (already computed).
+#' GEOID; any may be NULL. cr_mortgage re-ranks the mean of the level and change
+#' percentiles; cr_jobs is pct_rank(cl$job_pressure) (job_pressure is already computed).
 #' credit_score is the mean of available components, NA below
 #' RISK_CFG$credit_min_components; credit_missing names the absent ones ("" if none).
 credit_components <- function(cl, cfpb = NULL, urban = NULL, hpi = NULL,
@@ -1083,9 +1098,10 @@ credit_components <- function(cl, cfpb = NULL, urban = NULL, hpi = NULL,
   auto <- as.numeric(.by_geoid(urban, "auto_del", ids))
   yoy <- as.numeric(.by_geoid(hpi, "hpi_yoy", ids))
 
-  cr_mortgage <- .avail_mean(.pr(dq90), .pr(dq_chg))
+  # Averaged inputs are ranked again so every component is a true national percentile.
+  cr_mortgage <- .pr(.avail_mean(.pr(dq90), .pr(dq_chg)))
   cr_consumer <- .pr(.avail_mean(card, auto))
-  cr_jobs <- if ("job_pressure" %in% names(cl)) 100 * as.numeric(cl$job_pressure) else
+  cr_jobs <- if ("job_pressure" %in% names(cl)) .pr(cl$job_pressure) else
     rep(NA_real_, length(ids))
   cr_collateral <- 100 - .pr(yoy)
 

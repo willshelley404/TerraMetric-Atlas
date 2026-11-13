@@ -375,7 +375,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
     },
     credit_consumer = ifelse(is.na(g("consumer_del")),
                              "No Urban Institute data for this county", ""),
-    credit_jobs = .job_pressure_line(g("cr_jobs") / 100, .col_or_na(d, "job_pressure_n"),
+    credit_jobs = .job_pressure_line(g("job_pressure"), .col_or_na(d, "job_pressure_n"),
                                      .col_or_na(d, "job_pressure_from")),
     rep("", n))
 }
@@ -882,8 +882,8 @@ reset_to_us <- function(map, county_layers, layer_id) {
       if (is.na(card) && is.na(auto)) "no Urban Institute data for this county" else
         sprintf("Urban Institute (Debt in America), %s", info$urban_release))
 
-  jobs <- line("Job pressure", if (is.na(num("cr_jobs"))) "—" else
-                 sprintf("%.0f/100", num("cr_jobs")), num("cr_jobs"),
+  jobs <- line("Job pressure", if (is.na(num("job_pressure"))) "—" else
+                 sprintf("%.0f/100", 100 * num("job_pressure")), num("cr_jobs"),
                if (is.na(asof[["credit_jobs"]])) "BLS unemployment and payrolls unavailable" else
                  paste("BLS", asof[["credit_jobs"]]))
 
