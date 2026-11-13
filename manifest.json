@@ -12,7 +12,7 @@
   "packages": {
     "BH": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "BH",
         "Type": "Package",
@@ -35,7 +35,7 @@
     },
     "BVAR": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "BVAR",
         "Type": "Package",
@@ -64,7 +64,7 @@
     },
     "DBI": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "DBI",
         "Title": "R Database Interface",
@@ -96,7 +96,7 @@
     },
     "DEoptimR": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "DEoptimR",
         "Version": "1.2-0",
@@ -123,7 +123,7 @@
     },
     "DT": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "DT",
@@ -150,7 +150,7 @@
     },
     "DiceDesign": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "DiceDesign",
         "Type": "Package",
@@ -175,7 +175,7 @@
     },
     "GauPro": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "GauPro",
         "Type": "Package",
@@ -205,7 +205,7 @@
     },
     "KernSmooth": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "KernSmooth",
         "Priority": "recommended",
@@ -231,7 +231,7 @@
     },
     "MASS": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "MASS",
         "Priority": "recommended",
@@ -261,7 +261,7 @@
     },
     "Matrix": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "Matrix",
         "Version": "1.7-5",
@@ -295,7 +295,7 @@
     },
     "PerformanceAnalytics": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "PerformanceAnalytics",
         "Type": "Package",
@@ -327,7 +327,7 @@
     },
     "QuickJSR": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "QuickJSR",
         "Title": "Interface for the 'QuickJS-NG' Lightweight 'JavaScript' Engine",
@@ -356,7 +356,7 @@
     },
     "R6": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "R6",
         "Title": "Encapsulated Classes with Reference Semantics",
@@ -383,7 +383,7 @@
     },
     "RColorBrewer": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "RColorBrewer",
         "Version": "1.1-3",
@@ -404,7 +404,7 @@
     },
     "Rcpp": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "Rcpp",
         "Title": "Seamless R and C++ Integration",
@@ -433,7 +433,7 @@
     },
     "RcppArmadillo": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "RcppArmadillo",
         "Type": "Package",
@@ -465,7 +465,7 @@
     },
     "RcppEigen": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "RcppEigen",
         "Type": "Package",
@@ -495,7 +495,7 @@
     },
     "RcppParallel": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "RcppParallel",
         "Type": "Package",
@@ -524,7 +524,7 @@
     },
     "RcppRoll": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "RcppRoll",
         "Type": "Package",
@@ -550,7 +550,7 @@
     },
     "RobStatTM": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "RobStatTM",
         "Version": "1.0.11",
@@ -578,7 +578,7 @@
     },
     "S7": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "S7",
         "Title": "An Object Oriented System Meant to Become a Successor to S3 and\nS4",
@@ -611,7 +611,7 @@
     },
     "SQUAREM": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "SQUAREM",
         "Version": "2026.1",
@@ -633,7 +633,7 @@
     },
     "StanHeaders": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "StanHeaders",
         "Title": "C++ Header Files for Stan",
@@ -662,7 +662,7 @@
     },
     "TTR": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "TTR",
         "Type": "Package",
@@ -689,7 +689,7 @@
     },
     "V8": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "V8",
         "Type": "Package",
@@ -721,7 +721,7 @@
     },
     "abind": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "abind",
         "Version": "1.4-8",
@@ -743,7 +743,7 @@
     },
     "anytime": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "anytime",
         "Type": "Package",
@@ -774,7 +774,7 @@
     },
     "askpass": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "askpass",
         "Type": "Package",
@@ -802,7 +802,7 @@
     },
     "backports": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "backports",
         "Type": "Package",
@@ -829,7 +829,7 @@
     },
     "base64enc": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "base64enc",
         "Version": "0.1-6",
@@ -853,7 +853,7 @@
     },
     "bigD": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "bigD",
@@ -881,7 +881,7 @@
     },
     "bit": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "bit",
         "Title": "Classes and Methods for Fast Memory-Efficient Boolean Selections",
@@ -910,7 +910,7 @@
     },
     "bit64": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "bit64",
         "Title": "A S3 Class for Vectors of 64bit Integers",
@@ -941,7 +941,7 @@
     },
     "bitops": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "bitops",
         "Version": "1.0-9",
@@ -964,7 +964,7 @@
     },
     "blob": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "blob",
         "Title": "A Simple S3 Class for Representing Vectors of Binary Data\n('BLOBS')",
@@ -991,9 +991,37 @@
         "Built": "R 4.6.0; ; 2026-06-02 03:17:05 UTC; windows"
       }
     },
+    "brio": {
+      "Source": "CRAN",
+      "Repository": "https://cran.rstudio.com",
+      "description": {
+        "Package": "brio",
+        "Title": "Basic R Input Output",
+        "Version": "1.1.5",
+        "Authors@R": "c(\n    person(\"Jim\", \"Hester\", role = \"aut\",\n           comment = c(ORCID = \"0000-0002-2739-7082\")),\n    person(\"Gábor\", \"Csárdi\", , \"csardi.gabor@gmail.com\", role = c(\"aut\", \"cre\")),\n    person(given = \"Posit Software, PBC\", role = c(\"cph\", \"fnd\"))\n  )",
+        "Description": "Functions to handle basic input output, these functions\n    always read and write UTF-8 (8-bit Unicode Transformation Format)\n    files and provide more explicit control over line endings.",
+        "License": "MIT + file LICENSE",
+        "URL": "https://brio.r-lib.org, https://github.com/r-lib/brio",
+        "BugReports": "https://github.com/r-lib/brio/issues",
+        "Depends": "R (>= 3.6)",
+        "Suggests": "covr, testthat (>= 3.0.0)",
+        "Config/Needs/website": "tidyverse/tidytemplate",
+        "Config/testthat/edition": "3",
+        "Encoding": "UTF-8",
+        "RoxygenNote": "7.2.3",
+        "NeedsCompilation": "yes",
+        "Packaged": "2024-04-24 18:51:29 UTC; gaborcsardi",
+        "Author": "Jim Hester [aut] (<https://orcid.org/0000-0002-2739-7082>),\n  Gábor Csárdi [aut, cre],\n  Posit Software, PBC [cph, fnd]",
+        "Maintainer": "Gábor Csárdi <csardi.gabor@gmail.com>",
+        "Repository": "CRAN",
+        "Date/Publication": "2024-04-24 19:20:07 UTC",
+        "Built": "R 4.6.1; x86_64-w64-mingw32; 2026-08-19 11:46:09 UTC; windows",
+        "Archs": "x64"
+      }
+    },
     "broom": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "broom",
@@ -1026,7 +1054,7 @@
     },
     "bslib": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "bslib",
         "Title": "Custom 'Bootstrap' 'Sass' Themes for 'shiny' and 'rmarkdown'",
@@ -1059,7 +1087,7 @@
     },
     "cachem": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "cachem",
         "Version": "1.1.0",
@@ -1087,7 +1115,7 @@
     },
     "callr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "callr",
         "Title": "Call R from R",
@@ -1116,7 +1144,7 @@
     },
     "cellranger": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "cellranger",
         "Title": "Translate Spreadsheet Cell Ranges to Rows and Columns",
@@ -1143,7 +1171,7 @@
     },
     "checkmate": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "checkmate",
         "Type": "Package",
@@ -1175,7 +1203,7 @@
     },
     "class": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "class",
         "Priority": "recommended",
@@ -1201,7 +1229,7 @@
     },
     "classInt": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "classInt",
         "Version": "0.4-11",
@@ -1230,7 +1258,7 @@
     },
     "cli": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "cli",
         "Title": "Helpers for Developing Command Line Interfaces",
@@ -1260,7 +1288,7 @@
     },
     "clipr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "clipr",
@@ -1289,7 +1317,7 @@
     },
     "clock": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "clock",
         "Title": "Date-Time Types and Tools",
@@ -1322,7 +1350,7 @@
     },
     "codetools": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "codetools",
         "Version": "0.2-20",
@@ -1343,7 +1371,7 @@
     },
     "colorspace": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "colorspace",
         "Version": "2.1-3",
@@ -1373,7 +1401,7 @@
     },
     "commonmark": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "commonmark",
         "Type": "Package",
@@ -1400,7 +1428,7 @@
     },
     "conflicted": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "conflicted",
         "Title": "An Alternative Conflict Resolution Strategy",
@@ -1428,7 +1456,7 @@
     },
     "cpp11": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "cpp11",
         "Title": "A C++11 Interface for R's C Interface",
@@ -1457,7 +1485,7 @@
     },
     "crayon": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "crayon",
         "Title": "Colored Terminal Output",
@@ -1484,7 +1512,7 @@
     },
     "crosstalk": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "crosstalk",
@@ -1511,7 +1539,7 @@
     },
     "curl": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "curl",
         "Type": "Package",
@@ -1541,7 +1569,7 @@
     },
     "data.table": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "data.table",
         "Version": "1.18.4",
@@ -1569,7 +1597,7 @@
     },
     "dbplyr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "dbplyr",
@@ -1602,7 +1630,7 @@
     },
     "desc": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "desc",
         "Title": "Manipulate DESCRIPTION Files",
@@ -1632,7 +1660,7 @@
     },
     "diagram": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "diagram",
         "Version": "1.6.5",
@@ -1653,7 +1681,7 @@
     },
     "dials": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "dials",
         "Title": "Tools for Creating Tuning Parameter Values",
@@ -1682,9 +1710,39 @@
         "Built": "R 4.6.1; ; 2026-07-21 03:29:59 UTC; windows"
       }
     },
+    "diffobj": {
+      "Source": "CRAN",
+      "Repository": "https://cran.rstudio.com",
+      "description": {
+        "Package": "diffobj",
+        "Type": "Package",
+        "Title": "Diffs for R Objects",
+        "Description": "Generate a colorized diff of two R objects for an intuitive\n    visualization of their differences.",
+        "Version": "0.3.8",
+        "Authors@R": "c(\n    person(\n    \"Brodie\", \"Gaslam\", email=\"brodie.gaslam@yahoo.com\",\n    role=c(\"aut\", \"cre\")),\n    person(\n    \"Michael B.\", \"Allen\", email=\"ioplex@gmail.com\",\n    role=c(\"ctb\", \"cph\"),\n    comment=\"Original C implementation of Myers Diff Algorithm\"))",
+        "Depends": "R (>= 4.1.0)",
+        "License": "GPL-2 | GPL-3",
+        "URL": "https://github.com/brodieG/diffobj",
+        "BugReports": "https://github.com/brodieG/diffobj/issues",
+        "VignetteBuilder": "knitr",
+        "Encoding": "UTF-8",
+        "Suggests": "knitr, rmarkdown",
+        "Collate": "'capt.R' 'options.R' 'pager.R' 'check.R' 'finalizer.R'\n'misc.R' 'html.R' 'styles.R' 's4.R' 'core.R' 'diff.R' 'get.R'\n'guides.R' 'hunks.R' 'layout.R' 'myerssimple.R' 'rdiff.R'\n'rds.R' 'set.R' 'subset.R' 'summmary.R' 'system.R' 'text.R'\n'tochar.R' 'trim.R' 'word.R'",
+        "Imports": "crayon (>= 1.3.2), tools, methods, utils, stats",
+        "Config/roxygen2/version": "8.0.0",
+        "NeedsCompilation": "yes",
+        "Packaged": "2026-07-15 18:45:48 UTC; brodie",
+        "Author": "Brodie Gaslam [aut, cre],\n  Michael B. Allen [ctb, cph] (Original C implementation of Myers Diff\n    Algorithm)",
+        "Maintainer": "Brodie Gaslam <brodie.gaslam@yahoo.com>",
+        "Repository": "CRAN",
+        "Date/Publication": "2026-07-17 20:20:08 UTC",
+        "Built": "R 4.6.1; x86_64-w64-mingw32; 2026-08-23 00:54:01 UTC; windows",
+        "Archs": "x64"
+      }
+    },
     "digest": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "digest",
         "Authors@R": "c(person(\"Dirk\", \"Eddelbuettel\", role = c(\"aut\", \"cre\"), email = \"edd@debian.org\",\n                    comment = c(ORCID = \"0000-0001-6419-907X\")),\n             person(\"Antoine\", \"Lucas\", role=\"ctb\", comment = c(ORCID = \"0000-0002-8059-9767\")),\n             person(\"Jarek\", \"Tuszynski\", role=\"ctb\"),\n             person(\"Henrik\", \"Bengtsson\", role=\"ctb\", comment = c(ORCID = \"0000-0002-7579-5165\")),\n             person(\"Simon\", \"Urbanek\", role=\"ctb\", comment = c(ORCID = \"0000-0003-2297-1732\")),\n             person(\"Mario\", \"Frasca\", role=\"ctb\"),\n             person(\"Bryan\", \"Lewis\", role=\"ctb\"),\n             person(\"Murray\", \"Stokely\", role=\"ctb\"),\n             person(\"Hannes\", \"Muehleisen\", role=\"ctb\", comment = c(ORCID = \"0000-0001-8552-0029\")),\n             person(\"Duncan\", \"Murdoch\", role=\"ctb\"),\n             person(\"Jim\", \"Hester\", role=\"ctb\", comment = c(ORCID = \"0000-0002-2739-7082\")),\n             person(\"Wush\", \"Wu\", role=\"ctb\", comment = c(ORCID = \"0000-0001-5180-0567\")),\n             person(\"Qiang\", \"Kou\", role=\"ctb\", comment = c(ORCID = \"0000-0001-6786-5453\")),\n             person(\"Thierry\", \"Onkelinx\", role=\"ctb\", comment = c(ORCID = \"0000-0001-8804-4216\")),\n             person(\"Michel\", \"Lang\", role=\"ctb\", comment = c(ORCID = \"0000-0001-9754-0393\")),\n             person(\"Viliam\", \"Simko\", role=\"ctb\"),\n             person(\"Kurt\", \"Hornik\", role=\"ctb\", comment = c(ORCID = \"0000-0003-4198-9911\")),\n             person(\"Radford\", \"Neal\", role=\"ctb\", comment = c(ORCID = \"0000-0002-2473-3407\")),\n             person(\"Kendon\", \"Bell\", role=\"ctb\", comment = c(ORCID = \"0000-0002-9093-8312\")),\n             person(\"Matthew\", \"de Queljoe\", role=\"ctb\"),\n             person(\"Dmitry\", \"Selivanov\", role=\"ctb\", comment = c(ORCID = \"0000-0003-0492-6647\")),\n             person(\"Ion\", \"Suruceanu\", role=\"ctb\", comment = c(ORCID = \"0009-0005-6446-4909\")),\n             person(\"Bill\", \"Denney\", role=\"ctb\", comment = c(ORCID = \"0000-0002-5759-428X\")),\n             person(\"Dirk\", \"Schumacher\", role=\"ctb\"),\n             person(\"András\", \"Svraka\", role=\"ctb\", comment = c(ORCID = \"0009-0008-8480-1329\")),\n             person(\"Sergey\", \"Fedorov\", role=\"ctb\", comment = c(ORCID = \"0000-0002-5970-7233\")),\n             person(\"Will\", \"Landau\", role=\"ctb\", comment = c(ORCID = \"0000-0003-1878-3253\")),\n             person(\"Floris\", \"Vanderhaeghe\", role=\"ctb\", comment = c(ORCID = \"0000-0002-6378-6229\")),\n             person(\"Kevin\", \"Tappe\", role=\"ctb\"),\n             person(\"Harris\", \"McGehee\", role=\"ctb\"),\n             person(\"Tim\", \"Mastny\", role=\"ctb\"),\n             person(\"Aaron\", \"Peikert\", role=\"ctb\", comment = c(ORCID = \"0000-0001-7813-818X\")),\n             person(\"Mark\", \"van der Loo\", role=\"ctb\", comment = c(ORCID = \"0000-0002-9807-4686\")),\n             person(\"Chris\", \"Muir\", role=\"ctb\", comment = c(ORCID = \"0000-0003-2555-3878\")),\n             person(\"Moritz\", \"Beller\", role=\"ctb\", comment = c(ORCID = \"0000-0003-4852-0526\")),\n             person(\"Sebastian\", \"Campbell\", role=\"ctb\", comment = c(ORCID = \"0009-0000-5948-4503\")),\n             person(\"Winston\", \"Chang\", role=\"ctb\", comment = c(ORCID = \"0000-0002-1576-2126\")),\n             person(\"Dean\", \"Attali\", role=\"ctb\", comment = c(ORCID = \"0000-0002-5645-3493\")),\n             person(\"Michael\", \"Chirico\", role=\"ctb\", comment = c(ORCID = \"0000-0003-0787-087X\")),\n             person(\"Kevin\", \"Ushey\", role=\"ctb\", comment = c(ORCID = \"0000-0003-2880-7407\")),\n             person(\"Carl\", \"Pearson\", role=\"ctb\", comment = c(ORCID = \"0000-0003-0701-7860\")))",
@@ -1712,7 +1770,7 @@
     },
     "distributional": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "distributional",
         "Title": "Vectorised Probability Distributions",
@@ -1740,7 +1798,7 @@
     },
     "doParallel": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "doParallel",
         "Type": "Package",
@@ -1765,7 +1823,7 @@
     },
     "dplyr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "dplyr",
@@ -1798,7 +1856,7 @@
     },
     "dtplyr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "dtplyr",
         "Title": "Data Table Back-End for 'dplyr'",
@@ -1827,7 +1885,7 @@
     },
     "dygraphs": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "dygraphs",
         "Type": "Package",
@@ -1854,7 +1912,7 @@
     },
     "e1071": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "e1071",
         "Version": "1.7-17",
@@ -1877,7 +1935,7 @@
     },
     "evaluate": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "evaluate",
@@ -1905,7 +1963,7 @@
     },
     "extraDistr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "extraDistr",
         "Type": "Package",
@@ -1935,7 +1993,7 @@
     },
     "farver": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "farver",
@@ -1962,7 +2020,7 @@
     },
     "fastmap": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "fastmap",
         "Title": "Fast Data Structures",
@@ -1987,7 +2045,7 @@
     },
     "fontawesome": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "fontawesome",
@@ -2016,7 +2074,7 @@
     },
     "forcats": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "forcats",
         "Title": "Tools for Working with Categorical Variables (Factors)",
@@ -2046,7 +2104,7 @@
     },
     "foreach": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "foreach",
         "Type": "Package",
@@ -2074,7 +2132,7 @@
     },
     "forecast": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "forecast",
         "Version": "9.0.2",
@@ -2106,7 +2164,7 @@
     },
     "fracdiff": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "fracdiff",
         "Version": "1.5-4",
@@ -2133,7 +2191,7 @@
     },
     "fredr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "fredr",
         "Title": "An R Client for the 'FRED' API",
@@ -2161,7 +2219,7 @@
     },
     "fs": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "fs",
         "Title": "Cross-Platform File System Operations Based on 'libuv'",
@@ -2195,7 +2253,7 @@
     },
     "furrr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "furrr",
         "Title": "Apply Mapping Functions in Parallel using Futures",
@@ -2223,7 +2281,7 @@
     },
     "future": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "future",
         "Version": "1.75.0",
@@ -2254,7 +2312,7 @@
     },
     "future.apply": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "future.apply",
         "Version": "1.20.2",
@@ -2283,7 +2341,7 @@
     },
     "gargle": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "gargle",
         "Title": "Utilities for Working with Google APIs",
@@ -2313,7 +2371,7 @@
     },
     "generics": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "generics",
         "Title": "Common S3 Generics not Provided by Base R Methods Related to\nModel Fitting",
@@ -2341,7 +2399,7 @@
     },
     "ggplot2": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "ggplot2",
         "Title": "Create Elegant Data Visualisations Using the Grammar of Graphics",
@@ -2374,7 +2432,7 @@
     },
     "glmnet": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "glmnet",
         "Type": "Package",
@@ -2405,7 +2463,7 @@
     },
     "globals": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "globals",
         "Version": "0.19.1",
@@ -2433,7 +2491,7 @@
     },
     "glue": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "glue",
         "Title": "Interpreted String Literals",
@@ -2465,7 +2523,7 @@
     },
     "googledrive": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "googledrive",
         "Title": "An Interface to Google Drive",
@@ -2495,7 +2553,7 @@
     },
     "googlesheets4": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "googlesheets4",
         "Title": "Access Google Sheets using the Sheets API V4",
@@ -2525,7 +2583,7 @@
     },
     "gower": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "gower",
         "Maintainer": "Mark van der Loo <mark.vanderloo@gmail.com>",
@@ -2551,7 +2609,7 @@
     },
     "gridExtra": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "gridExtra",
         "Authors@R": "c(person(\"Baptiste\", \"Auguie\",\n    email = \"baptiste.auguie@vuw.ac.nz\",\n    role = c(\"aut\", \"cre\")), person(\"Anton\", \"Antonov\",\n    email = \"tonytonov@gmail.com\",\n    role = c(\"ctb\")))",
@@ -2575,7 +2633,7 @@
     },
     "gt": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "gt",
@@ -2608,7 +2666,7 @@
     },
     "gtable": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "gtable",
         "Title": "Arrange 'Grobs' in Tables",
@@ -2638,7 +2696,7 @@
     },
     "hardhat": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "hardhat",
         "Title": "Construct Modeling Packages",
@@ -2669,7 +2727,7 @@
     },
     "haven": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "haven",
         "Title": "Import and Export 'SPSS', 'Stata' and 'SAS' Files",
@@ -2701,7 +2759,7 @@
     },
     "highr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "highr",
         "Type": "Package",
@@ -2729,7 +2787,7 @@
     },
     "hms": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "hms",
         "Title": "Pretty Time of Day",
@@ -2757,7 +2815,7 @@
     },
     "htmltools": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "htmltools",
@@ -2789,7 +2847,7 @@
     },
     "htmlwidgets": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "htmlwidgets",
@@ -2817,7 +2875,7 @@
     },
     "httpuv": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "httpuv",
@@ -2851,7 +2909,7 @@
     },
     "httr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "httr",
         "Title": "Tools for Working with URLs and HTTP",
@@ -2879,7 +2937,7 @@
     },
     "httr2": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "httr2",
         "Title": "Perform HTTP Requests and Process the Responses",
@@ -2910,7 +2968,7 @@
     },
     "ids": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "ids",
         "Title": "Generate Random Identifiers",
@@ -2935,7 +2993,7 @@
     },
     "infer": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "infer",
@@ -2967,7 +3025,7 @@
     },
     "inline": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "inline",
         "Version": "0.3.21",
@@ -2993,7 +3051,7 @@
     },
     "ipred": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "ipred",
         "Title": "Improved Predictors",
@@ -3017,7 +3075,7 @@
     },
     "isoband": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "isoband",
         "Title": "Generate Isolines and Isobands from Regularly Spaced Elevation\nGrids",
@@ -3049,7 +3107,7 @@
     },
     "iterators": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "iterators",
         "Type": "Package",
@@ -3072,7 +3130,7 @@
     },
     "janitor": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "janitor",
         "Title": "Simple Tools for Examining and Cleaning Dirty Data",
@@ -3100,7 +3158,7 @@
     },
     "jquerylib": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "jquerylib",
         "Title": "Obtain 'jQuery' as an HTML Dependency Object",
@@ -3124,7 +3182,7 @@
     },
     "jsonlite": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "jsonlite",
         "Version": "2.0.0",
@@ -3151,7 +3209,7 @@
     },
     "juicyjuice": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "juicyjuice",
         "Title": "Inline CSS Properties into HTML Tags Using 'juice'",
@@ -3177,7 +3235,7 @@
     },
     "knitr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "knitr",
         "Type": "Package",
@@ -3207,7 +3265,7 @@
     },
     "labeling": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "labeling",
         "Type": "Package",
@@ -3229,7 +3287,7 @@
     },
     "later": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "later",
@@ -3263,7 +3321,7 @@
     },
     "lattice": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "lattice",
         "Version": "0.22-9",
@@ -3293,7 +3351,7 @@
     },
     "lava": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "lava",
         "Type": "Package",
@@ -3323,7 +3381,7 @@
     },
     "lazyeval": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "lazyeval",
         "Version": "0.2.3",
@@ -3349,7 +3407,7 @@
     },
     "lbfgs": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "lbfgs",
         "Type": "Package",
@@ -3373,7 +3431,7 @@
     },
     "leaflet": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "leaflet",
@@ -3403,7 +3461,7 @@
     },
     "leaflet.extras": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "leaflet.extras",
         "Type": "Package",
@@ -3431,7 +3489,7 @@
     },
     "leaflet.providers": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "leaflet.providers",
@@ -3460,9 +3518,46 @@
         "Built": "R 4.6.1; ; 2026-07-21 01:50:57 UTC; windows"
       }
     },
+    "lehdr": {
+      "Source": "CRAN",
+      "Repository": "https://cran.rstudio.com",
+      "description": {
+        "Type": "Package",
+        "Package": "lehdr",
+        "Title": "Grab Longitudinal Employer-Household Dynamics (LEHD) Flat Files",
+        "Version": "1.2.1",
+        "Authors@R": "c(\n    person(\"Jamaal\", \"Green\", , \"jamaal.green@gmail.com\", role = c(\"cre\", \"aut\"),\n          comment = c(ORCID = \"0000-0002-8322-8654\")),\n    person(\"Liming\", \"Wang\", , \"lmwang@pdx.edu\", role = \"aut\"),\n    person(\"Dillon\", \"Mahmoudi\", , \"dillonm@umbc.edu\", role = \"aut\",\n          comment = c(ORCID = \"0000-0002-8816-1639\")),\n    person(\"Matthew\", \"Rogers\", , \"matthew.rogers09@gmail.com\", role = \"ctb\"),\n    person(\"Kyle\", \"Walker\", , \"kyle@walker-data.com\", role = \"ctb\"),\n    person(\"Eli\", \"Pousson\", , \"eli.pousson@gmail.com\", role = \"ctb\",\n          comment = c(ORCID = \"0000-0001-8280-1706\"))\n  )",
+        "Maintainer": "Jamaal Green <jamaal.green@gmail.com>",
+        "Description": "Designed to query Longitudinal Employer-Household Dynamics\n    (LEHD) workplace/residential association and origin-destination flat\n    files and optionally aggregate Census block-level data to block group,\n    tract, county, or state. Also provides analytical functions for commute\n    flow statistics, longitudinal change, and earnings tier distributions.\n    Data comes from the LODES FTP server\n    <https://lehd.ces.census.gov/data/lodes/LODES8/>.",
+        "License": "MIT + file LICENSE",
+        "URL": "https://jamgreen.github.io/lehdr/,\nhttps://github.com/jamgreen/lehdr/",
+        "BugReports": "https://github.com/jamgreen/lehdr/issues/",
+        "Depends": "R (>= 4.1.0)",
+        "Imports": "dplyr, glue, httr2, magrittr, readr, rlang, stringr, tidyr",
+        "Suggests": "ggplot2, knitr, pkgdown, rmarkdown, sf, testthat (>= 3.0.0),\ntigris, withr",
+        "VignetteBuilder": "knitr",
+        "Config/testthat/edition": "3",
+        "Encoding": "UTF-8",
+        "Language": "en",
+        "Config/roxygen2/version": "8.1.1",
+        "NeedsCompilation": "no",
+        "Packaged": "2026-11-01 16:48:10 UTC; elmue",
+        "Author": "Jamaal Green [cre, aut] (ORCID:\n    <https://orcid.org/0000-0002-8322-8654>),\n  Liming Wang [aut],\n  Dillon Mahmoudi [aut] (ORCID: <https://orcid.org/0000-0002-8816-1639>),\n  Matthew Rogers [ctb],\n  Kyle Walker [ctb],\n  Eli Pousson [ctb] (ORCID: <https://orcid.org/0000-0001-8280-1706>)",
+        "Repository": "CRAN",
+        "Date/Publication": "2026-11-01 23:20:02 UTC",
+        "Built": "R 4.6.2; ; 2026-11-11 05:23:30 UTC; windows",
+        "RemoteType": "standard",
+        "RemoteRef": "lehdr",
+        "RemotePkgRef": "lehdr",
+        "RemoteRepos": "https://cran.rstudio.com",
+        "RemoteReposName": "CRAN",
+        "RemotePkgPlatform": "x86_64-w64-mingw32",
+        "RemoteSha": "1.2.1"
+      }
+    },
     "lifecycle": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "lifecycle",
         "Title": "Manage the Life Cycle of your Package Functions",
@@ -3491,7 +3586,7 @@
     },
     "listenv": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "listenv",
         "Version": "1.0.0",
@@ -3519,7 +3614,7 @@
     },
     "litedown": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "litedown",
         "Type": "Package",
@@ -3547,7 +3642,7 @@
     },
     "lmtest": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "lmtest",
         "Title": "Testing Linear Regression Models",
@@ -3572,7 +3667,7 @@
     },
     "loo": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "loo",
@@ -3606,7 +3701,7 @@
     },
     "lubridate": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "lubridate",
@@ -3641,7 +3736,7 @@
     },
     "magrittr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "magrittr",
@@ -3671,7 +3766,7 @@
     },
     "markdown": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "markdown",
         "Type": "Package",
@@ -3698,7 +3793,7 @@
     },
     "matrixStats": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "matrixStats",
         "Version": "1.5.0",
@@ -3726,7 +3821,7 @@
     },
     "memoise": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "memoise",
         "Title": "'Memoisation' of Functions",
@@ -3751,7 +3846,7 @@
     },
     "mime": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "mime",
         "Type": "Package",
@@ -3777,7 +3872,7 @@
     },
     "mixopt": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "mixopt",
         "Type": "Package",
@@ -3804,7 +3899,7 @@
     },
     "modeldata": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "modeldata",
         "Title": "Data Sets Useful for Modeling Examples",
@@ -3835,7 +3930,7 @@
     },
     "modelenv": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "modelenv",
         "Title": "Provide Tools to Register Models for Use in 'tidymodels'",
@@ -3862,7 +3957,7 @@
     },
     "modelr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "modelr",
         "Title": "Modelling Functions that Work with the Pipe",
@@ -3891,7 +3986,7 @@
     },
     "modeltime": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "modeltime",
         "Title": "The Tidymodels Extension for Time Series Modeling",
@@ -3919,7 +4014,7 @@
     },
     "modeltime.ensemble": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "modeltime.ensemble",
         "Type": "Package",
@@ -3947,7 +4042,7 @@
     },
     "modeltime.resample": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "modeltime.resample",
         "Title": "Resampling Tools for Time Series Forecasting",
@@ -3975,7 +4070,7 @@
     },
     "mvtnorm": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "mvtnorm",
         "Title": "Multivariate Normal and t Distributions",
@@ -3999,7 +4094,7 @@
     },
     "nlme": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "nlme",
         "Version": "3.1-169",
@@ -4030,7 +4125,7 @@
     },
     "nnet": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "nnet",
         "Priority": "recommended",
@@ -4056,7 +4151,7 @@
     },
     "numDeriv": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "numDeriv",
         "Version": "2016.8-1.1",
@@ -4079,7 +4174,7 @@
     },
     "openssl": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "openssl",
         "Type": "Package",
@@ -4108,7 +4203,7 @@
     },
     "otel": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "otel",
         "Title": "OpenTelemetry R API",
@@ -4136,7 +4231,7 @@
     },
     "padr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "padr",
         "Type": "Package",
@@ -4168,7 +4263,7 @@
     },
     "parallelly": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "parallelly",
         "Version": "1.48.0",
@@ -4199,7 +4294,7 @@
     },
     "parsnip": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "parsnip",
         "Title": "A Common API to Modeling and Analysis Functions",
@@ -4232,7 +4327,7 @@
     },
     "patchwork": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "patchwork",
         "Type": "Package",
@@ -4260,7 +4355,7 @@
     },
     "pcaPP": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "pcaPP",
         "Version": "2.0-5",
@@ -4286,7 +4381,7 @@
     },
     "pillar": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "pillar",
         "Title": "Coloured Formatting for Columns",
@@ -4319,7 +4414,7 @@
     },
     "pkgbuild": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "pkgbuild",
         "Title": "Find Tools Needed to Build R Packages",
@@ -4348,7 +4443,7 @@
     },
     "pkgconfig": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "pkgconfig",
         "Title": "Private Configuration for 'R' Packages",
@@ -4370,9 +4465,39 @@
         "Built": "R 4.6.0; ; 2026-06-02 01:42:15 UTC; windows"
       }
     },
+    "pkgload": {
+      "Source": "CRAN",
+      "Repository": "https://cran.rstudio.com",
+      "description": {
+        "Package": "pkgload",
+        "Title": "Simulate Package Installation and Attach",
+        "Version": "1.5.3",
+        "Authors@R": "c(\n    person(\"Hadley\", \"Wickham\", role = \"aut\"),\n    person(\"Winston\", \"Chang\", role = \"aut\"),\n    person(\"Jim\", \"Hester\", role = \"aut\"),\n    person(\"Lionel\", \"Henry\", , \"lionel@posit.co\", role = c(\"aut\", \"cre\")),\n    person(\"Posit Software, PBC\", role = c(\"cph\", \"fnd\")),\n    person(\"R Core team\", role = \"ctb\",\n           comment = \"Some namespace and vignette code extracted from base R\")\n  )",
+        "Description": "Simulates the process of installing a package and then\n    attaching it. This is a key part of the 'devtools' package as it\n    allows you to rapidly iterate while developing a package.",
+        "License": "MIT + file LICENSE",
+        "URL": "https://github.com/r-lib/pkgload, https://pkgload.r-lib.org",
+        "BugReports": "https://github.com/r-lib/pkgload/issues",
+        "Depends": "R (>= 3.4.0)",
+        "Imports": "cli (>= 3.3.0), desc, fs, glue, lifecycle, methods, pkgbuild,\nprocessx, rlang (>= 1.1.1), rprojroot, utils",
+        "Suggests": "bitops, jsonlite, mathjaxr, pak, Rcpp, remotes, rstudioapi,\ntestthat (>= 3.2.1.1), usethis, withr",
+        "Config/Needs/website": "tidyverse/tidytemplate, ggplot2",
+        "Config/testthat/edition": "3",
+        "Config/testthat/parallel": "TRUE",
+        "Config/testthat/start-first": "dll",
+        "Encoding": "UTF-8",
+        "RoxygenNote": "7.3.2",
+        "NeedsCompilation": "no",
+        "Packaged": "2026-06-15 13:09:18 UTC; lionel",
+        "Author": "Hadley Wickham [aut],\n  Winston Chang [aut],\n  Jim Hester [aut],\n  Lionel Henry [aut, cre],\n  Posit Software, PBC [cph, fnd],\n  R Core team [ctb] (Some namespace and vignette code extracted from base\n    R)",
+        "Maintainer": "Lionel Henry <lionel@posit.co>",
+        "Repository": "CRAN",
+        "Date/Publication": "2026-06-15 15:00:11 UTC",
+        "Built": "R 4.6.1; ; 2026-08-07 02:38:34 UTC; windows"
+      }
+    },
     "plotly": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "plotly",
         "Title": "Create Interactive Web Graphics via 'plotly.js'",
@@ -4400,7 +4525,7 @@
     },
     "png": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "png",
         "Version": "0.1-9",
@@ -4424,7 +4549,7 @@
     },
     "posterior": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "posterior",
         "Title": "Tools for Working with Posterior Distributions",
@@ -4451,9 +4576,32 @@
         "Built": "R 4.6.1; ; 2026-07-21 03:09:33 UTC; windows"
       }
     },
+    "praise": {
+      "Source": "CRAN",
+      "Repository": "https://cran.rstudio.com",
+      "description": {
+        "Package": "praise",
+        "Title": "Praise Users",
+        "Version": "1.0.0",
+        "Author": "Gabor Csardi, Sindre Sorhus",
+        "Maintainer": "Gabor Csardi <csardi.gabor@gmail.com>",
+        "Description": "Build friendly R packages that\n    praise their users if they have done something\n    good, or they just need it to feel better.",
+        "License": "MIT + file LICENSE",
+        "LazyData": "true",
+        "URL": "https://github.com/gaborcsardi/praise",
+        "BugReports": "https://github.com/gaborcsardi/praise/issues",
+        "Suggests": "testthat",
+        "Collate": "'adjective.R' 'adverb.R' 'exclamation.R' 'verb.R' 'rpackage.R'\n'package.R'",
+        "NeedsCompilation": "no",
+        "Packaged": "2015-08-11 02:01:43 UTC; gaborcsardi",
+        "Repository": "CRAN",
+        "Date/Publication": "2015-08-11 08:22:28",
+        "Built": "R 4.6.1; ; 2026-08-23 00:54:00 UTC; windows"
+      }
+    },
     "prettyunits": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "prettyunits",
         "Title": "Pretty, Human Readable Formatting of Quantities",
@@ -4478,7 +4626,7 @@
     },
     "processx": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "processx",
         "Title": "Execute and Control System Processes",
@@ -4508,7 +4656,7 @@
     },
     "prodlim": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "prodlim",
         "Title": "Product-Limit Estimation for Censored Event History Analysis",
@@ -4534,7 +4682,7 @@
     },
     "progress": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "progress",
         "Title": "Terminal Progress Bars",
@@ -4562,7 +4710,7 @@
     },
     "progressr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "progressr",
         "Version": "1.0.0",
@@ -4590,7 +4738,7 @@
     },
     "promises": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "promises",
@@ -4622,7 +4770,7 @@
     },
     "prophet": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "prophet",
         "Title": "Automatic Forecasting Procedure",
@@ -4655,7 +4803,7 @@
     },
     "proxy": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "proxy",
         "Type": "Package",
@@ -4680,7 +4828,7 @@
     },
     "ps": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "ps",
         "Title": "List, Query, Manipulate System Processes",
@@ -4711,7 +4859,7 @@
     },
     "purrr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "purrr",
         "Title": "Functional Programming Tools",
@@ -4745,7 +4893,7 @@
     },
     "pyinit": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "pyinit",
         "Type": "Package",
@@ -4775,7 +4923,7 @@
     },
     "quadprog": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "quadprog",
         "Type": "Package",
@@ -4797,7 +4945,7 @@
     },
     "quantmod": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "quantmod",
         "Type": "Package",
@@ -4823,7 +4971,7 @@
     },
     "ragg": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "ragg",
@@ -4856,7 +5004,7 @@
     },
     "rappdirs": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "rappdirs",
@@ -4887,7 +5035,7 @@
     },
     "raster": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "raster",
         "Type": "Package",
@@ -4915,7 +5063,7 @@
     },
     "reactR": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "reactR",
         "Type": "Package",
@@ -4943,7 +5091,7 @@
     },
     "reactable": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "reactable",
         "Type": "Package",
@@ -4971,7 +5119,7 @@
     },
     "readr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "readr",
         "Title": "Read Rectangular Text Data",
@@ -5005,7 +5153,7 @@
     },
     "readxl": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "readxl",
         "Title": "Read Excel Files",
@@ -5038,7 +5186,7 @@
     },
     "recipes": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "recipes",
         "Title": "Preprocessing and Feature Engineering Steps for Modeling",
@@ -5069,7 +5217,7 @@
     },
     "rematch": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "rematch",
         "Title": "Match Regular Expressions with a Nicer 'API'",
@@ -5092,7 +5240,7 @@
     },
     "rematch2": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "rematch2",
         "Title": "Tidy Output from Regular Expression Matching",
@@ -5118,7 +5266,7 @@
     },
     "remotes": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "remotes",
         "Title": "R Package Installation from Remote Repositories, Including\n'GitHub'",
@@ -5155,7 +5303,7 @@
     },
     "reprex": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "reprex",
         "Title": "Prepare Reproducible Example Code via the Clipboard",
@@ -5188,7 +5336,7 @@
     },
     "rlang": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "rlang",
         "Version": "1.3.0",
@@ -5222,7 +5370,7 @@
     },
     "rmarkdown": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "rmarkdown",
@@ -5253,7 +5401,7 @@
     },
     "robustbase": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "robustbase",
         "Version": "0.99-7",
@@ -5284,7 +5432,7 @@
     },
     "rpart": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "rpart",
         "Priority": "recommended",
@@ -5310,9 +5458,39 @@
         "Archs": "x64"
       }
     },
+    "rprojroot": {
+      "Source": "CRAN",
+      "Repository": "https://cran.rstudio.com",
+      "description": {
+        "Package": "rprojroot",
+        "Title": "Finding Files in Project Subdirectories",
+        "Version": "2.1.1",
+        "Authors@R": "\n    person(given = \"Kirill\",\n           family = \"M\\u00fcller\",\n           role = c(\"aut\", \"cre\"),\n           email = \"kirill@cynkra.com\",\n           comment = c(ORCID = \"0000-0002-1416-3412\"))",
+        "Description": "Robust, reliable and flexible paths to files below\n    a project root. The 'root' of a project is defined as a directory that\n    matches a certain criterion, e.g., it contains a certain regular file.",
+        "License": "MIT + file LICENSE",
+        "URL": "https://rprojroot.r-lib.org/, https://github.com/r-lib/rprojroot",
+        "BugReports": "https://github.com/r-lib/rprojroot/issues",
+        "Depends": "R (>= 3.0.0)",
+        "Suggests": "covr, knitr, lifecycle, rlang, rmarkdown, testthat (>=\n3.2.0), withr",
+        "VignetteBuilder": "knitr",
+        "Config/testthat/edition": "3",
+        "Encoding": "UTF-8",
+        "RoxygenNote": "7.3.2.9000",
+        "Config/autostyle/scope": "line_breaks",
+        "Config/autostyle/strict": "true",
+        "Config/Needs/website": "tidyverse/tidytemplate",
+        "NeedsCompilation": "no",
+        "Packaged": "2025-08-26 15:22:42 UTC; kirill",
+        "Author": "Kirill Müller [aut, cre] (ORCID:\n    <https://orcid.org/0000-0002-1416-3412>)",
+        "Maintainer": "Kirill Müller <kirill@cynkra.com>",
+        "Repository": "CRAN",
+        "Date/Publication": "2025-08-26 16:20:02 UTC",
+        "Built": "R 4.6.1; ; 2026-07-07 01:09:47 UTC; windows"
+      }
+    },
     "rrcov": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "rrcov",
         "Version": "1.7-7",
@@ -5340,7 +5518,7 @@
     },
     "rsample": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "rsample",
         "Title": "General Resampling Infrastructure",
@@ -5370,7 +5548,7 @@
     },
     "rstan": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "rstan",
         "Type": "Package",
@@ -5402,7 +5580,7 @@
     },
     "rstantools": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "rstantools",
         "Type": "Package",
@@ -5431,7 +5609,7 @@
     },
     "rstudioapi": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "rstudioapi",
         "Title": "Safely Access the RStudio API",
@@ -5456,7 +5634,7 @@
     },
     "rvest": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "rvest",
         "Title": "Easily Harvest (Scrape) Web Pages",
@@ -5487,7 +5665,7 @@
     },
     "s2": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "s2",
         "Title": "Spherical Geometry Operators Using the S2 Geometry Library",
@@ -5518,7 +5696,7 @@
     },
     "sandwich": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "sandwich",
         "Version": "3.1-2",
@@ -5543,7 +5721,7 @@
     },
     "sass": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "sass",
@@ -5573,7 +5751,7 @@
     },
     "scales": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "scales",
         "Title": "Scale Functions for Visualization",
@@ -5603,7 +5781,7 @@
     },
     "selectr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "selectr",
         "Type": "Package",
@@ -5628,7 +5806,7 @@
     },
     "sf": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "sf",
         "Version": "1.1-1",
@@ -5661,7 +5839,7 @@
     },
     "sfd": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "sfd",
         "Title": "Space-Filling Design Library",
@@ -5688,7 +5866,7 @@
     },
     "shape": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "shape",
         "Version": "1.4.6.1",
@@ -5708,7 +5886,7 @@
     },
     "shiny": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "shiny",
@@ -5738,7 +5916,7 @@
     },
     "shinyWidgets": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "shinyWidgets",
         "Title": "Custom Inputs Widgets for Shiny",
@@ -5765,7 +5943,7 @@
     },
     "shinycssloaders": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "shinycssloaders",
         "Title": "Add Loading Animations to a 'shiny' Output While It's\nRecalculating",
@@ -5791,7 +5969,7 @@
     },
     "shinydashboard": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "shinydashboard",
         "Title": "Create Dashboards with 'Shiny'",
@@ -5816,7 +5994,7 @@
     },
     "shinyjs": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "shinyjs",
         "Title": "Easily Improve the User Experience of Your Shiny Apps in Seconds",
@@ -5843,7 +6021,7 @@
     },
     "slider": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "slider",
         "Title": "Sliding Window Functions",
@@ -5877,7 +6055,7 @@
     },
     "snakecase": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "snakecase",
         "Version": "0.11.1",
@@ -5905,7 +6083,7 @@
     },
     "sourcetools": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "sourcetools",
         "Type": "Package",
@@ -5931,7 +6109,7 @@
     },
     "sp": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "sp",
         "Version": "2.2-3",
@@ -5958,7 +6136,7 @@
     },
     "sparsevctrs": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "sparsevctrs",
         "Title": "Sparse Vectors for Use in Data Frames",
@@ -5989,7 +6167,7 @@
     },
     "splitfngr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "splitfngr",
         "Type": "Package",
@@ -6012,7 +6190,7 @@
     },
     "stringi": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "stringi",
         "Version": "1.8.7",
@@ -6043,7 +6221,7 @@
     },
     "stringr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "stringr",
         "Title": "Simple, Consistent Wrappers for Common String Operations",
@@ -6074,7 +6252,7 @@
     },
     "strucchange": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "strucchange",
         "Version": "1.5-4",
@@ -6099,7 +6277,7 @@
     },
     "survival": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Title": "Survival Analysis",
         "Priority": "recommended",
@@ -6127,7 +6305,7 @@
     },
     "sys": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "sys",
         "Type": "Package",
@@ -6154,7 +6332,7 @@
     },
     "systemfonts": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "systemfonts",
@@ -6188,7 +6366,7 @@
     },
     "tailor": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tailor",
         "Title": "Iterative Steps for Postprocessing Model Predictions",
@@ -6217,7 +6395,7 @@
     },
     "tensorA": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tensorA",
         "Version": "0.36.2.1",
@@ -6239,7 +6417,7 @@
     },
     "terra": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "terra",
         "Type": "Package",
@@ -6269,9 +6447,41 @@
         "Archs": "x64"
       }
     },
+    "testthat": {
+      "Source": "CRAN",
+      "Repository": "https://cran.rstudio.com",
+      "description": {
+        "Package": "testthat",
+        "Title": "Unit Testing for R",
+        "Version": "3.3.2",
+        "Authors@R": "c(\n    person(\"Hadley\", \"Wickham\", , \"hadley@posit.co\", role = c(\"aut\", \"cre\")),\n    person(\"Posit Software, PBC\", role = c(\"cph\", \"fnd\")),\n    person(\"R Core team\", role = \"ctb\",\n           comment = \"Implementation of utils::recover()\")\n  )",
+        "Description": "Software testing is important, but, in part because it is\n    frustrating and boring, many of us avoid it. 'testthat' is a testing\n    framework for R that is easy to learn and use, and integrates with\n    your existing 'workflow'.",
+        "License": "MIT + file LICENSE",
+        "URL": "https://testthat.r-lib.org, https://github.com/r-lib/testthat",
+        "BugReports": "https://github.com/r-lib/testthat/issues",
+        "Depends": "R (>= 4.1.0)",
+        "Imports": "brio (>= 1.1.5), callr (>= 3.7.6), cli (>= 3.6.5), desc (>=\n1.4.3), evaluate (>= 1.0.4), jsonlite (>= 2.0.0), lifecycle (>=\n1.0.4), magrittr (>= 2.0.3), methods, pkgload (>= 1.4.0),\npraise (>= 1.0.0), processx (>= 3.8.6), ps (>= 1.9.1), R6 (>=\n2.6.1), rlang (>= 1.1.6), utils, waldo (>= 0.6.2), withr (>=\n3.0.2)",
+        "Suggests": "covr, curl (>= 0.9.5), diffviewer (>= 0.1.0), digest (>=\n0.6.33), gh, knitr, otel, otelsdk, rmarkdown, rstudioapi, S7,\nshiny, usethis, vctrs (>= 0.1.0), xml2",
+        "VignetteBuilder": "knitr",
+        "Config/Needs/website": "tidyverse/tidytemplate",
+        "Config/testthat/edition": "3",
+        "Config/testthat/parallel": "true",
+        "Config/testthat/start-first": "watcher, parallel*",
+        "Encoding": "UTF-8",
+        "RoxygenNote": "7.3.3",
+        "NeedsCompilation": "yes",
+        "Packaged": "2026-01-09 17:49:32 UTC; hadleywickham",
+        "Author": "Hadley Wickham [aut, cre],\n  Posit Software, PBC [cph, fnd],\n  R Core team [ctb] (Implementation of utils::recover())",
+        "Maintainer": "Hadley Wickham <hadley@posit.co>",
+        "Repository": "CRAN",
+        "Date/Publication": "2026-01-11 09:10:02 UTC",
+        "Built": "R 4.6.1; x86_64-w64-mingw32; 2026-08-19 14:19:50 UTC; windows",
+        "Archs": "x64"
+      }
+    },
     "textshaping": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "textshaping",
         "Title": "Bindings to the 'HarfBuzz' and 'Fribidi' Libraries for Text\nShaping",
@@ -6304,7 +6514,7 @@
     },
     "tibble": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tibble",
         "Title": "Simple Data Frames",
@@ -6340,7 +6550,7 @@
     },
     "tictoc": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tictoc",
         "Title": "Functions for Timing R Scripts, as Well as Implementations of\n\"Stack\" and \"StackList\" Structures",
@@ -6365,7 +6575,7 @@
     },
     "tidycensus": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tidycensus",
         "Type": "Package",
@@ -6395,7 +6605,7 @@
     },
     "tidymodels": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tidymodels",
         "Title": "Easily Install and Load the 'Tidymodels' Packages",
@@ -6425,7 +6635,7 @@
     },
     "tidyquant": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tidyquant",
         "Type": "Package",
@@ -6454,7 +6664,7 @@
     },
     "tidyr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tidyr",
         "Title": "Tidy Messy Data",
@@ -6487,7 +6697,7 @@
     },
     "tidyselect": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tidyselect",
         "Title": "Select from a Set of Strings",
@@ -6517,7 +6727,7 @@
     },
     "tidyverse": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tidyverse",
         "Title": "Easily Install and Load the 'Tidyverse'",
@@ -6546,7 +6756,7 @@
     },
     "tigris": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tigris",
         "Type": "Package",
@@ -6575,7 +6785,7 @@
     },
     "timeDate": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "timeDate",
         "Title": "Rmetrics - Chronological and Calendar Objects",
@@ -6600,7 +6810,7 @@
     },
     "timechange": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "timechange",
         "Title": "Efficient Manipulation of Date-Times",
@@ -6628,7 +6838,7 @@
     },
     "timetk": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "timetk",
         "Type": "Package",
@@ -6657,7 +6867,7 @@
     },
     "tinytex": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tinytex",
         "Type": "Package",
@@ -6683,7 +6893,7 @@
     },
     "tseries": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tseries",
         "Version": "0.10-62",
@@ -6706,7 +6916,7 @@
     },
     "tsfeatures": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tsfeatures",
         "Title": "Time Series Feature Extraction",
@@ -6734,7 +6944,7 @@
     },
     "tune": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tune",
         "Title": "Tidy Tuning Tools",
@@ -6764,7 +6974,7 @@
     },
     "tzdb": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "tzdb",
         "Title": "Time Zone Database Information",
@@ -6794,7 +7004,7 @@
     },
     "units": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "units",
         "Version": "1.0-1",
@@ -6825,7 +7035,7 @@
     },
     "urca": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "urca",
         "Version": "1.3-4",
@@ -6849,7 +7059,7 @@
     },
     "utf8": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "utf8",
         "Title": "Unicode Text Processing",
@@ -6877,7 +7087,7 @@
     },
     "uuid": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "uuid",
         "Version": "1.2-2",
@@ -6900,7 +7110,7 @@
     },
     "vars": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "vars",
         "Type": "Package",
@@ -6929,7 +7139,7 @@
     },
     "vctrs": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "vctrs",
         "Title": "Vector Helpers",
@@ -6963,7 +7173,7 @@
     },
     "viridisLite": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "viridisLite",
         "Type": "Package",
@@ -6990,7 +7200,7 @@
     },
     "vroom": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "vroom",
         "Title": "Read and Write Rectangular Text Data Quickly",
@@ -7026,7 +7236,7 @@
     },
     "waiter": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "waiter",
         "Title": "Loading Screen for 'Shiny'",
@@ -7051,9 +7261,37 @@
         "Built": "R 4.6.1; ; 2026-07-21 02:53:19 UTC; windows"
       }
     },
+    "waldo": {
+      "Source": "CRAN",
+      "Repository": "https://cran.rstudio.com",
+      "description": {
+        "Package": "waldo",
+        "Title": "Find Differences Between R Objects",
+        "Version": "0.6.2",
+        "Authors@R": "c(\n    person(\"Hadley\", \"Wickham\", , \"hadley@posit.co\", role = c(\"aut\", \"cre\")),\n    person(\"Posit Software, PBC\", role = c(\"cph\", \"fnd\"))\n  )",
+        "Description": "Compare complex R objects and reveal the key differences.\n    Designed particularly for use in testing packages where being able to\n    quickly isolate key differences makes understanding test failures much\n    easier.",
+        "License": "MIT + file LICENSE",
+        "URL": "https://waldo.r-lib.org, https://github.com/r-lib/waldo",
+        "BugReports": "https://github.com/r-lib/waldo/issues",
+        "Depends": "R (>= 4.0)",
+        "Imports": "cli, diffobj (>= 0.3.4), glue, methods, rlang (>= 1.1.0)",
+        "Suggests": "bit64, R6, S7, testthat (>= 3.0.0), withr, xml2",
+        "Config/Needs/website": "tidyverse/tidytemplate",
+        "Config/testthat/edition": "3",
+        "Encoding": "UTF-8",
+        "RoxygenNote": "7.3.2",
+        "NeedsCompilation": "no",
+        "Packaged": "2025-07-11 13:27:03 UTC; hadleywickham",
+        "Author": "Hadley Wickham [aut, cre],\n  Posit Software, PBC [cph, fnd]",
+        "Maintainer": "Hadley Wickham <hadley@posit.co>",
+        "Repository": "CRAN",
+        "Date/Publication": "2025-07-11 15:20:02 UTC",
+        "Built": "R 4.6.1; ; 2026-08-23 01:47:50 UTC; windows"
+      }
+    },
     "warp": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "warp",
         "Title": "Group Dates",
@@ -7084,7 +7322,7 @@
     },
     "withr": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "withr",
         "Title": "Run Code 'With' Temporarily Modified Global State",
@@ -7114,7 +7352,7 @@
     },
     "wk": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "wk",
         "Title": "Lightweight Well-Known Geometry Parsing",
@@ -7142,7 +7380,7 @@
     },
     "workflows": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "workflows",
         "Title": "Modeling Workflows",
@@ -7172,7 +7410,7 @@
     },
     "workflowsets": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "workflowsets",
         "Title": "Create a Collection of 'tidymodels' Workflows",
@@ -7204,7 +7442,7 @@
     },
     "xfun": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "xfun",
         "Type": "Package",
@@ -7233,7 +7471,7 @@
     },
     "xgboost": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "xgboost",
         "Type": "Package",
@@ -7264,7 +7502,7 @@
     },
     "xml2": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "xml2",
         "Title": "Parse XML",
@@ -7296,7 +7534,7 @@
     },
     "xtable": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "xtable",
         "Version": "1.8-8",
@@ -7321,7 +7559,7 @@
     },
     "xts": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "xts",
         "Type": "Package",
@@ -7350,7 +7588,7 @@
     },
     "yaml": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "yaml",
@@ -7379,7 +7617,7 @@
     },
     "yardstick": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Type": "Package",
         "Package": "yardstick",
@@ -7413,7 +7651,7 @@
     },
     "zoo": {
       "Source": "CRAN",
-      "Repository": "https://cloud.r-project.org",
+      "Repository": "https://cran.rstudio.com",
       "description": {
         "Package": "zoo",
         "Version": "1.8-15",
@@ -7438,8 +7676,593 @@
     }
   },
   "files": {
+    ".claude/worktrees/regional-risk-map/.github/scripts/notify_email.py": {
+      "checksum": "ab2d0e08100fff31131cb90e9e634c1d"
+    },
+    ".claude/worktrees/regional-risk-map/.github/workflows/recession-model-doc.yml": {
+      "checksum": "6481af00ecc0b5f9e07ded1a183cdf5e"
+    },
+    ".claude/worktrees/regional-risk-map/.playwright-mcp/console-2026-11-12T17-29-58-928Z.log": {
+      "checksum": "25a0c3270b37489baf1a5cf6ab4c8c70"
+    },
+    ".claude/worktrees/regional-risk-map/.playwright-mcp/console-2026-11-12T17-39-24-633Z.log": {
+      "checksum": "67ccaae288db42609fea2537ecf1e216"
+    },
+    ".claude/worktrees/regional-risk-map/.playwright-mcp/console-2026-11-12T17-45-55-410Z.log": {
+      "checksum": "a162a960a5b7c97affa4766f2ed94a0b"
+    },
+    ".claude/worktrees/regional-risk-map/.playwright-mcp/console-2026-11-12T18-02-53-475Z.log": {
+      "checksum": "8a05990da503797652cbab95533e7097"
+    },
+    ".claude/worktrees/regional-risk-map/.playwright-mcp/page-2026-11-12T17-30-00-588Z.yml": {
+      "checksum": "f0e8de9f4b5e225ff39e8274aa16f50e"
+    },
+    ".claude/worktrees/regional-risk-map/.playwright-mcp/page-2026-11-12T17-35-11-723Z.yml": {
+      "checksum": "1ab671d4f6aa22a1776ec2db974eca03"
+    },
+    ".claude/worktrees/regional-risk-map/.playwright-mcp/page-2026-11-12T17-38-14-589Z.yml": {
+      "checksum": "189ffc72bef66fa691b43c5876bea563"
+    },
+    ".claude/worktrees/regional-risk-map/.playwright-mcp/page-2026-11-12T17-39-25-121Z.yml": {
+      "checksum": "a918573dbf05731684f0f8a86c174ef5"
+    },
+    ".claude/worktrees/regional-risk-map/.playwright-mcp/page-2026-11-12T17-45-56-267Z.yml": {
+      "checksum": "adc0ec24bc8b0ff27357eaa9ec0c2a37"
+    },
+    ".claude/worktrees/regional-risk-map/.playwright-mcp/page-2026-11-12T18-02-54-889Z.yml": {
+      "checksum": "f0e8de9f4b5e225ff39e8274aa16f50e"
+    },
+    ".claude/worktrees/regional-risk-map/.playwright-mcp/regional-risk-atlanta-poverty.png": {
+      "checksum": "5e78f54488bd608011fc164b74fcd41b"
+    },
+    ".claude/worktrees/regional-risk-map/.playwright-mcp/regional-risk-chattanooga-income.png": {
+      "checksum": "0173457223208ac5be14c71757fd9b72"
+    },
+    ".claude/worktrees/regional-risk-map/.Renviron.example": {
+      "checksum": "5dcb5d4c3a8c87a75d0cd295236f58b6"
+    },
+    ".claude/worktrees/regional-risk-map/.vscode/launch.json": {
+      "checksum": "8536c0b1b0a5a6da1637feed7ca91d43"
+    },
+    ".claude/worktrees/regional-risk-map/.vscode/settings.json": {
+      "checksum": "5b376c7021ee7fc3c27164de8b5d0c8b"
+    },
+    ".claude/worktrees/regional-risk-map/app.R": {
+      "checksum": "7ee8d2664d7109f80c12b9af4bfbed1e"
+    },
+    ".claude/worktrees/regional-risk-map/ARCHIVE/data_fred_orig.R": {
+      "checksum": "0a6635c568adb4c76cb446107f9cfbda"
+    },
+    ".claude/worktrees/regional-risk-map/ARCHIVE/forecasting_original.R": {
+      "checksum": "84db486049481a915d7b457eb2ac571b"
+    },
+    ".claude/worktrees/regional-risk-map/ARCHIVE/synopsis.R": {
+      "checksum": "0fff42fc19c5ba3db39076dd97ba707e"
+    },
+    ".claude/worktrees/regional-risk-map/ARCHIVE/synopsis_orginal.R": {
+      "checksum": "0fff42fc19c5ba3db39076dd97ba707e"
+    },
+    ".claude/worktrees/regional-risk-map/data/risk_seed/acs_year_v2.rds": {
+      "checksum": "8fe455f7c6b0b86157a3320fb5a5d051"
+    },
+    ".claude/worktrees/regional-risk-map/data/risk_seed/cbsa_xwalk_2023.rds": {
+      "checksum": "26809f5337027d5b1114a6533c189009"
+    },
+    ".claude/worktrees/regional-risk-map/data/risk_seed/county_acs_2024.rds": {
+      "checksum": "86a14c5b3be17835227116ed79aa126b"
+    },
+    ".claude/worktrees/regional-risk-map/data/risk_seed/county_shapes_2024.rds": {
+      "checksum": "f170b53553de4390a6641d0ccfe91520"
+    },
+    ".claude/worktrees/regional-risk-map/data/risk_seed/laus_county_n3144.rds": {
+      "checksum": "ebba23c9014f9b45815a2ddfabffb550"
+    },
+    ".claude/worktrees/regional-risk-map/docs/build_recession_snapshot.R": {
+      "checksum": "027360147d19eaca814caa61a3c9694c"
+    },
+    ".claude/worktrees/regional-risk-map/docs/headline.R": {
+      "checksum": "40d042c31f2c21742af6431e8fecda31"
+    },
+    ".claude/worktrees/regional-risk-map/docs/recession_model.qmd": {
+      "checksum": "57b25183352a9e87b1ab473242d26bf0"
+    },
+    ".claude/worktrees/regional-risk-map/docs/superpowers/plans/2026-11-12-regional-risk-map-phase-0-1.md": {
+      "checksum": "b62e8ef6e9dc2088a09e229898435e0c"
+    },
+    ".claude/worktrees/regional-risk-map/docs/superpowers/specs/2026-11-12-regional-risk-map-design.md": {
+      "checksum": "554a5df65f76dadf652b98c9bf079cc9"
+    },
+    ".claude/worktrees/regional-risk-map/global.R": {
+      "checksum": "748cac9e8d4b4e4df249d04b9c5d1e4f"
+    },
+    ".claude/worktrees/regional-risk-map/images/main_dash.png": {
+      "checksum": "1cb4b944b86447c55ab80cffc7876dc5"
+    },
+    ".claude/worktrees/regional-risk-map/images/metro.png": {
+      "checksum": "b71c381ef91f53c8db4f885c60bc37eb"
+    },
+    ".claude/worktrees/regional-risk-map/images/model_details.png": {
+      "checksum": "a943276b6d43e0b6807d62b7f807d925"
+    },
+    ".claude/worktrees/regional-risk-map/images/recession.png": {
+      "checksum": "5a3f06948f5383696d9236554e615870"
+    },
+    ".claude/worktrees/regional-risk-map/install_packages.R": {
+      "checksum": "0e954adf95909bdeb2581f41cab1d7aa"
+    },
+    ".claude/worktrees/regional-risk-map/R/data_bls.R": {
+      "checksum": "bdefb1d7b48ad00d3fdba4059c00881c"
+    },
+    ".claude/worktrees/regional-risk-map/R/data_census.R": {
+      "checksum": "c6e4634408970f98575c84fefe5df507"
+    },
+    ".claude/worktrees/regional-risk-map/R/data_fred.R": {
+      "checksum": "f28914f40f7f8c907a982b8decff438c"
+    },
+    ".claude/worktrees/regional-risk-map/R/data_markets.R": {
+      "checksum": "b48b4adf716d71e29b4bfa67b831cd27"
+    },
+    ".claude/worktrees/regional-risk-map/R/data_news.R": {
+      "checksum": "db77731de193cb91d5725a99422fdd92"
+    },
+    ".claude/worktrees/regional-risk-map/R/data_risk.R": {
+      "checksum": "985997c6f62ef47d2b0b54834159eba1"
+    },
+    ".claude/worktrees/regional-risk-map/R/forecasting.R": {
+      "checksum": "10c69c18c9c38afd3021992f0bc6da62"
+    },
+    ".claude/worktrees/regional-risk-map/R/llm_insights.R": {
+      "checksum": "c37f4cdab97c3a296a61934b099c6baa"
+    },
+    ".claude/worktrees/regional-risk-map/R/map_risk.R": {
+      "checksum": "acdbdf6c0244add6ea0dda53a5e0573c"
+    },
+    ".claude/worktrees/regional-risk-map/R/risk_metrics.R": {
+      "checksum": "8c19eaed98a58c1379ce154b8a1c8707"
+    },
+    ".claude/worktrees/regional-risk-map/R/synopsis_tier1.R": {
+      "checksum": "c2f0474652fb6c07661b932d1200e172"
+    },
+    ".claude/worktrees/regional-risk-map/R/synopsis_tier2.R": {
+      "checksum": "a8feb2eaf4a310c598f7468d6f1a65ba"
+    },
+    ".claude/worktrees/regional-risk-map/R/synopsis_tier3.R": {
+      "checksum": "86ff2fd3c5903de9766385252ef177e5"
+    },
+    ".claude/worktrees/regional-risk-map/README.md": {
+      "checksum": "5323599bb45f6358692d9403d8547a3e"
+    },
+    ".claude/worktrees/regional-risk-map/server.R": {
+      "checksum": "c105ccd6a43757bece27768ea1ae586c"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/fixtures/bls_laus_sample.json": {
+      "checksum": "bb963d0e8a852f1a1dec133cfda587d6"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/helper-fixtures.R": {
+      "checksum": "d6b8b64fcf6fba349588c640e6b43d2d"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/helper-source.R": {
+      "checksum": "89a9c7a3cf734fb64d63def859f461a4"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/test-acs-year.R": {
+      "checksum": "0f2df81deed8ed251addd541d629390e"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/test-cache.R": {
+      "checksum": "ceac3224b49a48d57fb09cc0093f0d3c"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/test-county-layers.R": {
+      "checksum": "f77258b466946da61484ab1c7f9b4db3"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/test-county-map.R": {
+      "checksum": "76bc7d796bff50e1251396b83a66b011"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/test-laus-fetch.R": {
+      "checksum": "526b3c6e00ac854977c9911bd079d371"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/test-laus.R": {
+      "checksum": "397b940ec59bfcc3d7c6c78174f543f1"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/test-ranking.R": {
+      "checksum": "95b5ee73348b9b36f7a81130d456aa16"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/test-rent-burden.R": {
+      "checksum": "7c9603c5074ca6a7b5cc6bf4284a7cb2"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/test-seed.R": {
+      "checksum": "b6581068297cd0a23ef7d203e10deeed"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/test-side-panel.R": {
+      "checksum": "4bcf3e10445f73de333353675abfcfc7"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/test-tooltip.R": {
+      "checksum": "54310056c06564cc867b7b70a9a31974"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/test-tract-map.R": {
+      "checksum": "e0e4440e821654dc8c0992b63988f6b0"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/test-tract-moe.R": {
+      "checksum": "f63c8e2322cfefa02a3bae29f6a067e5"
+    },
+    ".claude/worktrees/regional-risk-map/tests/testthat/test-tract-ranking.R": {
+      "checksum": "f018162bd2cf5f1da4a1b186455528bd"
+    },
+    ".claude/worktrees/regional-risk-map/ui.R": {
+      "checksum": "905fe3a900e95f5921c1f79103b20b1c"
+    },
+    ".claude/worktrees/regional-risk-map/www/custom.css": {
+      "checksum": "659f1c588a93f949f58fe8e8fc268081"
+    },
+    ".github/scripts/notify_email.py": {
+      "checksum": "ab2d0e08100fff31131cb90e9e634c1d"
+    },
+    ".github/workflows/recession-model-doc.yml": {
+      "checksum": "6481af00ecc0b5f9e07ded1a183cdf5e"
+    },
+    ".playwright-mcp/console-2026-11-01T17-35-36-263Z.log": {
+      "checksum": "0a8577156de007a35b5910d08f044a0c"
+    },
+    ".playwright-mcp/console-2026-11-02T20-26-48-564Z.log": {
+      "checksum": "3e84779aee1ac11e747abad56ebe2dba"
+    },
+    ".playwright-mcp/console-2026-11-02T20-26-48-565Z.log": {
+      "checksum": "91955ea4708a1129c155622982920c8f"
+    },
+    ".playwright-mcp/console-2026-11-02T20-26-48-567Z.log": {
+      "checksum": "fbb5feac9a6db9422b41de2102d3e832"
+    },
+    ".playwright-mcp/console-2026-11-02T20-27-00-189Z.log": {
+      "checksum": "6bf53f77bcc7755f59e780d78bc15415"
+    },
+    ".playwright-mcp/console-2026-11-07T14-47-07-093Z.log": {
+      "checksum": "3c38cc215f181670dbd7b4f5b329a5b3"
+    },
+    ".playwright-mcp/console-2026-11-07T14-47-07-097Z.log": {
+      "checksum": "924cb133703e1c119bc0dc11c5085d65"
+    },
+    ".playwright-mcp/console-2026-11-07T14-47-07-118Z.log": {
+      "checksum": "82321cf9177f47eb9c4dd05658087881"
+    },
+    ".playwright-mcp/console-2026-11-07T14-47-26-954Z.log": {
+      "checksum": "52735c0613dfc0be803ef921bd2987bb"
+    },
+    ".playwright-mcp/console-2026-11-07T14-59-58-385Z.log": {
+      "checksum": "21c7d8e8be216028fc38b892e99369c1"
+    },
+    ".playwright-mcp/console-2026-11-07T14-59-58-393Z.log": {
+      "checksum": "8460dfc99d0d9e5bc07f3756f3544d87"
+    },
+    ".playwright-mcp/console-2026-11-12T19-28-41-314Z.log": {
+      "checksum": "ba5be2920d78d5466d1276a8692ef2f3"
+    },
+    ".playwright-mcp/console-2026-11-12T19-28-41-317Z.log": {
+      "checksum": "1276c2a6e24670ea06d0b3842bf7a99f"
+    },
+    ".playwright-mcp/console-2026-11-12T19-29-08-046Z.log": {
+      "checksum": "ccefde51140c1490d849bd88ea5bf819"
+    },
+    ".playwright-mcp/console-2026-11-12T19-35-55-715Z.log": {
+      "checksum": "61e2d82534c515508245e26cbe017e1a"
+    },
+    ".playwright-mcp/console-2026-11-12T19-49-58-639Z.log": {
+      "checksum": "06bab57ab293ffa83758da61eb5baf03"
+    },
+    ".playwright-mcp/console-2026-11-12T20-14-25-534Z.log": {
+      "checksum": "055be09308d7e86656681b40fa247c15"
+    },
+    ".playwright-mcp/console-2026-11-12T21-05-46-103Z.log": {
+      "checksum": "d675bea8c925524019f248b1ec1e9db9"
+    },
+    ".playwright-mcp/console-2026-11-12T21-50-52-323Z.log": {
+      "checksum": "27e72c532d7319910f52cf90a2e13188"
+    },
+    ".playwright-mcp/console-2026-11-12T21-50-52-324Z.log": {
+      "checksum": "cc5a3b3809decd2680059bfcc74eab91"
+    },
+    ".playwright-mcp/console-2026-11-12T21-50-52-351Z.log": {
+      "checksum": "77acc845f28fa90751b5dedecf497a83"
+    },
+    ".playwright-mcp/console-2026-11-12T22-03-37-806Z.log": {
+      "checksum": "fb073f88a4fc44df79a4063f2518d176"
+    },
+    ".playwright-mcp/console-2026-11-12T22-05-24-895Z.log": {
+      "checksum": "83ee3314cd74135d938419944db463fb"
+    },
+    ".playwright-mcp/console-2026-11-12T22-30-47-720Z.log": {
+      "checksum": "535d0110a75aadddea3694454b5d131e"
+    },
+    ".playwright-mcp/console-2026-11-12T23-15-11-746Z.log": {
+      "checksum": "b87c0ff1555eb1a17de3044b4b672336"
+    },
+    ".playwright-mcp/console-2026-11-12T23-30-55-648Z.log": {
+      "checksum": "19d8223b3f1e43cf0446f65c1e0abaf1"
+    },
+    ".playwright-mcp/console-2026-11-13T00-13-01-366Z.log": {
+      "checksum": "987f262c2318dae91f830bc1038db9c2"
+    },
+    ".playwright-mcp/console-2026-11-13T08-36-42-890Z.log": {
+      "checksum": "54254742f80a5987a8d897c782fabca6"
+    },
+    ".playwright-mcp/console-2026-11-13T08-36-42-894Z.log": {
+      "checksum": "336eb5069791bb289f556f1ee48da72d"
+    },
+    ".playwright-mcp/console-2026-11-13T08-36-42-897Z.log": {
+      "checksum": "f2ee51b26dd04c3da983696164490e7b"
+    },
+    ".playwright-mcp/console-2026-11-13T08-36-42-898Z.log": {
+      "checksum": "78ac8fe2932baffe65d961a9ecbd842f"
+    },
+    ".playwright-mcp/console-2026-11-13T08-36-42-935Z.log": {
+      "checksum": "07a1f40ac1527ddec84219f9d662f676"
+    },
+    ".playwright-mcp/console-2026-11-13T08-53-18-469Z.log": {
+      "checksum": "2bb8e3032f2d120e4240a6ad94269b6b"
+    },
+    ".playwright-mcp/console-2026-11-13T08-53-25-637Z.log": {
+      "checksum": "3a1512f1851febae5e79ffcc1b4b2145"
+    },
+    ".playwright-mcp/console-2026-11-13T08-55-25-535Z.log": {
+      "checksum": "9ed776756fef6e4fa5ba857f10214517"
+    },
+    ".playwright-mcp/console-2026-11-13T16-15-31-754Z.log": {
+      "checksum": "fb8fb3335fe6eb3f496988dc26b9b32c"
+    },
+    ".playwright-mcp/console-2026-11-13T16-16-35-996Z.log": {
+      "checksum": "29d2c4bf69947ad05c1e7407adf69b16"
+    },
+    ".playwright-mcp/console-2026-11-13T16-18-27-997Z.log": {
+      "checksum": "6dc168b1b1cf423308172d80f19a8884"
+    },
+    ".playwright-mcp/console-2026-11-13T16-36-39-992Z.log": {
+      "checksum": "231932fa0b184679bd7185c36786679d"
+    },
+    ".playwright-mcp/console-2026-11-13T16-36-40-013Z.log": {
+      "checksum": "5321c97972474ba8e99f017f1a822893"
+    },
+    ".playwright-mcp/console-2026-11-13T16-44-15-913Z.log": {
+      "checksum": "9436f9494b45cb528d5aeb32d59257d0"
+    },
+    ".playwright-mcp/console-2026-11-13T16-44-15-914Z.log": {
+      "checksum": "9dce647b2e937294ccf474b7b28be4e1"
+    },
+    ".playwright-mcp/console-2026-11-13T16-44-15-929Z.log": {
+      "checksum": "c05d4d0f5105eefae56a71cf4ae9b658"
+    },
+    ".playwright-mcp/console-2026-11-13T17-03-05-085Z.log": {
+      "checksum": "a3a204b5814843508f077562d4611eb4"
+    },
+    ".playwright-mcp/console-2026-11-13T17-43-10-052Z.log": {
+      "checksum": "568ae2cb1946a6c90f9c698c1081558a"
+    },
+    ".playwright-mcp/console-2026-11-13T17-43-10-053Z.log": {
+      "checksum": "9f521f75138b4b35ac862c2f0460437b"
+    },
+    ".playwright-mcp/console-2026-11-13T17-43-10-097Z.log": {
+      "checksum": "0b83b6953f4fce9cf13df7adc390f35c"
+    },
+    ".playwright-mcp/console-2026-11-13T17-57-49-772Z.log": {
+      "checksum": "0b16ef3b686dd19649c34744e0fa5102"
+    },
+    ".playwright-mcp/console-2026-11-13T17-57-49-795Z.log": {
+      "checksum": "fa4c2d4b2a4b3cba47fe58e8556eee0c"
+    },
+    ".playwright-mcp/console-2026-11-13T18-11-20-321Z.log": {
+      "checksum": "912d9d40287bd0c5eb1f02f50f5cef06"
+    },
+    ".playwright-mcp/page-2026-11-02T20-27-01-375Z.yml": {
+      "checksum": "a3a8edffe310e766d1aa1ee67a5f356d"
+    },
+    ".playwright-mcp/page-2026-11-07T14-47-27-860Z.yml": {
+      "checksum": "7549fc830a22e818c8e3ae28a14ee50f"
+    },
+    ".playwright-mcp/page-2026-11-07T14-47-59-485Z.png": {
+      "checksum": "54ea8eb3f4b768ae9cdb26c5cf774d4f"
+    },
+    ".playwright-mcp/page-2026-11-07T14-48-32-063Z.yml": {
+      "checksum": "cf59ee6a7f328e75bd2d7d7887de84b9"
+    },
+    ".playwright-mcp/page-2026-11-07T14-48-36-967Z.png": {
+      "checksum": "a96ee092ff3a5f4b510a7fea9d5ffe3f"
+    },
+    ".playwright-mcp/page-2026-11-07T14-50-19-867Z.yml": {
+      "checksum": "72c1cd377fc826a7a3a911f1f77ba73c"
+    },
+    ".playwright-mcp/page-2026-11-07T14-51-20-373Z.png": {
+      "checksum": "c4c0c1aebdbb8094673301de72834451"
+    },
+    ".playwright-mcp/page-2026-11-07T14-52-19-016Z.yml": {
+      "checksum": "f2ba50117512cf363afc1da7f44cde85"
+    },
+    ".playwright-mcp/page-2026-11-07T15-01-37-584Z.yml": {
+      "checksum": "796fabdde6d600d23323ff75343d50bb"
+    },
+    ".playwright-mcp/page-2026-11-07T15-04-31-565Z.yml": {
+      "checksum": "7549fc830a22e818c8e3ae28a14ee50f"
+    },
+    ".playwright-mcp/page-2026-11-12T19-29-10-197Z.yml": {
+      "checksum": "1ab671d4f6aa22a1776ec2db974eca03"
+    },
+    ".playwright-mcp/page-2026-11-12T19-29-49-601Z.yml": {
+      "checksum": "c754430e3ae22c1d8b3922335cf68b2a"
+    },
+    ".playwright-mcp/page-2026-11-12T19-30-02-725Z.yml": {
+      "checksum": "b1da738c3847f80ae8f3a7d3c2d0fd41"
+    },
+    ".playwright-mcp/page-2026-11-12T19-30-29-843Z.yml": {
+      "checksum": "808c900bde77897acfb63c9ea51662d3"
+    },
+    ".playwright-mcp/page-2026-11-12T19-31-11-090Z.yml": {
+      "checksum": "1300f56295d498dd0d37bc8ad19a2082"
+    },
+    ".playwright-mcp/page-2026-11-12T19-31-48-794Z.yml": {
+      "checksum": "1300f56295d498dd0d37bc8ad19a2082"
+    },
+    ".playwright-mcp/page-2026-11-12T19-35-38-213Z.yml": {
+      "checksum": "05d8acfbf6650c4d103321af01f1bbe3"
+    },
+    ".playwright-mcp/page-2026-11-12T19-35-56-480Z.yml": {
+      "checksum": "189ffc72bef66fa691b43c5876bea563"
+    },
+    ".playwright-mcp/page-2026-11-12T19-36-39-673Z.yml": {
+      "checksum": "4c59dedaba9990554762d09c7d308f21"
+    },
+    ".playwright-mcp/page-2026-11-12T19-50-01-189Z.yml": {
+      "checksum": "a918573dbf05731684f0f8a86c174ef5"
+    },
+    ".playwright-mcp/page-2026-11-12T20-14-26-619Z.yml": {
+      "checksum": "adc0ec24bc8b0ff27357eaa9ec0c2a37"
+    },
+    ".playwright-mcp/page-2026-11-12T21-05-46-749Z.yml": {
+      "checksum": "cc30b137479db8948475e85bde000746"
+    },
+    ".playwright-mcp/page-2026-11-12T21-51-48-711Z.yml": {
+      "checksum": "1ab671d4f6aa22a1776ec2db974eca03"
+    },
+    ".playwright-mcp/page-2026-11-12T22-03-38-813Z.yml": {
+      "checksum": "f0e8de9f4b5e225ff39e8274aa16f50e"
+    },
+    ".playwright-mcp/page-2026-11-12T22-05-09-698Z.yml": {
+      "checksum": "997e5d5327928a31d2ded4bef9779306"
+    },
+    ".playwright-mcp/page-2026-11-12T22-05-25-436Z.yml": {
+      "checksum": "1ab671d4f6aa22a1776ec2db974eca03"
+    },
+    ".playwright-mcp/page-2026-11-12T22-05-45-474Z.yml": {
+      "checksum": "c754430e3ae22c1d8b3922335cf68b2a"
+    },
+    ".playwright-mcp/page-2026-11-12T22-30-48-113Z.yml": {
+      "checksum": "189ffc72bef66fa691b43c5876bea563"
+    },
+    ".playwright-mcp/page-2026-11-12T23-15-12-650Z.yml": {
+      "checksum": "a918573dbf05731684f0f8a86c174ef5"
+    },
+    ".playwright-mcp/page-2026-11-12T23-30-56-542Z.yml": {
+      "checksum": "adc0ec24bc8b0ff27357eaa9ec0c2a37"
+    },
+    ".playwright-mcp/page-2026-11-13T00-13-02-246Z.yml": {
+      "checksum": "c770d691b1bb5042e615ff90fe73995f"
+    },
+    ".playwright-mcp/page-2026-11-13T00-13-25-950Z.yml": {
+      "checksum": "4c0199ac7f89d439d00273939f2b69ad"
+    },
+    ".playwright-mcp/page-2026-11-13T00-13-55-275Z.yml": {
+      "checksum": "e5b8d9ffd859f02e87eaa5922bb236b0"
+    },
+    ".playwright-mcp/page-2026-11-13T00-14-37-551Z.yml": {
+      "checksum": "8347fe77377d5d295914645988a8a14d"
+    },
+    ".playwright-mcp/page-2026-11-13T08-36-44-676Z.yml": {
+      "checksum": "f0da72d93540f0d2c66d9c6b79bf852d"
+    },
+    ".playwright-mcp/page-2026-11-13T08-37-18-507Z.yml": {
+      "checksum": "4a538ea095a59491f7ddefa19a397047"
+    },
+    ".playwright-mcp/page-2026-11-13T08-37-43-377Z.yml": {
+      "checksum": "e78120094d24905926c4abed2c8ec685"
+    },
+    ".playwright-mcp/page-2026-11-13T08-38-15-516Z.yml": {
+      "checksum": "5308bded2c043b3a44f742e67a8c8628"
+    },
+    ".playwright-mcp/page-2026-11-13T08-38-44-098Z.yml": {
+      "checksum": "210c8883a82c9026b89df8734e3518e4"
+    },
+    ".playwright-mcp/page-2026-11-13T08-38-53-133Z.yml": {
+      "checksum": "a0907c4b2d262793e3f9ce52454bf087"
+    },
+    ".playwright-mcp/page-2026-11-13T08-39-10-911Z.yml": {
+      "checksum": "782453c4110f77c1265b822fccf602d0"
+    },
+    ".playwright-mcp/page-2026-11-13T08-39-44-364Z.yml": {
+      "checksum": "2899cf5dc944090419ec2c4e20356b1f"
+    },
+    ".playwright-mcp/page-2026-11-13T08-40-32-679Z.yml": {
+      "checksum": "e0dd910124c7b27dd4e5224e3d446f6a"
+    },
+    ".playwright-mcp/page-2026-11-13T08-40-45-529Z.yml": {
+      "checksum": "9259b068d1d4f6b7786f84dea89826e9"
+    },
+    ".playwright-mcp/page-2026-11-13T08-40-53-592Z.yml": {
+      "checksum": "8a911af8aaca1cdbaab731f5efd0c715"
+    },
+    ".playwright-mcp/page-2026-11-13T08-41-16-704Z.yml": {
+      "checksum": "0e2076d57dd7f1e7b872aa1e304ad1c2"
+    },
+    ".playwright-mcp/page-2026-11-13T08-53-26-799Z.yml": {
+      "checksum": "6c92aebefe000ae46bcc23d454c6d967"
+    },
+    ".playwright-mcp/page-2026-11-13T08-53-50-856Z.yml": {
+      "checksum": "ad1a8bf49df8da29b88c81d6a48c94bd"
+    },
+    ".playwright-mcp/page-2026-11-13T08-55-27-049Z.yml": {
+      "checksum": "fb749926cc896d44eb6a30f90274455e"
+    },
+    ".playwright-mcp/page-2026-11-13T08-56-58-116Z.yml": {
+      "checksum": "93a87a6e08388a200b991ecee7c400d6"
+    },
+    ".playwright-mcp/page-2026-11-13T16-18-28-704Z.yml": {
+      "checksum": "fb749926cc896d44eb6a30f90274455e"
+    },
+    ".playwright-mcp/page-2026-11-13T16-18-57-971Z.yml": {
+      "checksum": "972086dea3d7eb374d737de2ab2929fc"
+    },
+    ".playwright-mcp/page-2026-11-13T16-19-36-172Z.yml": {
+      "checksum": "89bb30dc2a61b6ff246a15b7cc3c1856"
+    },
+    ".playwright-mcp/page-2026-11-13T16-36-40-994Z.yml": {
+      "checksum": "6c92aebefe000ae46bcc23d454c6d967"
+    },
+    ".playwright-mcp/page-2026-11-13T16-37-49-380Z.yml": {
+      "checksum": "f373be31cfd5427a1c531a3da40086bc"
+    },
+    ".playwright-mcp/page-2026-11-13T16-38-29-605Z.yml": {
+      "checksum": "72214169c9769632c930edf9d1d2969c"
+    },
+    ".playwright-mcp/page-2026-11-13T16-39-06-533Z.yml": {
+      "checksum": "72214169c9769632c930edf9d1d2969c"
+    },
+    ".playwright-mcp/page-2026-11-13T16-44-17-009Z.yml": {
+      "checksum": "9a9801d50b3fda357a1469ccf1ca10b0"
+    },
+    ".playwright-mcp/page-2026-11-13T16-45-56-677Z.png": {
+      "checksum": "ba9d6030c5ea6fc1e507b3777cbc8550"
+    },
+    ".playwright-mcp/page-2026-11-13T17-03-06-490Z.yml": {
+      "checksum": "ad5d6da21509e597e2e453df460f945d"
+    },
+    ".playwright-mcp/page-2026-11-13T17-43-12-165Z.yml": {
+      "checksum": "ad5d6da21509e597e2e453df460f945d"
+    },
+    ".playwright-mcp/page-2026-11-13T17-45-01-020Z.png": {
+      "checksum": "3de17abdab5bc9ad4fd8fc3789041615"
+    },
+    ".playwright-mcp/page-2026-11-13T17-57-51-327Z.yml": {
+      "checksum": "ad5d6da21509e597e2e453df460f945d"
+    },
+    ".playwright-mcp/page-2026-11-13T18-11-21-517Z.yml": {
+      "checksum": "3cb757b9e3214d3fb7f6715959e1a0e7"
+    },
     ".Renviron.example": {
       "checksum": "5dcb5d4c3a8c87a75d0cd295236f58b6"
+    },
+    ".superpowers/brainstorm/.last-port": {
+      "checksum": "671e904839e2165b68a33935d6d0b689"
+    },
+    ".superpowers/brainstorm/.last-token": {
+      "checksum": "e2eaae462ccc205ec5bd5b2cfb4b0b42"
+    },
+    ".superpowers/brainstorm/1971-1794501828/content/tooltip-options.html": {
+      "checksum": "03d5aa8d23ea09abd9e742f9798e0aae"
+    },
+    ".superpowers/brainstorm/1971-1794501828/content/waiting.html": {
+      "checksum": "c7a3d009534fe3ac46bea57692a82939"
+    },
+    ".superpowers/brainstorm/1971-1794501828/state/server-instance-id": {
+      "checksum": "0f56b0bd7b6bf1c7bdc060336eabfb7f"
+    },
+    ".superpowers/brainstorm/1971-1794501828/state/server-stopped": {
+      "checksum": "73c06edc701b51fb966114e253a40624"
+    },
+    ".superpowers/brainstorm/1971-1794501828/state/server.pid": {
+      "checksum": "2cdf4e9e4b4f9f05f18af6e73df06574"
     },
     ".vscode/launch.json": {
       "checksum": "8536c0b1b0a5a6da1637feed7ca91d43"
@@ -7510,6 +8333,39 @@
     "data/risk_seed/urban_debt_v1.rds": {
       "checksum": "b78799d484907b62d7fa7e18affd319b"
     },
+    "docs/build_recession_snapshot.R": {
+      "checksum": "027360147d19eaca814caa61a3c9694c"
+    },
+    "docs/headline.R": {
+      "checksum": "40d042c31f2c21742af6431e8fecda31"
+    },
+    "docs/recession_model.html": {
+      "checksum": "874b7d0770c8e7ec25225a89c0a8259e"
+    },
+    "docs/recession_model.qmd": {
+      "checksum": "57b25183352a9e87b1ab473242d26bf0"
+    },
+    "docs/recession_model_snapshot.rds": {
+      "checksum": "be9291fce31f6e197d2823c6703d3abf"
+    },
+    "docs/superpowers/handoffs/2026-11-12-regional-risk-phase-2.md": {
+      "checksum": "430758f47723e9dd7accfba3b5fd733f"
+    },
+    "docs/superpowers/plans/2026-11-12-regional-risk-map-phase-0-1.md": {
+      "checksum": "b62e8ef6e9dc2088a09e229898435e0c"
+    },
+    "docs/superpowers/plans/2026-11-12-regional-risk-phase-2.md": {
+      "checksum": "0785b566816c5ad8e6c24b0a456d1447"
+    },
+    "docs/superpowers/plans/2026-11-12-regional-risk-phase-3.md": {
+      "checksum": "d00ad889787797b2dcc75b1cf482594d"
+    },
+    "docs/superpowers/plans/2026-11-12-regional-risk-phase-4.md": {
+      "checksum": "3fe9eff51bc59b78a8a3326e4222b5fb"
+    },
+    "docs/superpowers/specs/2026-11-12-regional-risk-map-design.md": {
+      "checksum": "0ee7ecd035dab234400126151ef526ff"
+    },
     "global.R": {
       "checksum": "748cac9e8d4b4e4df249d04b9c5d1e4f"
     },
@@ -7565,13 +8421,145 @@
       "checksum": "a8feb2eaf4a310c598f7468d6f1a65ba"
     },
     "R/synopsis_tier3.R": {
-      "checksum": "7c9f6dbb515cef77921eefff339e6532"
+      "checksum": "86ff2fd3c5903de9766385252ef177e5"
     },
     "README.md": {
-      "checksum": "f39d7e5ff82ee898c9e2389a13b090d5"
+      "checksum": "ad8348043a43d80f890da284ba0a20ca"
     },
     "server.R": {
       "checksum": "a3a35b9b64a11eb28574dc6d58f26132"
+    },
+    "tests/testthat/fixtures/bls_laus_sample.json": {
+      "checksum": "4f3fc2b9765e2d26264385b5597c30e4"
+    },
+    "tests/testthat/fixtures/cfpb_county_3089.csv": {
+      "checksum": "3123fbe75a6906fced73ff80ec6aab3c"
+    },
+    "tests/testthat/fixtures/cfpb_county_90.csv": {
+      "checksum": "2e42b3dbad52c41f355670f7c7c65bcc"
+    },
+    "tests/testthat/fixtures/cfpb_metro_3089.csv": {
+      "checksum": "9d3252fa5782c737da99bd6db2512947"
+    },
+    "tests/testthat/fixtures/cfpb_metro_90.csv": {
+      "checksum": "5bbc263e57f6a16991d0ad28f1c64676"
+    },
+    "tests/testthat/fixtures/cfpb_page.html": {
+      "checksum": "ef7949e2a209e7b7402fbaf8698ba921"
+    },
+    "tests/testthat/fixtures/cfpb_state_3089.csv": {
+      "checksum": "9af25bc532cccf0b9a6f4f3c71dbd35c"
+    },
+    "tests/testthat/fixtures/cfpb_state_90.csv": {
+      "checksum": "02a23514a2ee55284f54873e528bc8b0"
+    },
+    "tests/testthat/fixtures/fhfa_metro.csv": {
+      "checksum": "bf5439a957e74eee8fc553dc64d38c3f"
+    },
+    "tests/testthat/fixtures/fhfa_state.csv": {
+      "checksum": "77aec7bf1c6c403dcd73d73c5f75f6ad"
+    },
+    "tests/testthat/fixtures/la_area_sample.txt": {
+      "checksum": "03b67832c6d932e5dc72ba9d706a2678"
+    },
+    "tests/testthat/fixtures/lodes_rac_sample.csv": {
+      "checksum": "abc93aff4fe73a3c0b417346951824dd"
+    },
+    "tests/testthat/fixtures/pep_sample.csv": {
+      "checksum": "11f199c080814ebc5c5c022bc02523a7"
+    },
+    "tests/testthat/fixtures/urban_county_overall.csv": {
+      "checksum": "45633582b8d7b51b47d4f988a6667bbf"
+    },
+    "tests/testthat/fixtures/urban_main_snippet.js": {
+      "checksum": "7e974cb97a55b86f0b688a0de4906fd7"
+    },
+    "tests/testthat/helper-fixtures.R": {
+      "checksum": "a6877b5d7a339c583ed43feb0e35500b"
+    },
+    "tests/testthat/helper-source.R": {
+      "checksum": "aad9e762d58c9f719c66ca193b3c8388"
+    },
+    "tests/testthat/test-acs-year.R": {
+      "checksum": "4c05409935b826d2b4c9b43d9416c5d0"
+    },
+    "tests/testthat/test-assistance-layers.R": {
+      "checksum": "341492b1d20f66a9159cc0ecd3470f82"
+    },
+    "tests/testthat/test-assistance-metrics.R": {
+      "checksum": "e49942aa0f4ffd2f68bdeb0441dc464f"
+    },
+    "tests/testthat/test-assistance-tracts.R": {
+      "checksum": "cb492fc7929655866ae8750020e6df88"
+    },
+    "tests/testthat/test-cache.R": {
+      "checksum": "a8d0423c65e22a0e8d9806caac81fc9c"
+    },
+    "tests/testthat/test-county-layers.R": {
+      "checksum": "ce6f51d7e7631b0f0e3db384cf92475c"
+    },
+    "tests/testthat/test-county-map.R": {
+      "checksum": "c62304f93d0d364f7ac71ba8bdf03121"
+    },
+    "tests/testthat/test-credit-layers.R": {
+      "checksum": "680734ad2877eac4d5e5be4aabe1284b"
+    },
+    "tests/testthat/test-credit-score.R": {
+      "checksum": "864f59f82d2a9931093a7e7739c4d869"
+    },
+    "tests/testthat/test-credit-sources.R": {
+      "checksum": "8cd74d60a9cfb0624c8286babd8c3f6f"
+    },
+    "tests/testthat/test-laus-fetch.R": {
+      "checksum": "790a12bf95a2f722c296881728da50af"
+    },
+    "tests/testthat/test-laus.R": {
+      "checksum": "acee103060b7f57187f4c36fadaed3f3"
+    },
+    "tests/testthat/test-lens.R": {
+      "checksum": "46e60297dca81816195b99197e02ee25"
+    },
+    "tests/testthat/test-lodes.R": {
+      "checksum": "daf0fce1180e4fec5ff61e5411d17b4b"
+    },
+    "tests/testthat/test-metro-laus.R": {
+      "checksum": "6f98ea269a1947f719623ddf840fe476"
+    },
+    "tests/testthat/test-migration-layers.R": {
+      "checksum": "5b17707c267aa21727eab81957de5ade"
+    },
+    "tests/testthat/test-pep.R": {
+      "checksum": "0f69a219d98609625bef7c2d72f22650"
+    },
+    "tests/testthat/test-ranking.R": {
+      "checksum": "2e4e55d097163fd14f358ae93978988e"
+    },
+    "tests/testthat/test-rent-burden.R": {
+      "checksum": "de9aaebef7fcf42ba9568dfc85291c8a"
+    },
+    "tests/testthat/test-sectors.R": {
+      "checksum": "b942e42eb8a6e7fa9f510256b6643492"
+    },
+    "tests/testthat/test-seed.R": {
+      "checksum": "d0f5525f84361f40c661bfe8698f034b"
+    },
+    "tests/testthat/test-side-panel.R": {
+      "checksum": "6bd924a0115ef95d7929fd3cea501848"
+    },
+    "tests/testthat/test-stress-ahead.R": {
+      "checksum": "ee11e1e160b14bbcd445867ba0e79f57"
+    },
+    "tests/testthat/test-tooltip.R": {
+      "checksum": "f2c2ebae7ade443d2afd2e30b833a02b"
+    },
+    "tests/testthat/test-tract-map.R": {
+      "checksum": "ace3b564bff6c76c3035e9f4af66931c"
+    },
+    "tests/testthat/test-tract-moe.R": {
+      "checksum": "5a8be8ca7358c03011923e20427995e7"
+    },
+    "tests/testthat/test-tract-ranking.R": {
+      "checksum": "00794a282139a3d6b6197e613976e6a8"
     },
     "ui.R": {
       "checksum": "126502d5641e47cfa66f9fdd20ed4e1e"
