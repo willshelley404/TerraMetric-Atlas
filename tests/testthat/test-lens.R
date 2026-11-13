@@ -20,7 +20,7 @@ test_that("every lens default is one of its own layers and county-only layers dr
                        build_county_layers(fx_county_base(), fx_momentum()))
   tr <- Filter(function(cl) cl$method == "addPolygons" && identical(cl$args[[3]], "tracts"),
                m$x$calls)
-  expect_length(tr, 0)
+  expect_length(tr, 1)
 })
 
 test_that("pp pill is keyed to sign", {

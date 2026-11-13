@@ -139,12 +139,12 @@ test_that("credit lens layers are county-only and in the credit lens", {
   expect_equal(c(tb$lens, tb$levels, tb$col), c("context", "county", "tax_base"))
   expect_equal(risk_lens_choices("context")[["Tax base pressure (proxy — not a bond default model)"]],
                "tax_base")
-  # Drilled into a county, a credit layer draws counties and no tracts.
+  # Drilled into a county, a credit layer still draws tracts (coloured by the fallback layer).
   tr <- sf::st_sf(GEOID = "13295020300", county_geoid = "13295", tract_name = "T",
                   geometry = sf::st_sfc(sq(-85.2, 34.5, 0.1), crs = 4326))
   m <- add_tract_layer(leaflet::leaflet(), tr, "credit_score", cr_layers())
   expect_length(Filter(function(cl) cl$method == "addPolygons" && identical(cl$args[[3]], "tracts"),
-                       m$x$calls), 0)
+                       m$x$calls), 1)
   # Every layer still has its percentile column.
   cols <- vapply(RISK_LAYERS, `[[`, "", "col")
   expect_true(all(paste0("pct_", cols) %in% names(cr_layers())))

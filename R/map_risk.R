@@ -19,7 +19,7 @@
 #' standing: pre-escaped HTML lines shown between the drivers block and the footer.
 risk_tooltips_vec <- function(title, subtitle = NA, value_text, rank_text = NA,
                               rank_sub = NA, footer, drivers_html = "", rank_bad = TRUE,
-                              standing = "") {
+                              standing = "", zips = NA) {
   c <- .RISK_COL
   n <- max(length(title), length(value_text), length(footer))
   rep_n <- function(x) rep_len(x, n)
@@ -35,6 +35,9 @@ risk_tooltips_vec <- function(title, subtitle = NA, value_text, rank_text = NA,
     '%s">%s</span>'), pill_style, .tt_esc(rank_text)), "")
   rsub_html <- ifelse(.tt_has(rank_sub), sprintf(
     '<div style="color:%s;font-size:11px;">%s</div>', c$muted, .tt_esc(rank_sub)), "")
+  zips <- rep_n(zips)
+  rsub_html <- paste0(rsub_html, ifelse(.tt_has(zips), sprintf(
+    '<div style="color:%s;font-size:11px;">%s</div>', c$muted, .tt_esc(zips)), ""))
 
   out <- paste0(
     sprintf(paste0('<div style="font-family:Inter,system-ui,sans-serif;background:%s;color:%s;',
@@ -85,6 +88,36 @@ risk_drivers_vec <- function(labels, values, worse, n = max(lengths(values)), ma
   ifelse(rowSums(!hide) > 0, out, "")
 }
 
+#' Hover label: name, value and rank pill on two short lines, never wrapped. Everything
+#' else (drivers, metro line, sources) lives in the click panel and the data table.
+risk_tooltips_compact_vec <- function(title, value_text, rank_text = NA, rank_bad = TRUE,
+                                      zips = NA, note = NA) {
+  c <- .RISK_COL
+  n <- max(length(title), length(value_text))
+  rep_n <- function(x) rep_len(x, n)
+  note_html <- ifelse(.tt_has(rep_n(note)), sprintf(
+    '<div style="color:%s;font-size:10px;">%s</div>', c$text, .tt_esc(rep_n(note))), "")
+  zip_html <- ifelse(.tt_has(rep_n(zips)), sprintf(
+    '<div style="color:%s;font-size:10px;">%s</div>', c$muted, .tt_esc(rep_n(zips))), "")
+  value_text <- ifelse(.tt_has(value_text), value_text, "Insufficient data")
+  rank_text <- rep_n(rank_text)
+  pill_style <- ifelse(rep_n(rank_bad) %in% TRUE, "background:#5c1f2a;color:#ff8787;",
+                       "background:#1f3b4d;color:#8fd3ff;")
+  pill <- ifelse(.tt_has(rank_text), sprintf(paste0(
+    '<span style="padding:0 6px;border-radius:9px;font-size:10px;font-weight:600;',
+    '%s">%s</span>'), pill_style, .tt_esc(rank_text)), "")
+  out <- paste0(
+    sprintf(paste0('<div style="font-family:Inter,system-ui,sans-serif;background:%s;color:%s;',
+                   'border-radius:6px;padding:5px 9px;font-size:11px;line-height:1.4;',
+                   'white-space:nowrap;opacity:.96;">'), c$panel, c$text),
+    sprintf('<div style="color:%s;font-weight:700;font-size:12px;">%s</div>', c$accent,
+            .tt_esc(rep_n(title))),
+    '<div style="display:flex;align-items:center;gap:7px;">',
+    sprintf('<span style="font-size:14px;font-weight:700;">%s</span>', .tt_esc(rep_n(value_text))),
+    pill, '</div>', note_html, zip_html, '</div>')
+  lapply(out, htmltools::HTML)
+}
+
 #' Single tooltip. drivers: data.frame(label, value_text, worse) — first 3 shown.
 risk_tooltip_html <- function(title, subtitle = NULL, value_text, rank_text = NULL,
                               rank_sub = NULL, drivers = NULL, footer) {
@@ -119,7 +152,22 @@ RISK_LAYERS <- c(
     levels = "county", lens = "context",
     loading_text = "loading sector payrolls and county industry mix…",
     partial_text = "partial: some sector data missing",
-    bins = c(-50, -0.6, -0.3, -0.1, 0.1, 0.3, 0.6, 50))),
+    bins = c(-50, -0.6, -0.3, -0.1, 0.1, 0.3, 0.6, 50)),
+    # Categorical: the value is the quadrant code (see county_now_vs_ahead()), so the
+    # palette is explicit and colours are never rescaled to a state.
+    now_vs_ahead = list(
+      label = "Now vs ahead: where stress is building or easing",
+      col = "now_vs_ahead", fmt = "quadrant", pal = "RdBu", rev = FALSE,
+      higher_is_worse = TRUE, source = "BLS LAUS × BLS CES (FRED) × ACS industry mix",
+      levels = "county", lens = "context", derived = TRUE, categorical = TRUE,
+      loading_text = "loading county unemployment and sector payrolls…",
+      partial_text = "partial: some stress data missing",
+      colors = c("#a9c4d9", "#2EC4B6", "#FC6600", "#b3122e"),
+      bins = c(0.5, 1.5, 2.5, 3.5, 4.5),
+      bin_labels = c("Healthy: neither in the worst third",
+                     "Recovering: bad now, better ahead",
+                     "Worsening: fine now, bad ahead",
+                     "Bad now and ahead"))),
   local({
     # A tract is noisy here when either cushion input from the ACS is.
     asg <- function(label, col, fmt, source, ...) list(
@@ -223,6 +271,7 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
       sprintf(paste0("%+.", digits, "f%%"), r)
     },
     "per1k" = sprintf("%+.1f per 1,000", v),
+    "quadrant" = QUAD_LABELS[round(v)],
     "score" = sprintf("%.0f", v),
     "n"  = formatC(round(v), big.mark = ",", format = "d"),
     sprintf("%.1f%%", v))
@@ -230,16 +279,59 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
   out
 }
 
+# "No signal" colour for the middle bin of a diverging palette: the Brewer centre is near
+# white, which disappears into the light basemap. Missing values get a darker grey.
+.RISK_NEUTRAL <- "#c4c9d0"
+.RISK_NA <- "#8a8f99"
+
+#' Brewer colours for `n` bins; a diverging RdBu palette with an odd bin count has its
+#' pale centre swapped for a visible neutral. NULL (use the palette name) otherwise.
+.palette_colors <- function(cfg, n) {
+  if (!identical(cfg$pal, "RdBu") || n < 3 || n > 11 || n %% 2 == 0) return(NULL)
+  cols <- RColorBrewer::brewer.pal(n, "RdBu")
+  cols[(n + 1) / 2] <- .RISK_NEUTRAL
+  cols
+}
+
 .risk_palette <- function(cfg, vals) {
   if (!is.null(cfg$bins)) {
-    return(leaflet::colorBin(cfg$pal, domain = range(cfg$bins), reverse = cfg$rev,
-                             bins = cfg$bins, na.color = "#555566"))
+    # Not %||%: it is scalar in the app, and these are vectors.
+    cols <- if (!is.null(cfg$colors)) cfg$colors else .palette_colors(cfg, length(cfg$bins) - 1)
+    return(leaflet::colorBin(if (is.null(cols)) cfg$pal else cols,
+                             domain = range(cfg$bins), reverse = cfg$rev,
+                             bins = cfg$bins, na.color = .RISK_NA))
   }
   if (all(is.na(vals))) vals <- c(0, 1)      # nothing loaded yet: a grey map, not an error
   brks <- unique(stats::quantile(vals, seq(0, 1, length.out = 8), na.rm = TRUE))
   if (length(brks) < 3) brks <- 7
-  leaflet::colorBin(cfg$pal, domain = vals, bins = brks, reverse = cfg$rev,
-                    na.color = "#555566")
+  pal <- leaflet::colorBin(.palette_colors(cfg, length(brks) - 1) %||% cfg$pal,
+                           domain = vals, bins = brks, reverse = cfg$rev, na.color = .RISK_NA)
+  if (length(brks) >= 3) attr(pal, "brks") <- unname(brks)    # the legend draws its own rows
+  pal
+}
+
+# Fill opacity: translucent enough for the basemap's roads and places to read through.
+RISK_FILL_OPACITY <- 0.6
+RISK_TRACT_OPACITY <- 0.7
+RISK_DIM_OPACITY <- 0.2          # counties under a drilled-in tract layer
+
+#' Legend rows, worst at the top: a layer where high is worse lists its highest values first,
+#' one where low is worse (stress ahead, home prices, income) its lowest first; a neutral
+#' layer (migration) lists high values first.
+.risk_legend <- function(map, pal, vals, cfg, lbl_fmt, title) {
+  b <- if (!is.null(cfg$bins)) cfg$bins else attr(pal, "brks")
+  if (is.null(b)) {
+    return(leaflet::addLegend(map, pal = pal, values = vals, opacity = 0.9,
+                              layerId = "risk_legend", title = title,
+                              position = "bottomright", labFormat = lbl_fmt))
+  }
+  labs <- if (!is.null(cfg$bin_labels)) cfg$bin_labels else
+    if (!is.null(cfg$bins)) .bin_labels(b, cfg$fmt, cfg$digits %||% 1) else
+      lbl_fmt(type = "bin", cuts = b)
+  cols <- pal((b[-1] + b[-length(b)]) / 2)
+  ord <- if (isFALSE(cfg$higher_is_worse)) seq_along(labs) else rev(seq_along(labs))
+  leaflet::addLegend(map, colors = cols[ord], labels = labs[ord], opacity = 0.9,
+                     layerId = "risk_legend", title = title, position = "bottomright")
 }
 
 #' Plain-text standing line per county ("" when the value or the vintage is missing).
@@ -419,8 +511,92 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
     "")
 }
 
-.county_tooltips <- function(d, id, cfg, asof, status = "ok") {
+#' "worst 9%" / "better half": where a badness percentile (high = worse) sits nationally.
+.bad_rank_text <- function(b) {
+  ifelse(is.na(b), NA_character_,
+         ifelse(b >= 50, sprintf("worst %d%%", as.integer(pmax(1, ceiling(100 - b)))),
+                "better half"))
+}
+
+#' Hover pill for Now vs ahead: "Now: worst 9% · Ahead: better half". NA when either is.
+.quad_rank_text <- function(d) {
+  n <- .bad_rank_text(as.numeric(.col_or_na(d, "quad_now_pct")))
+  a <- .bad_rank_text(as.numeric(.col_or_na(d, "quad_ahead_pct")))
+  ifelse(is.na(n) | is.na(a), NA_character_, paste0("Now: ", n, " · Ahead: ", a))
+}
+
+#' "Manufacturing (−0.31), Retail (−0.12)": the top `n` sector contributions stored under
+#' `prefix` (sa_drv = drags, sa_lift = lifts); NA where a county has none. with_pp = FALSE
+#' gives the names only.
+.sector_list <- function(d, prefix, n = 2, with_pp = TRUE) {
+  nr <- nrow(d)
+  if (nr == 0) return(character(0))
+  col <- function(k, what) {
+    x <- d[[sprintf("%s%d_%s", prefix, k, what)]]
+    if (is.null(x)) rep(NA, nr) else x
+  }
+  parts <- lapply(seq_len(n), function(k) {
+    lab <- as.character(col(k, "label")); pp <- suppressWarnings(as.numeric(col(k, "pp")))
+    txt <- if (with_pp) sprintf("%s (%s)", lab, sub("-", "−", sprintf("%+.2f", pp), fixed = TRUE)) else lab
+    ifelse(is.na(lab) | is.na(pp), NA_character_, txt)
+  })
+  m <- matrix(unlist(parts), nrow = nr)
+  vapply(seq_len(nr), function(i) {
+    r <- m[i, ][!is.na(m[i, ])]
+    if (length(r)) paste(r, collapse = ", ") else NA_character_
+  }, character(1))
+}
+
+#' Why each county sits in its Now vs ahead quadrant, in words: `headline` (what the
+#' quadrant means for this county), `now` and `ahead` (the numbers behind each half, with
+#' the sectors dragging or lifting the outlook) and `short` (one hover line).
+#' NA where the quadrant is missing.
+.quad_why <- function(d) {
+  nr <- nrow(d)
+  code <- as.numeric(.col_or_na(d, "now_vs_ahead"))
+  mom <- as.numeric(.col_or_na(d, "momentum_pp"))
+  rate <- as.numeric(.col_or_na(d, "rate_now"))
+  gap <- as.numeric(.col_or_na(d, "stress_ahead_pp"))
+  rank_now <- .bad_rank_text(as.numeric(.col_or_na(d, "quad_now_pct")))
+  rank_ahead <- .bad_rank_text(as.numeric(.col_or_na(d, "quad_ahead_pct")))
+  drag <- .sector_list(d, "sa_drv"); lift <- .sector_list(d, "sa_lift")
+  drag_n <- .sector_list(d, "sa_drv", with_pp = FALSE)
+  lift_n <- .sector_list(d, "sa_lift", with_pp = FALSE)
+  pick <- function(a, b, pre_a, pre_b) ifelse(!is.na(a), paste0(pre_a, a),
+                                               ifelse(!is.na(b), paste0(pre_b, b), ""))
+
+  now <- ifelse(is.na(mom), NA_character_, sprintf(
+    "unemployment %s vs a year ago%s (%s)", .risk_fmt(mom, "pp"),
+    ifelse(is.na(rate), "", sprintf(", now %.1f%%", rate)),
+    ifelse(is.na(rank_now), "", ifelse(rank_now == "better half", "better half of US counties",
+                                       paste(rank_now, "of US counties")))))
+  ahead <- ifelse(is.na(gap), NA_character_, paste0(
+    sprintf("projected job growth %s vs the US (%s)", .risk_fmt(gap, "pp", 2),
+            ifelse(is.na(rank_ahead), "", ifelse(rank_ahead == "better half", "better half of US counties",
+                                                 paste(rank_ahead, "of US counties")))),
+    pick(drag, lift, "; dragged down by ", "; lifted by ")))
+  headline <- c(
+    "Unemployment is holding up and the industry mix does not point to weak job growth.",
+    paste("Unemployment is trending worse than in most counties, but the industry mix does not",
+          "point to weak job growth, so this county may be recovering."),
+    paste("Unemployment is holding up, but the industry mix points to weaker job growth than in",
+          "most counties, so stress may build."),
+    paste("Unemployment is trending worse than in most counties and the industry mix points to",
+          "weak job growth."))[code]
+  short <- ifelse(is.na(code), NA_character_, paste0(
+    ifelse(is.na(mom), "", paste0("Unemp. ", .risk_fmt(mom, "pp"))),
+    ifelse(is.na(mom), "", " · "),
+    ifelse(code >= 3, pick(drag_n, NA, "drag: ", ""), pick(lift_n, NA, "lift: ", ""))))
+  short <- sub(" · $", "", short)
+  short[!nzchar(short)] <- NA_character_
+  data.frame(headline = headline, now = now, ahead = ahead, short = short,
+             stringsAsFactors = FALSE)[seq_len(nr), , drop = FALSE]
+}
+
+#' detail = FALSE gives the compact hover label (the map's default); TRUE the full block.
+.county_tooltips <- function(d, id, cfg, asof, status = "ok", detail = TRUE) {
   if (any(status %in% c("loading", "not_loaded"))) {
+    if (!detail) return(risk_tooltips_compact_vec(d$name, "Loading…"))
     return(risk_tooltips_vec(title = d$name, value_text = "Loading…",
                              footer = paste(cfg$source, "— loading")))
   }
@@ -430,6 +606,15 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
     vtxt[has_flag] <- paste0(vtxt[has_flag], " · ", .flag_text(d$flag[has_flag]))
   }
   pct <- d[[paste0("pct_", cfg$col)]]
+  zips <- if ("zip_list" %in% names(d)) zip_label(d$zip_list, d$zip_n) else NA_character_
+  # The quadrant has no rank of its own: the pill gives where the county sits on each measure.
+  rk <- if (id == "now_vs_ahead") .quad_rank_text(d) else
+    rank_label(pct, cfg$rank_frame %||% "nationally")
+  rk_bad <- if (id == "now_vs_ahead") as.numeric(d[[cfg$col]]) >= 2 & !is.na(d[[cfg$col]]) else
+    .rank_bad(pct, cfg, d[[cfg$col]])
+  why <- if (id == "now_vs_ahead") .quad_why(d) else NULL
+  if (!detail) return(risk_tooltips_compact_vec(d$name, vtxt, rk, rk_bad, zips = zips,
+                                                note = if (is.null(why)) NA else why$short))
   subs <- ifelse(is.na(d$cbsa_name), NA_character_, paste(d$cbsa_name, d$cbsa_type))
   footer <- if (is.na(asof)) paste(cfg$source, "— unavailable") else
     paste0(cfg$source, ", ", asof)
@@ -455,6 +640,14 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
         ifelse(is.na(v), NA_character_, sprintf("%+.2f pp", v))
       }),
       lapply(1:3, function(k) has_drag & pick(k, "pp") < 0))
+  } else if (id == "now_vs_ahead") {
+    cut <- RISK_CFG$quad_bad_pct
+    risk_drivers_vec(
+      c("Stress now (unemployment vs a year ago)", "Stress ahead (job growth vs US)"),
+      list(.risk_fmt(.col_or_na(d, "momentum_pp"), "pp"),
+           .risk_fmt(.col_or_na(d, "stress_ahead_pp"), "pp", 2)),
+      list(as.numeric(d$quad_now_pct) >= cut, as.numeric(d$quad_ahead_pct) >= cut),
+      n = nrow(d))
   } else if (identical(cfg$lens, "assistance")) {
     risk_drivers_vec(
       c("Workers in weakening sectors", "Renters cost-burdened", "Poverty rate"),
@@ -469,10 +662,11 @@ risk_lens_default <- function(lens) unname(risk_lens_choices(lens)[1])
     na_col("job_pressure_from"))) else ""
   credit_line <- if (identical(cfg$lens, "credit")) .standing_html(.credit_standing(d, id)) else ""
   risk_tooltips_vec(title = d$name, subtitle = subs, value_text = vtxt,
-                    rank_text = rank_label(pct, cfg$rank_frame %||% "nationally"),
-                    footer = footer, drivers_html = drivers,
-                    rank_bad = .rank_bad(pct, cfg, d[[cfg$col]]),
+                    rank_text = rk,
+                    footer = footer, drivers_html = drivers, zips = zips,
+                    rank_bad = rk_bad,
                     standing = paste0(job_line, credit_line,
+                                      if (!is.null(why)) .standing_html(why$headline) else "",
                                       .standing_html(.migration_line(d, attr(d, "pep_vintage"))),
                                       .standing_html(.metro_line_rows(d))))
 }
@@ -563,41 +757,94 @@ risk_loading_legend <- function(map, layer_id, county_layers = NULL) {
     leaflet::labelFormat(suffix = "%", digits = 1))
 }
 
-.add_county_polygons <- function(map, county_layers, layer_id, fill_opacity = 0.82) {
+#' Hover labels are compact; options(risk.hover_detail = TRUE) restores the full block
+#' (the tests read their drivers and sources from it).
+.hover_detail <- function() isTRUE(getOption("risk.hover_detail", FALSE))
+
+#' Hover labels sit beside the cursor, not under it, and carry no box of their own.
+.hover_label_options <- function() {
+  leaflet::labelOptions(
+    style = list(background = "transparent", border = "none", padding = "0",
+                 "box-shadow" = "none"),
+    direction = "auto", offset = c(14, 0), sticky = TRUE)
+}
+
+#' The state view of the map rides on the layers object: attr "view_state" (a state FIPS or
+#' "" for the whole US) and attr "view_rescale" (colours span the state's own range).
+risk_view <- function(county_layers, state = NULL, rescale = FALSE) {
+  attr(county_layers, "view_state") <- if (is.null(state) || is.na(state)) "" else as.character(state)
+  attr(county_layers, "view_rescale") <- isTRUE(rescale)
+  county_layers
+}
+
+.view_state <- function(county_layers) {
+  st <- attr(county_layers, "view_state")
+  if (is.null(st) || length(st) != 1 || is.na(st) || !nzchar(st)) NULL else st
+}
+
+# Values outside `ref`'s range take its nearest end (the backdrop of a rescaled state view).
+.clamp_to <- function(x, ref) {
+  r <- range(ref, na.rm = TRUE)
+  if (!all(is.finite(r))) return(x)
+  pmin(pmax(x, r[1]), r[2])
+}
+
+#' Counties are drawn from the layer's values; with a state selected, only that state's
+#' counties are interactive (ranked within the state), the rest are a faint backdrop.
+.add_county_polygons <- function(map, county_layers, layer_id, fill_opacity = RISK_FILL_OPACITY) {
   cfg <- RISK_LAYERS[[layer_id]]
   vals <- as.numeric(county_layers[[cfg$col]])
-  pal <- .risk_palette(cfg, vals)
+  st <- .view_state(county_layers)
+  in_st <- if (is.null(st)) rep(TRUE, length(vals)) else
+    as.character(county_layers$state_fips) == st
+  st_name <- if (is.null(st)) NULL else county_layers$state_name[which(in_st)[1]]
+  rescale <- !is.null(st) && isTRUE(attr(county_layers, "view_rescale")) &&
+    !isTRUE(cfg$categorical) && any(!is.na(vals[in_st]))
+
+  # Colours: national scale, unless asked to span only the state's own values.
+  pal_cfg <- cfg
+  if (rescale) { pal_cfg$bins <- NULL; pal_cfg$bin_labels <- NULL }
+  pal_vals <- if (rescale) vals[in_st] else vals
+  pal <- .risk_palette(pal_cfg, pal_vals)
+
   asof <- attr(county_layers, "asof")[[layer_id]]
   status <- attr(county_layers, "layer_status")[[layer_id]]
   lbl_fmt <- .legend_format(cfg)
-  title <- .legend_title(risk_layer_cfg(layer_id, county_layers), status, asof)
-  add_legend <- function(m) {
-    if (is.null(cfg$bins)) {
-      return(leaflet::addLegend(m, pal = pal, values = vals, opacity = 0.9,
-                                layerId = "risk_legend", title = title,
-                                position = "bottomright", labFormat = lbl_fmt))
-    }
-    b <- cfg$bins
-    mids <- (b[-1] + b[-length(b)]) / 2
-    leaflet::addLegend(m, colors = pal(mids), opacity = 0.9, layerId = "risk_legend",
-                       title = title, position = "bottomright",
-                       labels = cfg$bin_labels %||% .bin_labels(b, cfg$fmt, cfg$digits %||% 1))
+  scope <- if (is.null(st)) NULL else if (rescale) paste0(st_name, ", colours scaled to the state") else st_name
+  title <- .legend_title(risk_layer_cfg(layer_id, county_layers), status, asof, scope)
+  add_legend <- function(m) .risk_legend(m, pal, pal_vals, pal_cfg, lbl_fmt, title)
+
+  # Hover ranks are within the state when one is selected.
+  tip_d <- county_layers
+  tip_cfg <- cfg
+  if (!is.null(st)) {
+    pcol <- paste0("pct_", cfg$col)
+    tip_d[[pcol]][in_st] <- pct_rank(vals[in_st])
+    tip_cfg$rank_frame <- paste("in", st_name)
   }
-  map |>
+  tips <- .county_tooltips(tip_d, layer_id, tip_cfg, asof, status, detail = .hover_detail())
+
+  map <- map |>
     leaflet::clearGroup("counties") |>
+    leaflet::clearGroup("counties_bg") |>
     leaflet::removeControl("risk_legend") |>
-    leaflet::removeControl("risk_loading_dim") |>
-    leaflet::addPolygons(
-      data = county_layers, layerId = county_layers$GEOID, group = "counties",
-      fillColor = pal(vals), fillOpacity = fill_opacity,
-      color = "#0f1117", weight = 0.4, smoothFactor = 0.5,
-      label = .county_tooltips(county_layers, layer_id, cfg, asof, status),
-      labelOptions = leaflet::labelOptions(
-        style = list(background = "transparent", border = "none", padding = "0",
-                     "box-shadow" = "none"), direction = "auto"),
-      highlightOptions = leaflet::highlightOptions(color = .RISK_COL$accent, weight = 2,
-                                                   bringToFront = FALSE)
-    ) |>
+    leaflet::removeControl("risk_loading_dim")
+  if (!is.null(st) && any(!in_st)) {
+    bg <- county_layers[!in_st, ]
+    map <- leaflet::addPolygons(
+      map, data = bg, group = "counties_bg", fillColor = pal(.clamp_to(vals[!in_st], pal_vals)),
+      fillOpacity = 0.12, color = "#0f1117", weight = 0.2, smoothFactor = 0.5,
+      options = leaflet::pathOptions(interactive = FALSE))
+  }
+  fg <- county_layers[in_st, ]
+  leaflet::addPolygons(
+    map, data = fg, layerId = fg$GEOID, group = "counties",
+    fillColor = pal(vals[in_st]), fillOpacity = fill_opacity,
+    color = "#0f1117", weight = 0.4, smoothFactor = 0.5,
+    label = tips[in_st], labelOptions = .hover_label_options(),
+    highlightOptions = leaflet::highlightOptions(color = .RISK_COL$accent, weight = 2,
+                                                 bringToFront = FALSE)
+  ) |>
     add_legend()
 }
 
@@ -621,10 +868,17 @@ risk_loading_legend <- function(map, layer_id, county_layers = NULL) {
          .standing_html(ifelse(mix, "Industry mix: unavailable", "")))
 }
 
-.tract_tooltips <- function(t, cfg, asof, noisy, county_layers, status = "ok") {
+.tract_tooltips <- function(t, cfg, asof, noisy, county_layers, status = "ok", detail = TRUE) {
   vtxt <- .risk_fmt(as.numeric(t[[cfg$col]]), cfg$fmt, cfg$digits %||% 1)
   lm_pct <- t[[paste0("lm_pct_", cfg$col)]]
   lm <- rank_label(lm_pct, t$frame_label)
+  zips <- if ("zip_list" %in% names(t)) zip_label(t$zip_list, t$zip_n, t$zip_nearest) else
+    NA_character_
+  if (!detail) {
+    return(risk_tooltips_compact_vec(
+      paste0(t$tract_name, ifelse(noisy, " · high margin of error", "")), vtxt, lm,
+      .rank_bad(lm_pct, cfg, as.numeric(t[[cfg$col]])), zips = zips))
+  }
   st <- rank_label(t[[paste0("st_pct_", cfg$col)]], t$state_label)
   footer <- paste0(
     if (identical(status, "unavailable") || is.na(asof)) paste(cfg$source, "— unavailable") else
@@ -642,7 +896,7 @@ risk_loading_legend <- function(map, layer_id, county_layers = NULL) {
   } else ""
   risk_tooltips_vec(title = t$tract_name, value_text = vtxt, rank_text = lm,
                     rank_sub = st, footer = footer, drivers_html = drivers,
-                    rank_bad = .rank_bad(lm_pct, cfg, as.numeric(t[[cfg$col]])),
+                    rank_bad = .rank_bad(lm_pct, cfg, as.numeric(t[[cfg$col]])), zips = zips,
                     standing = paste0(
                       .assist_missing_html(t, cfg),
                       .standing_html(.metro_line_rows(t, county_layers, key = "county_geoid")),
@@ -675,21 +929,20 @@ risk_loading_legend <- function(map, layer_id, county_layers = NULL) {
   list(status = st, asof = asof)
 }
 
-# A binned layer keeps its own bin labels (no "80 – 101"); others use the palette's.
 add_tract_legend <- function(map, pal, vals, cfg, lbl_fmt, title) {
-  if (is.null(cfg$bin_labels)) {
-    return(leaflet::addLegend(map, pal = pal, values = vals, opacity = 0.9,
-                              layerId = "risk_legend", position = "bottomright",
-                              labFormat = lbl_fmt, title = title))
-  }
-  b <- cfg$bins
-  leaflet::addLegend(map, colors = pal((b[-1] + b[-length(b)]) / 2), labels = cfg$bin_labels,
-                     opacity = 0.9, layerId = "risk_legend", position = "bottomright",
-                     title = title)
+  .risk_legend(map, pal, vals, cfg, lbl_fmt, title)
 }
 
-#' Dim counties and draw the frame's tracts for a tract-level layer. For a
-#' county-only layer (Stress now) the counties are restored and no tracts drawn.
+#' Tract layer drawn when the selected layer is county-only (Stress now, Credit, Migration,
+#' Tax base): the assistance score where tracts have it, else ACS poverty, which always loads.
+.tract_fallback_id <- function(tracts) {
+  if ("assist_score" %in% names(tracts) && any(!is.na(tracts$assist_score))) "assist_score"
+  else "poverty_rate"
+}
+
+#' Dim counties and draw the frame's tracts. A county-only layer has no tract values, so the
+#' tracts are coloured by a tract-level fallback layer (named in the legend) while the
+#' counties underneath stay on the selected layer.
 add_tract_layer <- function(map, tracts, layer_id, county_layers, fit = TRUE) {
   cfg <- RISK_LAYERS[[layer_id]]
   map <- leaflet::clearGroup(map, "tracts")
@@ -699,31 +952,35 @@ add_tract_layer <- function(map, tracts, layer_id, county_layers, fit = TRUE) {
     bb <- as.numeric(sf::st_bbox(tracts))
     leaflet::fitBounds(m, bb[1], bb[2], bb[3], bb[4])
   }
-  if (!"tract" %in% cfg$levels || !have) {
-    return(fit_to(.add_county_polygons(map, county_layers, layer_id, 0.82)))
+  if (!have) {
+    return(fit_to(.add_county_polygons(map, county_layers, layer_id, RISK_FILL_OPACITY)))
   }
-  sa <- .tract_status_asof(tracts, cfg, layer_id, county_layers)
+  county_only <- !"tract" %in% cfg$levels
+  tract_id <- if (county_only) .tract_fallback_id(tracts) else layer_id
+  if (county_only) cfg <- RISK_LAYERS[[tract_id]]
+  sa <- .tract_status_asof(tracts, cfg, tract_id, county_layers)
   vals <- as.numeric(tracts[[cfg$col]])
   pal <- .risk_palette(cfg, vals)
   noisy <- .noisy_flags(tracts, cfg)
   lbl_fmt <- .legend_format(cfg)
 
-  .add_county_polygons(map, county_layers, layer_id, 0.25) |>
+  .add_county_polygons(map, county_layers, layer_id, RISK_DIM_OPACITY) |>
     leaflet::addPolygons(
       data = tracts, layerId = tracts$GEOID, group = "tracts",
-      fillColor = pal(vals), fillOpacity = 0.85,
+      fillColor = pal(vals), fillOpacity = RISK_TRACT_OPACITY,
       color = ifelse(noisy, .RISK_COL$warn, "#0f1117"),
       weight = ifelse(noisy, 1.5, 0.4), dashArray = ifelse(noisy, "4", NA),
-      label = .tract_tooltips(tracts, cfg, sa$asof, noisy, county_layers, sa$status),
-      labelOptions = leaflet::labelOptions(
-        style = list(background = "transparent", border = "none", padding = "0",
-                     "box-shadow" = "none"), direction = "auto"),
+      label = .tract_tooltips(tracts, cfg, sa$asof, noisy, county_layers, sa$status,
+                              detail = .hover_detail()),
+      labelOptions = .hover_label_options(),
       highlightOptions = leaflet::highlightOptions(color = .RISK_COL$accent, weight = 2)
     ) |>
     leaflet::removeControl("risk_legend") |>
     add_tract_legend(pal, vals, cfg, lbl_fmt, .legend_title(
       cfg, sa$status, sa$asof,
-      scope = sprintf("tracts %s (n = %d)", tracts$frame_label[1], nrow(tracts)))) |>
+      scope = paste0(sprintf("tracts %s (n = %d)", tracts$frame_label[1], nrow(tracts)),
+                     if (county_only)
+                       " · county-only layer, so tracts show this one instead" else ""))) |>
     fit_to()
 }
 
@@ -736,10 +993,20 @@ fit_to_counties <- function(map, county_layers, geoids) {
   leaflet::fitBounds(map, bb[1], bb[2], bb[3], bb[4])
 }
 
+#' Zoom to a state (FIPS) or back to the US when `fips` is empty. Alaska's Aleutians cross
+#' the antimeridian, which would make its bounding box span the globe, so it is fixed.
+fit_to_state <- function(map, county_layers, fips) {
+  if (is.null(fips) || is.na(fips) || !nzchar(fips)) {
+    return(leaflet::setView(map, lng = -96, lat = 38, zoom = 4))
+  }
+  if (identical(fips, "02")) return(leaflet::setView(map, lng = -150, lat = 63.5, zoom = 4))
+  fit_to_counties(map, county_layers, county_layers$GEOID[county_layers$state_fips == fips])
+}
+
 reset_to_us <- function(map, county_layers, layer_id) {
   leaflet::clearGroup(map, "tracts") |>
-    .add_county_polygons(county_layers, layer_id, 0.82) |>
-    leaflet::setView(lng = -96, lat = 38, zoom = 4)
+    .add_county_polygons(county_layers, layer_id, RISK_FILL_OPACITY) |>
+    fit_to_state(county_layers, .view_state(county_layers))
 }
 
 #' Migration blocks for the county side panel: one bar per year (divs, not rows) and
@@ -808,6 +1075,27 @@ reset_to_us <- function(map, county_layers, layer_id) {
       style = sprintf("color:%s;margin-top:6px;", c$muted),
       sprintf(paste0("Temporary help payrolls (US): %+.1f%% annualized over 6 months — ",
                      "a leading indicator, not in the score."), tp)))
+}
+
+#' "Why this quadrant" block for the county side panel: what the quadrant means for this
+#' county, then the numbers behind the Now and Ahead halves. NULL without a quadrant.
+.quad_panel <- function(a) {
+  a <- .plain_df(a)[1, , drop = FALSE]
+  if (is.na(suppressWarnings(as.numeric(.col_or_na(a, "now_vs_ahead"))))) return(NULL)
+  w <- .quad_why(a)
+  tg <- htmltools::tags; c <- .RISK_COL
+  line <- function(label, txt) if (is.na(txt)) NULL else tg$div(
+    style = "margin:3px 0;", tg$b(label), " ", txt)
+  tg$div(
+    style = sprintf("margin-top:10px;border-top:1px solid %s;padding-top:8px;", c$border),
+    tg$div(style = sprintf("color:%s;margin-bottom:4px;", c$muted),
+           paste("Why:", QUAD_LABELS[as.numeric(a$now_vs_ahead)])),
+    tg$div(style = "margin:3px 0;", w$headline),
+    line("Now:", w$now), line("Ahead:", w$ahead),
+    tg$div(style = sprintf("color:%s;margin-top:4px;", c$muted), sprintf(paste0(
+      "A county is \"bad\" on a measure when it is in the worst third of US counties. ",
+      "Sector drags and lifts are its industry mix times each sector's recent US payroll ",
+      "momentum, against the US mix; they describe exposure, not a forecast."))))
 }
 
 #' Assistance notes for the side panel (divs, not rows): industry-mix source, the
@@ -988,7 +1276,9 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
       if (identical(st_id, "not_loaded")) "not loaded — open the Credit lens" else
       if (is.na(asof_id)) "loading" else
         paste0(asof_id, if (st_id %in% c("stale", "partial")) paste0(" (", st_id, ")") else "")
-    pcts <- if (level == "county") list(td(rk(get(paste0("pct_", cfg$col)), cfg$higher_is_worse))) else
+    quad_rk <- if (id == "now_vs_ahead") { q <- .quad_rank_text(a); if (is.na(q)) "—" else q }
+    pcts <- if (level == "county" && id == "now_vs_ahead") list(td(quad_rk)) else
+      if (level == "county") list(td(rk(get(paste0("pct_", cfg$col)), cfg$higher_is_worse))) else
       list(td(rk(get(paste0("lm_pct_", cfg$col)), cfg$higher_is_worse)),
            td(rk(get(paste0("st_pct_", cfg$col)), cfg$higher_is_worse)))
     tg$tr(td(cfg$label), td(tg$b(if (is.na(vt)) "—" else vt)), pcts, td(when), td(cfg$source))
@@ -1031,6 +1321,7 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
       style = "border-collapse:collapse;width:100%;",
       tg$tr(style = sprintf("color:%s;text-align:left;", c$muted), lapply(head, tg$th)),
       rows)),
+    if (level == "county") .quad_panel(a),
     .assist_panel(a, level, county_layers, st_names, sources),
     if (level == "county" && !is.null(vintage)) .migration_panel(a, vintage),
     if (level == "county") .industry_panel(a, attr(county_layers, "sector_weights"),
@@ -1045,9 +1336,113 @@ risk_side_panel <- function(area, level = c("county", "tract"), county_layers,
 }
 
 #' US county choropleth for one layer. Polygons carry GEOID layerIds for clicks.
-build_risk_county_map <- function(county_layers, layer_id, fill_opacity = 0.82) {
+build_risk_county_map <- function(county_layers, layer_id, fill_opacity = RISK_FILL_OPACITY) {
   leaflet::leaflet(options = leaflet::leafletOptions(zoomControl = TRUE)) |>
     leaflet::addTiles(options = leaflet::tileOptions(opacity = 0.95)) |>  # CARTO now needs a key
     .add_county_polygons(county_layers, layer_id, fill_opacity) |>
     leaflet::setView(lng = -96, lat = 38, zoom = 4)
 }
+
+# ── Data table under the map ──────────────────────────────────────────────────
+#' One row per county (in `state` when given), worst first for the selected layer.
+#' Values are numeric; the app formats them. `Value` is the selected layer's column,
+#' `US pct` / `State pct` its percentile rank (high = high value) nationally / in the state.
+risk_county_table <- function(county_layers, layer_id, state = NULL) {
+  cfg <- RISK_LAYERS[[layer_id]]
+  d <- .plain_df(county_layers)
+  n <- nrow(d)
+  num <- function(col) as.numeric(.col_or_na(d, col))
+  keep <- if (is.null(state) || !nzchar(state)) rep(TRUE, n) else
+    as.character(d$state_fips) == state
+  v <- num(cfg$col)
+  pct_st <- rep(NA_real_, n)
+  pct_st[keep] <- pct_rank(v[keep])
+  pct_st[is.nan(pct_st)] <- NA_real_      # a lone county has no rank
+  out <- data.frame(
+    GEOID = d$GEOID,
+    County = sub(", [A-Z]{2}$", "", d$name),
+    State = d$state_name,
+    Metro = ifelse(is.na(d$cbsa_name), "—", d$cbsa_name),
+    Value = v,
+    `US pct` = round(num(paste0("pct_", cfg$col))),
+    `State pct` = round(pct_st),
+    `Unemp. now (%)` = num("rate_now"),
+    `Unemp. vs yr ago (pp)` = num("momentum_pp"),
+    `Stress ahead (pp)` = num("stress_ahead_pp"),
+    `Assistance score` = num("assist_score"),
+    `Credit score` = num("credit_score"),
+    `Net dom. migration /1k` = num("mig_dom_rate"),
+    Population = num("pop"),
+    check.names = FALSE, stringsAsFactors = FALSE)
+  out <- out[keep, , drop = FALSE]
+  worst_first <- if (isFALSE(cfg$higher_is_worse)) out$Value else -out$Value
+  out <- out[order(worst_first, na.last = TRUE), , drop = FALSE]
+  if (identical(cfg$fmt, "quadrant")) {
+    # The code only orders the rows; show the name and drop the meaningless percentiles.
+    out$Value <- .risk_fmt(out$Value, "quadrant")
+    out[["US pct"]] <- NULL
+    out[["State pct"]] <- NULL
+  }
+  out
+}
+
+#' One row per tract of the drilled-in frame, ranked within the metro and the state.
+risk_tract_table <- function(tracts, layer_id) {
+  cfg <- RISK_LAYERS[[layer_id]]
+  t <- .plain_df(tracts)
+  v <- as.numeric(t[[cfg$col]])
+  out <- data.frame(
+    GEOID = t$GEOID, Tract = t$tract_name, Value = v,
+    `Metro pct` = round(as.numeric(.col_or_na(t, paste0("lm_pct_", cfg$col)))),
+    `State pct` = round(as.numeric(.col_or_na(t, paste0("st_pct_", cfg$col)))),
+    `High margin of error` = ifelse(.noisy_flags(t, cfg), "yes", ""),
+    check.names = FALSE, stringsAsFactors = FALSE)
+  worst_first <- if (isFALSE(cfg$higher_is_worse)) out$Value else -out$Value
+  out[order(worst_first, na.last = TRUE), , drop = FALSE]
+}
+
+# ── Layer descriptions ────────────────────────────────────────────────────────
+# One short line for the selected layer; the full guide is a collapsed panel.
+.LENS_HELP <- c(
+  assistance = paste("Where help may be needed soonest: exposure of the local industry mix",
+                     "to weakening sectors, thin financial cushion (rent burden, poverty,",
+                     "low-wage and young workers) and county job pressure. Index headcounts,",
+                     "not layoff forecasts."),
+  credit = paste("Household credit risk score (0–100, needs 3 of 4 components): CFPB",
+                 "mortgage delinquency, Urban Institute card and auto delinquency, county",
+                 "job pressure and FHFA home prices. Loads on first use."),
+  migration = "Census PEP county components of change, per 1,000 residents.",
+  context = "Census ACS 5-year estimates.")
+
+.LAYER_HELP <- c(
+  stress_now = paste("BLS county unemployment, latest 3 months vs. the same months a year",
+                     "earlier. +1.0 pp or more is a Sahm-style trigger."),
+  stress_ahead = paste("National sector payroll momentum (6-mo.) applied to each county's",
+                       "resident industry mix; the gap vs. the US."),
+  tax_base = paste("A proxy from migration, population change and home prices — not a",
+                   "bond default model."),
+  now_vs_ahead = paste("Stress now and stress ahead on one scale: a county is bad on a measure",
+                       "if it is in the worst third of US counties. Orange = fine now, bad",
+                       "ahead; teal = bad now, better ahead."))
+
+risk_layer_help <- function(layer_id) {
+  if (layer_id %in% names(.LAYER_HELP)) return(unname(.LAYER_HELP[[layer_id]]))
+  lens <- RISK_LAYERS[[layer_id]]$lens
+  if (!is.null(lens) && lens %in% names(.LENS_HELP)) unname(.LENS_HELP[[lens]]) else ""
+}
+
+#' The full guide: every layer family, plus how to read the map. Shown collapsed.
+risk_guide_items <- function() c(
+  paste("Stress now:", .LAYER_HELP[["stress_now"]]),
+  paste("Stress ahead:", .LAYER_HELP[["stress_ahead"]]),
+  paste("Now vs ahead:", .LAYER_HELP[["now_vs_ahead"]]),
+  paste("Assistance:", .LENS_HELP[["assistance"]]),
+  paste("Credit:", .LENS_HELP[["credit"]],
+        "CFPB mortgage delinquency is the county's own, else a metro or state non-metro",
+        "estimate; Urban Institute shows the release date, not the data month; FHFA home",
+        "prices are for the metro division, metro or state."),
+  paste("Context layers:", .LENS_HELP[["context"]], "Tax base pressure:", .LAYER_HELP[["tax_base"]]),
+  paste("Migration:", .LENS_HELP[["migration"]]),
+  "State filter: zooms to a state, fades the rest, and ranks counties within the state. Colours stay on the national scale unless you tick \"Rescale colours\".",
+  "Click a county (or a row in the table) to load its tracts, ranked within the metro and the state. Layers that only exist per county (Stress now, Credit, Migration) show tracts coloured by assistance need instead; the legend says so.",
+  "Dashed outline: margin of error larger than the value.")

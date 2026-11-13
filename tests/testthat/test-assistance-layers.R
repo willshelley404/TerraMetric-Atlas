@@ -84,9 +84,9 @@ test_that("job pressure is built before, and independent of, county assistance",
   expect_equal(unique(na$job_pressure_n), 0L)
 })
 
-test_that("derived layers are the assistance and credit layers and tax base", {
+test_that("derived layers are now vs ahead, the assistance and credit layers and tax base", {
   der <- names(RISK_LAYERS)[vapply(RISK_LAYERS, function(l) isTRUE(l$derived), TRUE)]
-  expect_equal(der, c("assist_score", "assist_exposure", "assist_cushion", "assist_workers",
+  expect_equal(der, c("now_vs_ahead", "assist_score", "assist_exposure", "assist_cushion", "assist_workers",
                       "credit_score", "credit_mortgage", "credit_consumer", "credit_jobs",
                       "credit_collateral", "tax_base"))
   l <- al_layers()
@@ -333,7 +333,7 @@ test_that("tract legend of a binned layer uses its bin labels", {
                        "assist_score", al_layers())
   lg <- Filter(function(cl) cl$method == "addLegend", m$x$calls)
   labs <- as.character(unclass(lg[[length(lg)]]$args[[1]]$labels))
-  expect_equal(labs, RISK_LAYERS$assist_score$bin_labels)
+  expect_equal(labs, rev(RISK_LAYERS$assist_score$bin_labels))   # high need (worse) on top
   expect_true(grepl("tracts in Chattanooga metro", lg[[length(lg)]]$args[[1]]$title, fixed = TRUE))
 })
 

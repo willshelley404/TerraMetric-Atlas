@@ -33,7 +33,8 @@ ui <- dashboardPage(
   dashboardSidebar(
     width = 215,
     tags$head(
-      tags$link(rel = "stylesheet", href = "custom.css"),
+      tags$link(rel = "stylesheet",
+                href = paste0("custom.css?v=", as.integer(file.mtime("www/custom.css")) %||% 0)),
       tags$link(rel = "preconnect", href = "https://fonts.googleapis.com"),
       tags$link(rel = "stylesheet",
         href = "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap"),
@@ -288,36 +289,27 @@ ui <- dashboardPage(
       # ══════════════════════════════════════════════════════
       tabItem("metro",
         box(title = "Regional Risk", status = "primary", solidHeader = TRUE, width = 12,
+          tags$details(
+            style = "background:#1e2640;border-radius:6px;padding:8px 12px;margin-bottom:12px;",
+            tags$summary(style = "color:#9aa3b2;font-size:12px;cursor:pointer;",
+                         icon("info-circle", style = "color:#00b4d8;"), " How to read this map"),
+            tags$ul(style = "color:#9aa3b2;font-size:11px;line-height:1.7;margin:8px 0 0;padding-left:18px;",
+                    lapply(risk_guide_items(), tags$li))
+          ),
           fluidRow(
             column(3,
               selectInput("risk_lens", "Lens:", choices = RISK_LENSES, selected = "context"),
               selectInput("risk_layer", "Layer:", choices = risk_lens_choices("context"),
                           selected = risk_lens_default("context")),
+              uiOutput("risk_layer_help"),
+              selectInput("risk_state", "State:", choices = c("All states" = "")),
+              checkboxInput("risk_rescale", "Rescale colors to the selected state", value = FALSE),
               selectizeInput("risk_jump_metro", "Jump to metro:", choices = NULL,
                              options = list(placeholder = "Type a metro or micro area…")),
+              uiOutput("risk_back_counties"),
               actionButton("risk_back_us", "Back to US", icon = icon("globe-americas"),
                            style = "width:100%;margin-bottom:10px;"),
-              uiOutput("risk_breadcrumb"),
-              div(style = "background:#1e2640;border-radius:6px;padding:12px;margin-top:10px;",
-                div(style = "color:#9aa3b2;font-size:11px;line-height:1.9;",
-                  icon("info-circle", style = "color:#00b4d8;"),
-                  " Stress now: BLS county unemployment, latest 3 months vs. a year earlier.",
-                  tags$br(),
-                  " Stress ahead: national sector payroll momentum (6-mo.) applied to each county's resident industry mix; gap vs. the US.",
-                  tags$br(),
-                  " Assistance: where help may be needed soonest. Exposure of the local industry mix (LODES jobs by home tract, ACS where unavailable) to weakening sectors, thin financial cushion (rent burden, poverty, low-wage and young workers) and county job pressure. Counts are index headcounts, not layoff forecasts.",
-                  tags$br(),
-                  " Credit: household credit risk score (0-100, needs 3 of 4 components): CFPB mortgage delinquency (county, else metro or state non-metro estimate), Urban Institute card and auto delinquency (release date shown, not the data month), county job pressure and FHFA home price change (metro division, metro or state). Loads on first use.",
-                  tags$br(),
-                  " Context layers: Census ACS 5-year estimates. Tax base pressure is a proxy from migration, population change and home prices, not a bond default model.",
-                  tags$br(),
-                  " Migration: Census PEP county components of change (per 1,000 residents).",
-                  tags$br(),
-                  " Click a county to load its tracts, ranked within the metro and the state.",
-                  tags$br(),
-                  " Dashed outline: margin of error larger than the value."
-                )
-              )
+              uiOutput("risk_breadcrumb")
             ),
             column(9,
               withSpinner(leafletOutput("risk_map", height = "560px"),
@@ -325,18 +317,21 @@ ui <- dashboardPage(
             )
           ),
           uiOutput("risk_side_panel"),
+          div(style = "color:#9aa3b2;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin:16px 0 8px;",
+              "Data table"),
+          withSpinner(DTOutput("risk_table"),
+                      type = 4, color = "#00b4d8", color.background = "#161b27", size = 0.7),
           hr(style = "border-color:#2a3042; margin-top:16px;"),
           # Metro AI Analysis
           box(title = tagList(icon("robot", style = "color:#7c5cbf;"), " Metro AI Analysis"),
               status = "info", solidHeader = TRUE, width = 12,
             fluidRow(
               column(4,
-                selectInput("metro_ai_select", "Select Metro for Analysis:",
-                            choices = character(0)),
+                uiOutput("metro_ai_target"),
                 actionButton("btn_metro_ai", "Generate Metro Analysis",
                              class = "btn-ai", style = "margin-top:8px;width:100%;"),
                 div(style = "color:#9aa3b2;font-size:11px;margin-top:8px;",
-                    "Synthesises ACS data + macro environment + news headlines into a structured regional economic assessment.")
+                    "Analyses the area chosen in Jump to metro (metro or micro), or the area of the county you click on the map. Combines ACS data, a comparison with similar areas, the Regional Risk layers (unemployment momentum, stress ahead, assistance, credit, migration), the macro backdrop and news headlines. Open the Credit lens first to include credit data. A county you have clicked on the map is covered too.")
               ),
               column(8,
                 withSpinner(uiOutput("metro_ai_output"),

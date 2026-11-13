@@ -23,8 +23,14 @@ RISK_CFG <- list(
   # Assistance cushion: mean of available percentiles, at least this many inputs.
   cushion_min_inputs  = 2,
   # Credit score needs this many of its 4 components, else "Insufficient data".
-  credit_min_components = 3
+  credit_min_components = 3,
+  # Now vs ahead: a county is "bad" on a measure at or above this national percentile
+  # of badness (worst third).
+  quad_bad_pct = 100 * 2 / 3
 )
+
+# Now vs ahead quadrants, in code order (the layer's value is the position here).
+QUAD_LABELS <- c("Healthy", "Recovering", "Worsening", "Bad now and ahead")
 
 # FRED payroll series and ACS C24030 detail lines per industry group. `cns` are
 # the LEHD-style sector codes Phase 3 maps to tract exposure.
@@ -242,6 +248,10 @@ tracts_for_county <- function(county_geoid, county_base, fetch = fetch_state_tra
                              "assist_workers", "weak_share", "low_wage_share"))
   ranked <- rank_tracts(tr, cb, fr$counties, rank_vars)
   out$tracts <- ranked[ranked$county_geoid %in% fr$counties, ]
+  z <- zips_by_polygon(out$tracts, nearest = TRUE)
+  out$tracts$zip_list <- z$zip_list
+  out$tracts$zip_n <- z$zip_n
+  out$tracts$zip_nearest <- z$zip_nearest
   out
 }
 
@@ -321,6 +331,7 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
   out <- county_credit(out, credit)
   # While the credit sources load, a two-input tax base would change when HPI arrives.
   out$tax_base <- if ("credit" %in% loading) rep(NA_real_, nrow(out)) else tax_base_proxy(out)
+  out <- county_now_vs_ahead(out)
   out <- add_pct(out, names(RISK_LAYERS)[is_derived])
   out$pct_weak_share <- pct_rank(out$weak_share)
   out$pct_pop_chg_pct <- pct_rank(out$pop_chg_pct)    # tax base driver colour
@@ -349,9 +360,16 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
     if (is.null(stress_ahead)) "unavailable" else
       if (isTRUE(attr(stress_ahead, "stale"))) "stale" else
         if (isTRUE(attr(stress_ahead, "partial"))) "partial" else "ok"
+  # Now vs ahead rests on both stress layers: the weakest of the two decides its status.
+  qs <- status[c("stress_now", "stress_ahead")]
+  status[["now_vs_ahead"]] <- if (any(qs == "loading")) "loading" else
+    if (any(qs == "unavailable")) "unavailable" else if (any(qs == "stale")) "stale" else
+      if (any(qs == "partial")) "partial" else "ok"
   rm_sa <- if (is.null(stress_ahead)) NULL else attr(stress_ahead, "ref_month")
   asof[["stress_ahead"]] <- if (is.null(rm_sa) || is.na(rm_sa)) NA_character_ else
     sprintf("CES %s · ACS %d–%d", format(rm_sa, "%b %Y"), yr - 4, yr)
+  asof[["now_vs_ahead"]] <- if (is.na(asof[["stress_now"]]) || is.na(asof[["stress_ahead"]]))
+    NA_character_ else sprintf("LAUS %s · %s", asof[["stress_now"]], asof[["stress_ahead"]])
   # Assistance needs the county industry mix as well as the weights; it is stale or
   # partial when either input is.
   ces <- if (is.null(weights)) NULL else attr(weights, "ref_month")
@@ -381,6 +399,25 @@ build_county_layers <- function(county_base, momentum, laus_stale = FALSE,
   attr(out, "credit_info") <- cs$info
   attr(out, "loading") <- loading
   if (!is.null(v)) attr(out, "pep_vintage") <- v
+  out
+}
+
+#' Now vs ahead: Stress now and Stress ahead on one "how bad" scale (national percentile,
+#' high = worse; stress ahead is flipped because a low job-growth gap is the bad end), then
+#' split at `cfg$quad_bad_pct`. Needs pct_momentum_pp and pct_stress_ahead_pp.
+#' Adds now_vs_ahead (1 Healthy, 2 Recovering = bad now only, 3 Worsening = bad ahead
+#' only, 4 bad on both; NA if either measure is missing) and quad_now_pct / quad_ahead_pct.
+county_now_vs_ahead <- function(out, cfg = RISK_CFG) {
+  col <- function(nm) if (nm %in% names(out)) as.numeric(out[[nm]]) else rep(NA_real_, nrow(out))
+  now <- col("pct_momentum_pp")
+  ahead <- 100 - col("pct_stress_ahead_pp")
+  bad_now <- now >= cfg$quad_bad_pct
+  bad_ahead <- ahead >= cfg$quad_bad_pct
+  code <- 1 + bad_now + 2 * bad_ahead
+  code[is.na(now) | is.na(ahead)] <- NA_real_
+  out$now_vs_ahead <- code
+  out$quad_now_pct <- now
+  out$quad_ahead_pct <- ahead
   out
 }
 
@@ -1148,4 +1185,216 @@ tax_base_proxy <- function(cl) {
   out <- round(.avail_mean(parts), 1)
   out[rowSums(!is.na(parts)) < 2] <- NA_real_
   out
+}
+
+# ── Regional risk context for the Metro AI ────────────────────────────────────
+#' The county picked on the Regional Risk map, for the LLM prompt: each layer's own value
+#' with its percentile among all US counties (100 = highest value, not necessarily worst).
+#' NULL when no county is given or it is not in `county_layers`. NA values are dropped.
+county_risk_context <- function(county_layers, county_geoid) {
+  if (is.null(county_geoid) || length(county_geoid) != 1 || is.na(county_geoid)) return(NULL)
+  d <- .plain_df(county_layers)
+  r <- d[d$GEOID == county_geoid, , drop = FALSE]
+  if (nrow(r) == 0) return(NULL)
+  r <- r[1, , drop = FALSE]
+  v <- function(nm, dg = 1) {
+    x <- if (nm %in% names(r)) suppressWarnings(as.numeric(r[[nm]])) else NA_real_
+    if (length(x) != 1 || is.na(x)) return(NULL)
+    out <- list(value = round(x, dg))
+    p <- if (paste0("pct_", nm) %in% names(r)) as.numeric(r[[paste0("pct_", nm)]]) else NA_real_
+    if (length(p) == 1 && !is.na(p)) out$us_percentile <- round(p)
+    out
+  }
+  keep <- function(x) x[!vapply(x, is.null, TRUE)]
+  status <- attr(county_layers, "layer_status"); asof <- attr(county_layers, "asof")
+  gaps <- c(
+    if (!is.null(status) && any(status[c("credit_score")] %in% "not_loaded", na.rm = TRUE))
+      "Credit layers not loaded for this county (open the Credit lens first).")
+  out <- list(
+    county = r$name, state = if ("state_name" %in% names(r)) r$state_name,
+    metro = if (!is.na(r$cbsa_geoid)) paste(r$cbsa_name, r$cbsa_type) else "not in a metro/micro area",
+    population = round(as.numeric(r$pop)),
+    note = paste("value = this county's reading; us_percentile = share of US counties below it.",
+                 "Stress ahead is the projected job-growth gap vs. the US (negative = worse).",
+                 "Assistance and credit scores run 0-100, higher = more need/risk."),
+    unemployment = keep(list(
+      rate_now_pct = v("rate_now"), change_vs_year_ago_pp = v("momentum_pp", 2))),
+    stress_ahead_projected_job_growth_gap_pp = v("stress_ahead_pp", 2),
+    now_vs_ahead_quadrant = {
+      q <- if ("now_vs_ahead" %in% names(r)) suppressWarnings(as.numeric(r$now_vs_ahead)) else NA
+      if (length(q) != 1 || is.na(q)) NULL else QUAD_LABELS[q]
+    },
+    now_vs_ahead_reason = {
+      w <- .quad_why(r)
+      keepw <- c(summary = w$headline, now = w$now, ahead = w$ahead)
+      keepw <- keepw[!is.na(keepw)]
+      if (length(keepw)) as.list(keepw) else NULL
+    },
+    assistance_need = keep(list(
+      score_0_100 = v("assist_score", 0), exposure_to_weakening_sectors_index = v("assist_exposure", 0),
+      thin_cushion_percentile = v("assist_cushion", 0),
+      share_of_jobs_in_weakening_sectors_pct = v("weak_share"),
+      exposure_weighted_workers_index_headcount = v("assist_workers", 0),
+      rent_burden_pct = v("rent_burden_rate"), poverty_pct = v("poverty_rate"),
+      median_household_income = v("med_income", 0))),
+    credit = keep(list(
+      risk_score_0_100 = v("credit_score", 0), mortgages_90_plus_days_late_pct = v("dq90", 2),
+      card_delinquent_pct = v("card_del"), auto_delinquent_pct = v("auto_del"),
+      home_prices_yoy_pct = v("hpi_yoy"))),
+    migration_and_population = keep(list(
+      net_domestic_per_1000 = v("mig_dom_rate"), net_international_per_1000 = v("mig_intl_rate"),
+      natural_change_per_1000 = v("nat_chg_rate"), population_change_since_2020_pct = v("pop_chg_pct"))),
+    tax_base_pressure_0_100 = v("tax_base", 0),
+    data_gaps = if (length(gaps)) as.list(gaps))
+  out <- out[!vapply(out, function(e) is.null(e) || length(e) == 0, TRUE)]
+  if (!is.null(asof)) out$as_of <- as.list(unique(stats::na.omit(unname(
+    asof[intersect(c("stress_now", "assist_score", "credit_score", "mig_dom"), names(asof))]))))
+  out
+}
+
+#' What the Regional Risk map knows about one metro, as a list for the LLM prompt: its
+#' counties' layers rolled up (population-weighted) and set against the US, the largest
+#' counties with their own values, and notes on anything missing. NULL when the CBSA has
+#' no counties in `county_layers`. NA values are dropped, never sent as "NA".
+metro_risk_context <- function(county_layers, cbsa_geoid, selected_county = NULL) {
+  d <- .plain_df(county_layers)
+  if (is.null(d) || !"cbsa_geoid" %in% names(d)) return(NULL)
+  m <- d[!is.na(d$cbsa_geoid) & d$cbsa_geoid == cbsa_geoid, , drop = FALSE]
+  if (nrow(m) == 0) return(NULL)
+
+  col <- function(df, nm) if (nm %in% names(df)) as.numeric(df[[nm]]) else rep(NA_real_, nrow(df))
+  wmean <- function(x, w) {
+    ok <- !is.na(x) & !is.na(w) & w > 0
+    if (!any(ok)) NA_real_ else sum(x[ok] * w[ok]) / sum(w[ok])
+  }
+  # metro value (weighted by `w`), the same measure for all US counties, and the gap
+  roll <- function(nm, w = "pop", digits = 1) {
+    mv <- wmean(col(m, nm), col(m, w))
+    uv <- wmean(col(d, nm), col(d, w))
+    if (is.na(mv)) return(NULL)
+    drop_na(list(metro = round(mv, digits), us = round(uv, digits),
+                 vs_us = round(mv - uv, digits)))
+  }
+  drop_na <- function(x) x[!vapply(x, function(e) is.null(e) || (length(e) == 1 && is.na(e)), TRUE)]
+
+  asof <- attr(county_layers, "asof"); status <- attr(county_layers, "layer_status")
+  layer_meta <- function(ids) {
+    ids <- ids[ids %in% names(status)]
+    list(as_of = unique(stats::na.omit(unname(asof[ids]))), status = unique(unname(status[ids])))
+  }
+
+  # Unemployment: the metro's own BLS series, plus how its counties are moving.
+  mom <- col(m, "momentum_pp")
+  unemp <- drop_na(list(
+    metro_rate_now_pct = if (all(is.na(col(m, "metro_rate_now")))) NULL else round(col(m, "metro_rate_now")[1], 1),
+    metro_change_vs_year_ago_pp = if (all(is.na(col(m, "metro_momentum_pp")))) NULL else round(col(m, "metro_momentum_pp")[1], 2),
+    metro_ref_month = if (all(is.na(m$metro_ref_month))) NULL else format(m$metro_ref_month[1], "%b %Y"),
+    county_change_vs_year_ago_pp_pop_weighted = if (all(is.na(mom))) NULL else round(wmean(mom, col(m, "pop")), 2),
+    counties_with_data = sum(!is.na(mom)),
+    counties_rising_over_0.5pp = sum(mom > 0.5, na.rm = TRUE),
+    counties_at_sahm_trigger = sum(m$flag %in% "Trigger"),
+    us_county_change_pp_pop_weighted = round(wmean(col(d, "momentum_pp"), col(d, "pop")), 2)))
+  if (length(unemp)) unemp$as_of <- layer_meta("stress_now")$as_of
+
+  # Industry mix: the biggest resident-industry shares (employment-weighted).
+  shares <- vapply(RISK_SECTORS$group, function(g) wmean(col(m, paste0("share_", g)), col(m, "emp_total")),
+                   numeric(1))
+  shares <- sort(shares[!is.na(shares)], decreasing = TRUE)
+  mix <- if (length(shares)) as.list(stats::setNames(
+    round(100 * utils::head(shares, 5), 1), RISK_SECTORS$label[match(names(utils::head(shares, 5)), RISK_SECTORS$group)]))
+
+  ahead <- roll("stress_ahead_pp", digits = 2)
+  assist <- drop_na(list(
+    assistance_need_score_0_100 = roll("assist_score"),
+    exposure_to_weakening_sectors_index = roll("assist_exposure"),
+    thin_cushion_percentile = roll("assist_cushion"),
+    share_of_jobs_in_weakening_sectors_pct = if (is.null(roll("weak_share", "emp_total"))) NULL else
+      roll("weak_share", "emp_total"),
+    exposure_weighted_workers_index_headcount = if (all(is.na(col(m, "assist_workers")))) NULL else
+      round(sum(col(m, "assist_workers"), na.rm = TRUE)),
+    job_pressure_0_1 = roll("job_pressure", digits = 2),
+    rent_burden_pct = roll("rent_burden_rate"), poverty_pct = roll("poverty_rate")))
+  credit <- drop_na(list(
+    credit_risk_score_0_100 = roll("credit_score"),
+    mortgages_90_plus_days_late_pct = roll("dq90", digits = 2),
+    card_delinquent_pct = roll("card_del"), auto_delinquent_pct = roll("auto_del"),
+    home_prices_yoy_pct = roll("hpi_yoy")))
+  migr <- drop_na(list(
+    net_domestic_per_1000 = {
+      dn <- col(m, "mig_dom_n"); pa <- col(m, "pop_avg")
+      if (all(is.na(dn)) || all(is.na(pa))) NULL else
+        list(metro = round(1000 * sum(dn, na.rm = TRUE) / sum(pa, na.rm = TRUE), 1),
+             us = round(wmean(col(d, "mig_dom_rate"), col(d, "pop_avg")), 1))
+    },
+    net_international_per_1000 = roll("mig_intl_rate", "pop_avg"),
+    natural_change_per_1000 = roll("nat_chg_rate", "pop_avg"),
+    population_change_since_2020_pct = roll("pop_chg_pct"),
+    domestic_migration_since_2020_per_1000 = roll("mig_dom_cum", "pop_avg")))
+  tax <- roll("tax_base")
+
+  # Largest counties with their own readings.
+  top <- m[order(-col(m, "pop"), na.last = TRUE), , drop = FALSE]
+  top <- utils::head(top, 10)
+  counties <- lapply(seq_len(nrow(top)), function(i) {
+    r <- top[i, , drop = FALSE]
+    v <- function(nm, dg = 1) { x <- col(r, nm); if (is.na(x)) NULL else round(x, dg) }
+    drop_na(list(county = r$name, population = v("pop", 0),
+                 unemployment_pct = v("rate_now"), change_vs_year_ago_pp = v("momentum_pp", 2),
+                 stress_ahead_pp = v("stress_ahead_pp", 2), assistance_score = v("assist_score", 0),
+                 credit_score = v("credit_score", 0),
+                 net_domestic_migration_per_1000 = v("mig_dom_rate")))
+  })
+
+  not_ok <- function(ids, what) {
+    st <- status[intersect(ids, names(status))]
+    if (!length(st)) return(NULL)
+    if (any(st == "not_loaded")) return(sprintf("%s not loaded yet (open the Credit lens to load it) — not included.", what))
+    if (all(st %in% c("unavailable", "loading"))) return(sprintf("%s unavailable — not included.", what))
+    if (any(st %in% c("stale", "partial"))) return(sprintf("%s is %s.", what, paste(unique(st[st %in% c("stale", "partial")]), collapse = "/")))
+    NULL
+  }
+  notes <- c(
+    not_ok("stress_now", "County unemployment (BLS)"), not_ok("stress_ahead", "Stress ahead"),
+    not_ok("assist_score", "Assistance layers"), not_ok("credit_score", "Credit layers"),
+    not_ok("mig_dom", "Migration"), not_ok("tax_base", "Tax base pressure"),
+    if (all(is.na(col(m, "metro_momentum_pp")))) "Metro-level unemployment series missing; county figures only.")
+
+  out <- list(
+    counties_in_metro = nrow(m),
+    selected_county = county_risk_context(county_layers, selected_county),
+    note = paste("Values are population-weighted over the metro's counties unless stated;",
+                 "'us' is the same measure over all US counties; vs_us is metro minus US.",
+                 "Stress ahead is the projected job-growth gap vs. the US (negative = worse).",
+                 "Assistance and credit scores run 0-100, higher = more need/risk."),
+    unemployment = if (length(unemp)) unemp,
+    industry_mix_share_of_jobs_pct = mix,
+    stress_ahead_projected_job_growth_gap_pp = if (!is.null(ahead)) c(ahead, list(as_of = layer_meta("stress_ahead")$as_of)),
+    assistance_need = if (length(assist)) c(assist, list(as_of = layer_meta("assist_score")$as_of)),
+    credit = if (length(credit)) c(credit, list(as_of = layer_meta("credit_score")$as_of)),
+    migration_and_population = if (length(migr)) migr,
+    tax_base_pressure_0_100 = tax,
+    largest_counties = counties,
+    data_gaps = if (length(notes)) as.list(notes))
+  out[!vapply(out, is.null, TRUE)]
+}
+
+#' Which metro or micro area the Metro AI should analyse: the "Jump to metro" pick, else the
+#' metro of the county selected on the map. The selected county is only passed on when it is
+#' inside that area. NULL when neither points at a CBSA in `county_layers`.
+metro_ai_target <- function(county_layers, jump = NULL, selected_county = NULL) {
+  d <- .plain_df(county_layers)
+  if (is.null(d) || !"cbsa_geoid" %in% names(d)) return(NULL)
+  has <- function(x) length(x) == 1 && !is.na(x) && nzchar(x)
+  src <- "jump"
+  geoid <- if (has(jump)) jump else NULL
+  if (is.null(geoid) && has(selected_county)) {
+    g <- d$cbsa_geoid[d$GEOID == selected_county]
+    if (length(g) && !is.na(g[1])) { geoid <- g[1]; src <- "map" }
+  }
+  if (is.null(geoid)) return(NULL)
+  m <- d[!is.na(d$cbsa_geoid) & d$cbsa_geoid == geoid, , drop = FALSE]
+  if (nrow(m) == 0) return(NULL)
+  list(geoid = geoid, name = m$cbsa_name[1], type = m$cbsa_type[1], source = src,
+       counties = nrow(m),
+       selected_county = if (has(selected_county) && selected_county %in% m$GEOID) selected_county)
 }

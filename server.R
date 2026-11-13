@@ -1275,7 +1275,9 @@ server <- function(input, output, session) {
 
   # Rebuild county layers from rv$risk_parts (no drawing).
   risk_rebuild <- function() {
-    rv$county_layers <- do.call(build_county_layers, c(list(rv$risk_base), rv$risk_parts))
+    cl <- do.call(build_county_layers, c(list(rv$risk_base), rv$risk_parts))
+    # The state view rides on the layers object, so every redraw honours it.
+    rv$county_layers <- risk_view(cl, isolate(input$risk_state), isolate(input$risk_rescale))
   }
 
   # Redraw a layer (default: the selected one) from rv$county_layers.
@@ -1284,7 +1286,7 @@ server <- function(input, output, session) {
     if (!is.null(rv$risk_tracts)) {
       add_tract_layer(proxy, rv$risk_tracts$tracts, layer, rv$county_layers, fit = FALSE)
     } else {
-      .add_county_polygons(proxy, rv$county_layers, layer, 0.82)
+      .add_county_polygons(proxy, rv$county_layers, layer, RISK_FILL_OPACITY)
     }
   }
 
@@ -1498,8 +1500,8 @@ server <- function(input, output, session) {
                       selected = risk_lens_default(input$risk_lens))
   })
 
-  # Layer change keeps the current view (drilled in or US).
-  observeEvent(input$risk_layer, ignoreInit = TRUE, {
+  # Repaint the current view (drilled in or US) for the selected layer.
+  risk_repaint <- function() {
     req(rv$county_layers)
     proxy <- leaflet::leafletProxy("risk_map")
     # First credit open: the credit fetch repaints when done; until then only the legend.
@@ -1510,8 +1512,36 @@ server <- function(input, output, session) {
       add_tract_layer(proxy, rv$risk_tracts$tracts, input$risk_layer, rv$county_layers,
                       fit = FALSE)
     } else {
-      .add_county_polygons(proxy, rv$county_layers, input$risk_layer, 0.82)
+      .add_county_polygons(proxy, rv$county_layers, input$risk_layer, RISK_FILL_OPACITY)
     }
+  }
+
+  # Layer change keeps the current view.
+  observeEvent(input$risk_layer, ignoreInit = TRUE, risk_repaint())
+
+  # State filter: zoom to the state, fade the rest, and leave any drilled-in tract view.
+  observeEvent(input$risk_state, ignoreInit = TRUE, {
+    req(rv$county_layers)
+    rv$county_layers <- risk_view(rv$county_layers, input$risk_state, input$risk_rescale)
+    rv$risk_tracts <- NULL
+    rv$risk_sel <- NULL
+    leaflet::leafletProxy("risk_map") %>%
+      leaflet::clearGroup("tracts") %>%
+      fit_to_state(rv$county_layers, input$risk_state)
+    risk_repaint()
+  })
+
+  observeEvent(input$risk_rescale, ignoreInit = TRUE, {
+    req(rv$county_layers)
+    rv$county_layers <- risk_view(rv$county_layers, input$risk_state, input$risk_rescale)
+    risk_repaint()
+  })
+
+  # What the selected layer measures, in one line.
+  output$risk_layer_help <- renderUI({
+    req(input$risk_layer)
+    div(style = "color:#9aa3b2;font-size:11px;line-height:1.5;margin:-4px 0 12px;",
+        icon("info-circle", style = "color:#00b4d8;"), " ", risk_layer_help(input$risk_layer))
   })
 
   # zoom_geoids: what to fit the view to (the clicked county, or a CBSA's counties).
@@ -1536,9 +1566,23 @@ server <- function(input, output, session) {
     }
   })
 
+  # State choices: filled once the county base exists.
+  observeEvent(rv$risk_ready, {
+    req(rv$county_layers)
+    cl <- sf::st_drop_geometry(rv$county_layers)
+    st <- unique(cl[!is.na(cl$state_name), c("state_fips", "state_name")])
+    st <- st[order(st$state_name), ]
+    updateSelectInput(session, "risk_state", selected = "",
+                      choices = c("All states" = "", stats::setNames(st$state_fips, st$state_name)))
+  })
+
   observe({
     req(rv$county_layers)
     cl <- sf::st_drop_geometry(rv$county_layers)
+    if (nzchar(input$risk_state %||% "")) {
+      keep <- unique(cl$cbsa_geoid[cl$state_fips == input$risk_state])
+      cl <- cl[cl$cbsa_geoid %in% keep, ]
+    }
     cl <- cl[!is.na(cl$cbsa_geoid), ]
     m <- unique(cl[, c("cbsa_geoid", "cbsa_name", "cbsa_type")])
     m <- m[order(m$cbsa_name), ]
@@ -1555,8 +1599,28 @@ server <- function(input, output, session) {
     risk_drill(cl$GEOID[which.max(cl$pop)], zoom_geoids = cl$GEOID)
   })
 
+  # Only offered while tracts are on the map.
+  output$risk_back_counties <- renderUI({
+    req(rv$risk_tracts)
+    actionButton("risk_back_counties_btn", "Back to counties", icon = icon("layer-group"),
+                 style = "width:100%;margin-bottom:8px;")
+  })
+
+  # Drop the tracts but keep the view (zoom and position) and the selected county.
+  observeEvent(input$risk_back_counties_btn, {
+    req(rv$county_layers, rv$risk_tracts)
+    rv$risk_tracts <- NULL
+    if (!is.null(rv$risk_sel) && rv$risk_sel$level == "tract") {
+      rv$risk_sel <- list(level = "county", geoid = substr(rv$risk_sel$geoid, 1, 5))
+    }
+    leaflet::clearGroup(leaflet::leafletProxy("risk_map"), "tracts")
+    risk_repaint()
+  })
+
   observeEvent(input$risk_back_us, {
     req(rv$county_layers)
+    rv$county_layers <- risk_view(rv$county_layers, "", input$risk_rescale)
+    updateSelectInput(session, "risk_state", selected = "")
     reset_to_us(leaflet::leafletProxy("risk_map"), rv$county_layers, input$risk_layer)
     rv$risk_tracts <- NULL
     rv$risk_sel <- NULL
@@ -1601,6 +1665,80 @@ server <- function(input, output, session) {
                     sources = if (is.null(src)) character(0) else src)
   })
 
+  # ── County / tract data table under the map ─────────────────────────────────
+  # Follows the map: counties for the US or the selected state, the drilled-in frame's
+  # tracts for a tract-level layer. Worst first for the selected layer.
+  risk_table_data <- reactive({
+    req(rv$county_layers, input$risk_layer)
+    layer <- input$risk_layer
+    cfg <- RISK_LAYERS[[layer]]
+    tr <- rv$risk_tracts$tracts
+    if (!is.null(tr) && nrow(tr) > 0 && "tract" %in% cfg$levels) {
+      list(level = "tract", cfg = cfg, df = risk_tract_table(tr, layer),
+           scope = sprintf("tracts %s", tr$frame_label[1]))
+    } else {
+      st <- input$risk_state %||% ""
+      cl <- sf::st_drop_geometry(rv$county_layers)
+      list(level = "county", cfg = cfg, df = risk_county_table(rv$county_layers, layer, st),
+           scope = if (nzchar(st)) cl$state_name[match(st, cl$state_fips)] else "US counties")
+    }
+  })
+
+  output$risk_table <- renderDT({
+    if (!isTRUE(rv$risk_ready)) {
+      return(datatable(data.frame(Message = "Loading county data…"), rownames = FALSE,
+                       options = list(dom = "t")))
+    }
+    tb <- risk_table_data()
+    df <- tb$df; cfg <- tb$cfg
+    unit <- switch(cfg$fmt, "$" = "$", "pp" = "pp", "per1k" = "per 1,000", "score" = "score",
+                   "n" = "workers", "pct_signed" = "% change", "quadrant" = "quadrant", "%")
+    names(df)[names(df) == "Value"] <- sprintf("Value (%s)", unit)
+    vcol <- sprintf("Value (%s)", unit)
+    pcols <- intersect(c("US pct", "State pct", "Metro pct"), names(df))
+    hiw <- cfg$higher_is_worse
+    lo <- if (is.na(hiw)) "#8fd3ff" else if (isTRUE(hiw)) "#51cf66" else "#ff6b6b"
+    hi <- if (is.na(hiw)) "#8fd3ff" else if (isTRUE(hiw)) "#ff6b6b" else "#51cf66"
+    caption <- htmltools::tags$caption(
+      style = "caption-side:top;color:#9aa3b2;font-size:12px;padding:0 0 6px;",
+      sprintf("%s — %s, %d rows. Click a row to open it on the map.",
+              cfg$label, tb$scope, nrow(df)))
+    dt <- datatable(
+      df, rownames = FALSE, caption = caption, class = "table-dark compact stripe",
+      selection = list(mode = "single", target = "row"),
+      options = list(pageLength = 15, dom = "ftp", scrollX = TRUE, order = list(),
+                     columnDefs = list(list(visible = FALSE, targets = 0)))
+    ) %>%
+      formatStyle(columns = names(df), backgroundColor = "#1e2640", color = "#d0d0d0")
+    if (length(pcols)) {
+      dt <- formatStyle(dt, pcols, color = styleInterval(c(20, 80), c(lo, "#d0d0d0", hi)))
+    }
+    digits <- if (is.null(cfg$digits)) 1 else cfg$digits
+    vd <- if (cfg$fmt %in% c("score", "n", "$")) 0 else digits
+    # The quadrant's Value is its name, not a number.
+    if (!identical(cfg$fmt, "quadrant")) dt <- formatRound(dt, vcol, vd)
+    if (tb$level == "county") {
+      dt <- dt %>%
+        formatRound(c("Unemp. now (%)", "Unemp. vs yr ago (pp)", "Net dom. migration /1k"), 1) %>%
+        formatRound("Stress ahead (pp)", 2) %>%
+        formatRound(c("Assistance score", "Credit score", "Population"), 0)
+    }
+    dt
+  })
+
+  # A row click does what a map click does.
+  observeEvent(input$risk_table_rows_selected, {
+    idx <- input$risk_table_rows_selected
+    req(idx, rv$county_layers)
+    id <- risk_table_data()$df$GEOID[idx]
+    req(length(id) == 1)
+    if (nchar(id) == 5) {
+      risk_drill(id)
+    } else if (nchar(id) == 11) {
+      rv$risk_sel <- list(level = "tract", geoid = id)
+    }
+  })
+
   # Metro CBSA rankings table
   output$tbl_metro_cbsa <- renderDT({
     if (is.null(rv$metro_data) || nrow(rv$metro_data) == 0) {
@@ -1612,6 +1750,7 @@ server <- function(input, output, session) {
     mig <- if (!is.null(rv$county_layers)) cbsa_migration(rv$county_layers) else
       data.frame(cbsa_geoid = character(0), mig_dom_rate = numeric(0))
     df <- rv$metro_data %>%
+      dplyr::filter(pop > 250000) %>%        # the table is major metros; the AI covers micros too
       left_join(mig, by = c("GEOID" = "cbsa_geoid")) %>%
       transmute(
         Metro = metro,
@@ -1643,44 +1782,69 @@ server <- function(input, output, session) {
       )
   })
 
-  # ── Populate metro selector when metro_data loads ────────────────────────────
-  observe({
-    req(rv$metro_data)
-    choices <- sort(rv$metro_data$metro)
-    updateSelectInput(
-      session,
-      "metro_ai_select",
-      choices = choices,
-      selected = choices[1]
-    )
+  # ── Metro AI analysis ─────────────────────────────────────────────────────────
+  # Follows "Jump to metro" (metro or micro area); with nothing jumped to, the area of the
+  # county clicked on the map.
+  rv_metro_ai <- reactiveValues(text = NULL, geoid = NULL, label = NULL)
+
+  metro_ai_tgt <- reactive({
+    req(rv$county_layers)
+    sel_county <- if (!is.null(rv$risk_sel)) substr(rv$risk_sel$geoid, 1, 5) else NULL
+    metro_ai_target(rv$county_layers, input$risk_jump_metro, sel_county)
+  })
+  metro_ai_label <- function(t) paste(t$name, t$type)
+
+  output$metro_ai_target <- renderUI({
+    t <- if (is.null(rv$county_layers)) NULL else metro_ai_tgt()
+    if (is.null(t)) {
+      div(style = "color:#9aa3b2;font-size:12px;",
+          tags$b("Area to analyse"), tags$br(),
+          "Choose one with Jump to metro above, or click a county that sits in a metro or micro area.")
+    } else {
+      div(style = "color:#d0d0d0;font-size:13px;",
+          tags$span(style = "color:#9aa3b2;font-size:11px;text-transform:uppercase;letter-spacing:1px;",
+                    "Area to analyse"), tags$br(),
+          tags$b(metro_ai_label(t)),
+          tags$span(style = "color:#9aa3b2;font-size:11px;",
+                    sprintf(" · %d count%s · from %s", t$counties, if (t$counties == 1) "y" else "ies",
+                            if (t$source == "jump") "Jump to metro" else "the selected county")))
+    }
   })
 
-  # ── Metro AI analysis ─────────────────────────────────────────────────────────
-  rv_metro_ai <- reactiveValues(text = NULL)
-
   observeEvent(input$btn_metro_ai, {
-    req(rv$metro_data, input$metro_ai_select, rv$kpis)
+    req(rv$county_layers)
     rv_metro_ai$text <- NULL
+    tgt <- metro_ai_tgt()
+    if (is.null(tgt)) {
+      rv_metro_ai$text <- "Choose a metro or micro area with **Jump to metro** (or click a county inside one), then generate."
+      return()
+    }
+    if (is.null(rv$kpis)) {
+      rv_metro_ai$text <- "Macro data is still loading; try again in a moment."
+      return()
+    }
 
     withProgress(
-      message = paste("Analysing", input$metro_ai_select, "…"),
+      message = paste("Analysing", metro_ai_label(tgt), "…"),
       value = 0.2,
       {
-        # Find selected metro row
-        metro_row <- rv$metro_data %>%
-          dplyr::filter(metro == input$metro_ai_select) %>%
-          dplyr::slice(1)
-
-        if (nrow(metro_row) == 0) {
-          rv_metro_ai$text <- "Metro not found in dataset."
-          return()
-        }
-
+        # ACS row for the area; an all-NA row (name and type from the map) when ACS has none.
+        metro_row <- metro_acs_row(rv$metro_data, tgt$geoid, tgt$name, tgt$type)
+        if (is.na(metro_row$cbsa_type[1])) metro_row$cbsa_type <- tgt$type
         us_avg <- attr(rv$metro_data, "us_avg") %||% list()
         incProgress(0.2, detail = "Building structured summary…")
 
+        risk_ctx <- tryCatch(
+          metro_risk_context(rv$county_layers, tgt$geoid, selected_county = tgt$selected_county),
+          error = function(e) {
+            message("[Metro AI] metro_risk_context: ", e$message)
+            NULL
+          }
+        )
+        peers <- tryCatch(metro_peer_context(rv$metro_data, tgt$geoid),
+                          error = function(e) { message("[Metro AI] peers: ", e$message); NULL })
         summary_obj <- tryCatch(
-          build_metro_summary(metro_row, us_avg, kpis = rv$kpis),
+          build_metro_summary(metro_row, us_avg, kpis = rv$kpis, risk = risk_ctx, peers = peers),
           error = function(e) {
             message("[Metro AI] build_metro_summary: ", e$message)
             NULL
@@ -1700,12 +1864,14 @@ server <- function(input, output, session) {
             messages = list(list(role = "user", content = prompt)),
             provider = input$llm_provider,
             model = input$llm_model,
-            max_tokens = 1200,
+            max_tokens = 1700,
             temperature = 0.55
           ),
           error = function(e) paste0("LLM error: ", e$message)
         )
         incProgress(1)
+        rv_metro_ai$geoid <- tgt$geoid
+        rv_metro_ai$label <- metro_ai_label(tgt)
         rv_metro_ai$text <- result
       }
     )
@@ -1719,22 +1885,30 @@ server <- function(input, output, session) {
           "robot",
           style = "font-size:28px;color:#2a3042;display:block;margin-bottom:10px;"
         ),
-        "Select a metro and click Generate to get a structured economic assessment.",
+        "Pick a metro or micro area with Jump to metro and click Generate to get a structured economic assessment.",
         tags$br(),
         div(
           style = "color:#555;font-size:11px;margin-top:8px;",
-          "Powered by ACS 5-year data + national macro context + news headlines"
+          "Powered by ACS 5-year data + Regional Risk layers + national macro context + news headlines"
         )
       )
     } else {
-      div(
-        id = "metro_ai_output",
-        style = "background:#1e2640;border-radius:8px;padding:18px;font-size:13px;
-                   line-height:1.75;color:#d0d0d0;max-height:500px;overflow-y:auto;",
-        HTML(markdown::markdownToHTML(
-          text = rv_metro_ai$text,
-          fragment.only = TRUE
-        ))
+      tgt <- tryCatch(metro_ai_tgt(), error = function(e) NULL)
+      stale <- !is.null(rv_metro_ai$geoid) && !identical(tgt$geoid, rv_metro_ai$geoid)
+      tagList(
+        if (!is.null(rv_metro_ai$label))
+          div(style = "color:#9aa3b2;font-size:11px;margin-bottom:6px;",
+              "Analysis for ", tags$b(style = "color:#d0d0d0;", rv_metro_ai$label),
+              if (stale) tags$span(style = "color:#f4a261;", " — selection changed, click Generate to refresh")),
+        div(
+          id = "metro_ai_output",
+          style = "background:#1e2640;border-radius:8px;padding:18px;font-size:13px;
+                     line-height:1.75;color:#d0d0d0;max-height:500px;overflow-y:auto;",
+          HTML(markdown::markdownToHTML(
+            text = rv_metro_ai$text,
+            fragment.only = TRUE
+          ))
+        )
       )
     }
   })

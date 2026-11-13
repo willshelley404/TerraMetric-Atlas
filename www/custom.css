@@ -432,6 +432,14 @@ table.dataTable tbody td {
   filter: invert(100%) hue-rotate(180deg) brightness(95%) contrast(90%);
 }
 
+/* Regional Risk: a light, desaturated basemap so the translucent fills read cleanly. */
+#risk_map.leaflet-container {
+  background: #e4e9ef !important;
+}
+#risk_map .leaflet-tile-pane {
+  filter: grayscale(100%) brightness(104%) contrast(88%);
+}
+
 .leaflet-popup-content-wrapper {
   background: #1e2640 !important;
   color: #d0d0d0 !important;

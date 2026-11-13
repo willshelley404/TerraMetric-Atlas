@@ -73,7 +73,7 @@ test_that("migration legend uses per-1,000 bin labels", {
   lg <- Filter(function(cl) cl$method == "addLegend", m$x$calls)[[1]]$args[[1]]
   expect_true(grepl("Census PEP, V2025, 2024–25", lg$title, fixed = TRUE))
   labs <- as.character(unclass(lg$labels))
-  expect_equal(labs[c(1, 5, 9)], c("below −10", "−0.5 to +0.5", "above +10"))
+  expect_equal(labs[c(1, 5, 9)], c("above +10", "−0.5 to +0.5", "below −10"))   # neutral: high on top
 })
 
 test_that("risk_drivers_vec matches the single drivers block", {
