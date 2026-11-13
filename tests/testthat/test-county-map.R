@@ -43,7 +43,8 @@ test_that("base tiles need no API key", {
 test_that("Stress now legend uses readable open-ended bins", {
   m <- build_risk_county_map(build_county_layers(fx_county_base(), fx_momentum()), "stress_now")
   labs <- as.character(unclass(map_calls(m, "addLegend")[[1]]$args[[1]]$labels))  # leaflet wraps in I()
-  expect_equal(labs[c(1, 7)], c("below −1.0 pp", "above +1.0 pp (Sahm-style trigger)"))
+  # worst on top: high is worse for unemployment momentum
+  expect_equal(labs[c(1, 7)], c("above +1.0 pp (Sahm-style trigger)", "below −1.0 pp"))
   expect_false(any(grepl("50", labs)))
 })
 

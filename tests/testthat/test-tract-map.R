@@ -23,7 +23,7 @@ test_that("tract layer uses tract GEOID layerIds and dims counties", {
   expect_length(tr, 1)
   expect_equal(tr[[1]]$args[[2]], c("13295020300", "13295020400"))
   co <- calls_in_group(m, "counties")
-  expect_equal(co[[length(co)]]$args[[4]]$fillOpacity, 0.25)
+  expect_equal(co[[length(co)]]$args[[4]]$fillOpacity, RISK_DIM_OPACITY)
   # On a leaflet object fitBounds is stored in x$fitBounds (on a proxy it is a call).
   expect_equal(unlist(m$x$fitBounds)[1:4], c(34.5, -85.2, 34.6, -84.9), tolerance = 1e-6)
 })
@@ -61,12 +61,24 @@ test_that("fit_to_counties zooms to the given counties, not the whole frame", {
   expect_equal(unlist(m$x$fitBounds)[1:4], c(34, -85, 35, -84), tolerance = 1e-6)
 })
 
-test_that("county-only layer adds no tracts", {
+test_that("county-only layer still draws tracts, coloured by a tract-level fallback", {
   m <- add_tract_layer(build_risk_county_map(fx_layers(), "stress_now"),
                        fx_tracts(), "stress_now", fx_layers())
+  expect_length(calls_in_group(m, "tracts"), 1)
+  expect_true(.tract_fallback_id(fx_tracts()) %in% names(RISK_LAYERS))
+  expect_true("tract" %in% RISK_LAYERS[[.tract_fallback_id(fx_tracts())]]$levels)
+  co <- calls_in_group(m, "counties")
+  expect_equal(co[[length(co)]]$args[[4]]$fillOpacity, RISK_DIM_OPACITY)
+  legend <- Filter(function(cl) cl$method == "addLegend", m$x$calls)
+  expect_match(as.character(legend[[length(legend)]]$args[[1]]$title), "county-only layer")
+})
+
+test_that("no tracts loaded restores the counties for a county-only layer", {
+  m <- add_tract_layer(build_risk_county_map(fx_layers(), "stress_now"),
+                       NULL, "stress_now", fx_layers())
   expect_length(calls_in_group(m, "tracts"), 0)
   co <- calls_in_group(m, "counties")
-  expect_equal(co[[length(co)]]$args[[4]]$fillOpacity, 0.82)
+  expect_equal(co[[length(co)]]$args[[4]]$fillOpacity, RISK_FILL_OPACITY)
 })
 
 test_that("tract tooltip shows labor-market rank and state rank", {
@@ -84,6 +96,6 @@ test_that("reset_to_us clears tracts and restores the US view", {
   methods <- vapply(m$x$calls, `[[`, "", "method")
   expect_true("clearGroup" %in% methods)
   co <- calls_in_group(m, "counties")
-  expect_equal(co[[length(co)]]$args[[4]]$fillOpacity, 0.82)
+  expect_equal(co[[length(co)]]$args[[4]]$fillOpacity, RISK_FILL_OPACITY)
   expect_equal(m$x$setView[[1]], c(38, -96))
 })

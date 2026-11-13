@@ -29,6 +29,7 @@ cran_packages <- c(
   "fredr",
   "tidyquant",
   "tidycensus",
+  "zipcodeR",
   # API / HTTP
   "httr2",
   "jsonlite",

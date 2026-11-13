@@ -5,13 +5,16 @@ suppressPackageStartupMessages({
   library(htmltools)
 })
 
-for (f in c("data_census.R", "data_risk.R", "risk_metrics.R", "map_risk.R")) {
+for (f in c("data_census.R", "zip_lookup.R", "data_risk.R", "risk_metrics.R", "map_risk.R")) {
   p <- file.path("..", "..", "R", f)
   if (file.exists(p)) source(p, local = FALSE)
 }
 
 # Tests never read the repo's starter copy unless they pass seed_dir explicitly.
 options(risk.seed_dir = "")
+
+# Most tests read the full hover block; compact hover labels are tested on their own.
+options(risk.hover_detail = TRUE)
 
 # One row of wide ACS output with every *E column .derive_metrics() reads.
 make_acs_wide <- function(...) {

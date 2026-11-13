@@ -419,6 +419,10 @@ fetch_county_base <- function(year = NULL) {
   } else {
     for (col in .ACS_METRIC_COLS) out[[col]] <- NA_real_
   }
+  # ZIPs for the hover label; a failed lookup leaves them NA and the label omits them.
+  z <- zips_by_polygon(out)
+  out$zip_list <- z$zip_list
+  out$zip_n <- z$zip_n
   attr(out, "acs_year") <- year
   attr(out, "fetched_at") <- attr(shapes, "fetched_at")
   out
