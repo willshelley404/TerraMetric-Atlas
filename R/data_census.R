@@ -319,7 +319,9 @@ metro_acs_row <- function(metro_data, geoid, name = NA_character_, type = NA_cha
 }
 
 # ── Metro AI prompt builder ────────────────────────────────────────────────────
-build_metro_prompt <- function(summary_obj, news_headlines = "N/A") {
+build_metro_prompt <- function(summary_obj, news_headlines = "N/A", forward_text = NULL) {
+  fwd <- if (!is.null(forward_text) && nzchar(forward_text)) paste0(
+    "\n\nNational forward-looking context (identical for every area):\n", forward_text) else ""
   paste0(
     "You are a senior macroeconomic analyst specializing in regional US economies.
 ",
@@ -347,6 +349,14 @@ build_metro_prompt <- function(summary_obj, news_headlines = "N/A") {
     "- If regional_risk.selected_county is present, the user picked that county on the map: ",
     "cover it explicitly (how it differs from the rest of the area and from the US).
 ",
+    "- Translate national storylines into local exposure through regional_risk's industry mix: e.g. the AI ",
+    "investment cycle (data-center construction, power, tech and professional services jobs, white-collar ",
+    "layoffs), tariffs and trade (manufacturing, logistics, agriculture), rates (construction, real estate), ",
+    "energy prices. Name which national themes help or hurt this area and why; skip themes with no local link.
+",
+    "- Be forward-looking: make calls about the next 6-12 months, tie them to the national calendar where it ",
+    "fits, and say what would change them.
+",
     "- Use only figures present in the data. Never invent a number.
 
 ",
@@ -356,13 +366,13 @@ build_metro_prompt <- function(summary_obj, news_headlines = "N/A") {
     "
 
 Recent National Economic News:
-", news_headlines,
+", news_headlines, fwd,
     "
 
 Provide output in EXACTLY these sections (concise, specific, no filler):",
     "
 ## Executive Summary
-2-3 sentences. Lead with the most distinctive economic characteristic.",
+2-3 sentences. Lead with the most distinctive economic characteristic and where the area is heading.",
     "
 ## Key Strengths
 Bullet list. Only genuine relative advantages (vs US and vs peers).",
@@ -370,12 +380,18 @@ Bullet list. Only genuine relative advantages (vs US and vs peers).",
 ## Key Risks
 Bullet list. Only genuine concerns with evidence from the data.",
     "
-## Economic Outlook (3-6 months)
+## National Themes, Local Impact
+Bullet list: the 2-4 national storylines (from news themes and forward signals) that most affect this ",
+    "area through its industry mix, each marked tailwind or headwind, with the mechanism.",
+    "
+## Economic Outlook (6-12 months)
 Build on stress ahead, unemployment momentum, credit and assistance signals; ",
-    "link national conditions (rates, inflation, news) to local impact.",
+    "link national conditions (rates, inflation, AI investment, trade, news) to local impact. ",
+    "Give a clear direction call (improving / stable / deteriorating vs the US) and what would flip it.",
     "
 ## Watch Items
-Top 2-3 metrics to monitor with specific threshold values.",
+Top 2-3 metrics to monitor with specific threshold values, and the national release date that ",
+    "matters most for each where one fits.",
     "
 ## Data Notes
 One or two lines: anything missing, stale, or less reliable (e.g. micro-area sampling noise)."

@@ -134,6 +134,14 @@ server <- function(input, output, session) {
       error = function(e) message("News load error: ", e$message)
     )
 
+    # Forward-looking context for the AI prompts (breakevens, leading indicators, release calendar)
+    tryCatch(
+      {
+        rv$forward <- load_forward_context(rv$kpis, rv$fred_model)
+      },
+      error = function(e) message("Forward context load error: ", e$message)
+    )
+
     # Forecasts (lazy – only when Forecasting tab is visited)
     # Census (lazy – only when Metro Map tab is visited)
     rv$data_loaded <- TRUE
@@ -242,7 +250,9 @@ server <- function(input, output, session) {
   })
   output$kpi_cpi_chg <- renderUI({
     req(rv$kpis)
-    HTML(pct_badge(rv$kpis$cpi_yoy %||% NA - 2, "vs 2% target", FALSE))
+    a <- rv$kpis$cpi_yoy_asof
+    HTML(pct_badge(rv$kpis$cpi_yoy %||% NA - 2,
+                   paste0("vs 2% target", if (!is.null(a)) format(a, " · %b data") else ""), FALSE))
   })
 
   output$kpi_fedfunds <- renderText({
@@ -1857,7 +1867,8 @@ server <- function(input, output, session) {
         }
 
         news_ctx <- headlines_for_llm(rv$news_data, n = 15)
-        prompt <- build_metro_prompt(summary_obj, news_ctx)
+        prompt <- build_metro_prompt(summary_obj, news_ctx,
+                                     tryCatch(forward_context_text(rv$forward), error = function(e) NULL))
 
         incProgress(0.3, detail = "Calling LLM…")
         result <- tryCatch(
@@ -1865,7 +1876,7 @@ server <- function(input, output, session) {
             messages = list(list(role = "user", content = prompt)),
             provider = input$llm_provider,
             model = input$llm_model,
-            max_tokens = 1700,
+            max_tokens = 2200,
             temperature = 0.55
           ),
           error = function(e) paste0("LLM error: ", e$message)
@@ -2123,12 +2134,16 @@ server <- function(input, output, session) {
           news_df = rv$news_data,
           outlook = tryCatch(growth_outlook(), error = function(e) NULL),
           forecasts = rv$forecasts,
+          forward_ctx = rv$forward,
+          prev_calls = tryCatch(previous_llm_calls(), error = function(e) NULL),
           provider = input$llm_provider,
           model = input$llm_model
         ),
         error = function(e) paste0("Error: ", e$message)
       )
       incProgress(0.6, detail = "Rendering…")
+      # Keep this run's "Calls to Track" so a later run can grade them
+      tryCatch(record_llm_calls(result), error = function(e) NULL)
       rv$llm_text <- result
       incProgress(1)
     })
@@ -2147,11 +2162,23 @@ server <- function(input, output, session) {
         "The AI will provide macro analysis, scenario modelling, and risk assessment."
       )
     } else {
-      div(
-        id = "llm_output",
-        HTML(markdown::markdownToHTML(text = rv$llm_text, fragment.only = TRUE))
-      )
+      ev <- tryCatch(insight_evidence(), error = function(e) {
+        message("[AI charts] ", conditionMessage(e)); list() })
+      tryCatch(insights_ui(rv$llm_text, ev), error = function(e) {
+        message("[AI charts] insights_ui: ", conditionMessage(e))
+        div(id = "llm_output",
+            HTML(markdown::markdownToHTML(text = strip_chart_tags(rv$llm_text), fragment.only = TRUE)))
+      })
     }
+  })
+
+  # Evidence for the current insights: theme coverage + the charts the AI chose
+  # for its themes and calls (FRED and market data only, never AI-written numbers)
+  insight_evidence <- reactive({
+    req(rv$llm_text)
+    build_insight_evidence(rv$llm_text,
+                           list(fred = rv$fred_model, fwd = rv$forward$series, mkt = rv$mkt_returns),
+                           news_df = rv$news_data)
   })
 
   # Quick Q&A — multi-turn; history lives in rv$chat_history for this session
@@ -2165,9 +2192,10 @@ server <- function(input, output, session) {
           kpis = rv$kpis,
           news_df = rv$news_data,
           history = rv$chat_history,
-          insights = rv$llm_text,
+          insights = strip_chart_tags(rv$llm_text),
           outlook = tryCatch(growth_outlook(), error = function(e) NULL),
           forecasts = rv$forecasts,
+          forward_ctx = rv$forward,
           provider = input$llm_provider,
           model = input$llm_model
         ),
@@ -2293,8 +2321,15 @@ server <- function(input, output, session) {
     ok <- function(x) is.character(x) && length(x) == 1 && !grepl("^(LLM )?[Ee]rror:", x)
     # Metro text is a placeholder message until an analysis succeeds (geoid is then set).
     metro <- if (!is.null(rv_metro_ai$geoid) && ok(rv_metro_ai$text)) rv_metro_ai$text else NULL
+    ev <- if (ok(rv$llm_text)) tryCatch(insight_evidence(), error = function(e) NULL)
+    svg <- function(chs, label = "Call") vapply(chs, function(ch) tryCatch(ai_chart_svg(ch, label = label), error = function(e) ""), "")
     export_ai_html(
-      insights = if (ok(rv$llm_text)) rv$llm_text else NULL,
+      insights = if (ok(rv$llm_text)) strip_chart_tags(rv$llm_text) else NULL,
+      charts = if (is.null(ev)) list() else list(
+        themes = c(if (!is.null(ev$themes$coverage)) tryCatch(theme_coverage_svg(ev$themes$coverage),
+                                                              error = function(e) ""),
+                   svg(ev$themes$charts, "Theme")),
+        calls = svg(ev$calls)),
       metro_text = metro, metro_label = rv_metro_ai$label,
       chat = rv$chat_history,
       provider = input$llm_provider, model = input$llm_model,

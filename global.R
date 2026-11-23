@@ -103,8 +103,8 @@ BLS_LABELS <- c(
 )
 
 # ── Market Tickers ─────────────────────────────────────────────────────────────
-EQUITY_TICKERS   <- c("SPY","QQQ","IWM","DIA")
-SECTOR_TICKERS   <- c("XLF","XLE","XLK","XLV","XLI","XLY","XLP","XLB","XLRE","XLC")
+EQUITY_TICKERS   <- c("SPY","QQQ","IWM","DIA","SMH")
+SECTOR_TICKERS   <- c("XLF","XLE","XLK","XLV","XLI","XLY","XLP","XLB","XLRE","XLC","XLU")
 COMMODITY_TICKERS<- c("GLD","USO","SLV")
 BOND_TICKERS     <- c("TLT","IEF","HYG","LQD")
 ALL_TICKERS      <- c(EQUITY_TICKERS, SECTOR_TICKERS, COMMODITY_TICKERS, BOND_TICKERS)
@@ -113,7 +113,7 @@ TICKER_LABELS <- c(
   SPY="S&P 500", QQQ="Nasdaq 100", IWM="Russell 2000", DIA="Dow Jones",
   XLF="Financials", XLE="Energy", XLK="Technology", XLV="Healthcare",
   XLI="Industrials", XLY="Cons. Disc.", XLP="Cons. Staples", XLB="Materials",
-  XLRE="Real Estate", XLC="Comm. Svcs.",
+  XLRE="Real Estate", XLC="Comm. Svcs.", XLU="Utilities", SMH="Semiconductors",
   GLD="Gold ETF", USO="Oil ETF", SLV="Silver ETF",
   TLT="LT Treasury", IEF="7-10Y Tsy.", HYG="High Yield", LQD="Inv. Grade"
 )

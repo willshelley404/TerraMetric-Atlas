@@ -97,22 +97,32 @@ latest_val <- function(dlist, sid) {
   df$value[nrow(df)]
 }
 
-#' YoY percent change (approx 12 monthly periods)
-yoy_val <- function(dlist, sid, lag_months = 12) {
+#' YoY percent change against the observation `lag_months` earlier (within
+#' `tol_days`). When the latest observation has no such match (FRED has no
+#' Oct 2025 CPI after the shutdown, so Oct 2026 has no year-ago month), it steps
+#' back up to `max_back` observations to the latest one that does, rather than
+#' comparing across 13 months. attr "as_of" = the observation the change is for.
+yoy_val <- function(dlist, sid, lag_months = 12, tol_days = 7, max_back = 3) {
   df <- dlist[[sid]]
   if (is.null(df) || nrow(df) < (lag_months + 1)) {
     return(NA_real_)
   }
   df <- df %>% arrange(date)
   n <- nrow(df)
-  # Find observation ~12 months ago
-  target <- df$date[n] - months(lag_months)
-  past_idx <- which.min(abs(as.numeric(df$date - target)))
-  if (abs(as.numeric(df$date[past_idx] - target)) > 60) {
-    return(NA_real_)
+  for (i in seq(n, max(1, n - max_back))) {
+    target <- df$date[i] %m-% months(lag_months)
+    past_idx <- which.min(abs(as.numeric(df$date - target)))
+    if (abs(as.numeric(df$date[past_idx] - target)) <= tol_days) {
+      v <- (df$value[i] / df$value[past_idx] - 1) * 100
+      attr(v, "as_of") <- df$date[i]
+      return(v)
+    }
   }
-  (df$value[n] / df$value[past_idx] - 1) * 100
+  NA_real_
 }
+
+# KPIs whose reference month is reported alongside the value (as <name>_asof).
+KPI_ASOF <- c("cpi_yoy", "core_cpi_yoy", "core_pce", "ppi_yoy", "wage_yoy", "retail_yoy", "indpro_yoy")
 
 #' Month-over-month change (absolute)
 mom_val <- function(dlist, sid) {
@@ -209,7 +219,7 @@ patch_wti_realtime <- function(dlist, ticker = "CL=F", lookback_days = 10) {
 
 #' Build dashboard KPI summary from fetched data
 build_kpis <- function(dlist) {
-  list(
+  k <- list(
     # Labor
     unemp_rate = latest_val(dlist, "UNRATE"),
     payrolls_chg = mom_val(dlist, "PAYEMS"),
@@ -235,7 +245,7 @@ build_kpis <- function(dlist) {
     cons_sent = latest_val(dlist, "UMCSENT"),
     indpro_yoy = yoy_val(dlist, "INDPRO"),
     # Macro
-    gdp_yoy = yoy_val(dlist, "GDPC1", lag_months = 4), # quarterly
+    gdp_yoy = yoy_val(dlist, "GDPC1", lag_months = 4, tol_days = 60, max_back = 0), # quarterly (unchanged)
     # Markets — gold comes from GLD ETF via tidyquant (FRED gold series deprecated)
     oil_price = latest_val(dlist, "DCOILWTICO"),
     oil_yoy = yoy_val(dlist, "DCOILWTICO"), # oil price shock signal
@@ -282,6 +292,13 @@ build_kpis <- function(dlist) {
     quits_rate = latest_val(dlist, "JTSQUL"),
     quits_yoy = yoy_val(dlist, "JTSQUL") # quits falling YoY = workers scared
   )
+  # Values stay plain numbers; the reference month goes in <name>_asof
+  for (nm in names(k)) {
+    a <- attr(k[[nm]], "as_of")
+    if (nm %in% KPI_ASOF && !is.null(a)) k[[paste0(nm, "_asof")]] <- a
+    attributes(k[[nm]]) <- NULL
+  }
+  k
 }
 
 #' Compute correlation matrix between selected FRED series
