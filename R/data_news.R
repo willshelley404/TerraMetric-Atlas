@@ -76,7 +76,7 @@ KW_WEIGHTS <- c(
   "housing supply" = 4,
   "home prices" = 3,
   "housing bills" = 3,
-  "rent" = 2,
+  " rent " = 2,
   "vacancy" = 2,
   "affordability" = 3, # also in housing context
 
@@ -131,6 +131,43 @@ KW_WEIGHTS <- c(
   "manufacturing" = 2,
   "industrial" = 2,
 
+  # ── Tech / AI (investment cycle, power, chips, labor displacement) ───────────
+  "artificial intelligence" = 4,
+  " ai " = 3,
+  "generative ai" = 3,
+  "ai spending" = 4,
+  "ai investment" = 4,
+  "ai bubble" = 4,
+  "data center" = 4,
+  "datacenter" = 4,
+  "hyperscaler" = 4,
+  "capex" = 3,
+  "capital spending" = 3,
+  "nvidia" = 3,
+  "semiconductor" = 3,
+  "chip" = 2,
+  "export control" = 4,
+  "power demand" = 4,
+  "electricity" = 3,
+  "power grid" = 3,
+  "layoffs" = 3,
+  "job cuts" = 3,
+  "white collar" = 3,
+  "automation" = 2,
+  "productivity" = 3,
+
+  # ── Forward-looking language (expectations beat recaps) ──────────────────────
+  "outlook" = 2,
+  "forecast" = 2,
+  "expects" = 2,
+  "expected to" = 2,
+  "guidance" = 3,
+  "plans to" = 2,
+  "signals" = 2,
+  "warns" = 2,
+  "next year" = 2,
+  "2027" = 2,
+
   # ── General (low weight) ──────────────────────────────────────────────────────
   "economy" = 1,
   "market" = 1,
@@ -150,12 +187,18 @@ SUPPLY_CHAIN_CHAINS <- list(
   "oil price" = "Oil → diesel/petrol → trucking/shipping costs → food + retail prices → CPI headline; also airline costs, plastics, chemicals",
   "freight" = "Shipping rates (Baltic Dry, Freightos) → import costs → retail goods prices → core CPI with ~2-month lag",
   "tariff" = "Import duties → domestic producer price relief, consumer price increase → CPI goods, retaliation risk to exports",
-  "trade war" = "Broad tariffs → supply chain restructuring → near-term inflation, medium-term efficiency losses → GDP drag"
+  "trade war" = "Broad tariffs → supply chain restructuring → near-term inflation, medium-term efficiency losses → GDP drag",
+  "data center" = "AI data-center buildout → business investment (equipment + structures) props up GDP → power demand → utility capex, electricity prices (CPI energy) → regional construction jobs",
+  "hyperscaler" = "Hyperscaler capex guidance → AI investment cycle → chip/equipment orders, GDP investment component; a guidance cut is an early read on an AI-spending slowdown",
+  "export control" = "Chip export restrictions → semiconductor supply/revenue shock → tech earnings, retaliation risk on critical minerals",
+  "power demand" = "AI and electrification load growth → grid strain → electricity rates (CPI) → utility investment, siting of data centers",
+  "layoffs" = "Announced job cuts → initial claims with ~1-2 month lag → unemployment; white-collar/tech cuts hit high-income spending first"
 )
 
 # ── Score articles ─────────────────────────────────────────────────────────────
 score_relevance <- function(titles, descs) {
-  text <- tolower(paste(titles, descs))
+  # Padded so word-bounded keys like " ai " match at the start/end of a title
+  text <- paste0(" ", gsub("[[:punct:]]", " ", tolower(paste(titles, descs))), " ")
   scores <- numeric(length(text))
   for (kw in names(KW_WEIGHTS)) {
     scores <- scores +
@@ -180,6 +223,102 @@ detect_chains <- function(title, desc) {
   paste(matches, collapse = "; ")
 }
 
+# ── Themes ────────────────────────────────────────────────────────────────────
+# Keyword groups for counting how much coverage each storyline gets. Matched on
+# padded, punctuation-stripped lowercase text (same as score_relevance).
+NEWS_THEMES <- list(
+  "Fed & rates"                 = c("federal reserve", "fomc", "rate cut", "rate hike", "powell", "interest rate", "fed "),
+  "Inflation & prices"          = c("inflation", "cpi", "pce", "cost of living", "price pressure", "affordability"),
+  "Labor market"                = c("jobs report", "payrolls", "unemployment", "labor market", "job openings", "hiring", "jobless"),
+  "Layoffs & job cuts"          = c("layoffs", "job cuts", "laid off", "white collar", "hiring freeze", "workforce reduction"),
+  "AI investment & data centers"= c("artificial intelligence", " ai ", "data center", "datacenter", "hyperscaler",
+                                    "ai spending", "ai investment", "capex", "ai bubble"),
+  "Chips & export controls"     = c("semiconductor", "chip", "nvidia", "tsmc", "export control"),
+  "Power & grid"                = c("power demand", "electricity", "power grid", "utility", "utilities", "nuclear"),
+  "Trade & tariffs"             = c("tariff", "trade war", "trade deal", "sanctions", "embargo"),
+  "Energy & geopolitics"        = c("oil price", "opec", "crude", "natural gas", "strait of hormuz", "red sea", "geopolitical"),
+  "Housing"                     = c("housing", "mortgage", "home prices", " rent ", " rents "),
+  "Consumer"                    = c("consumer spending", "retail sales", "consumer confidence", "consumer sentiment", "holiday sales"),
+  "Credit & financial stress"   = c("credit spread", "default", "private credit", "delinquen", "bank failure", "bankruptcy"),
+  "Fiscal & government"         = c("shutdown", "deficit", "debt ceiling", "fiscal", "budget", "treasury auction")
+)
+NEWS_TECH_THEMES <- c("AI investment & data centers", "Chips & export controls", "Power & grid")
+
+.news_text <- function(title, desc) {
+  if (!length(title)) return(character(0))
+  desc[is.na(desc)] <- ""
+  paste0(" ", gsub("[[:punct:]]", " ", tolower(paste(title, desc))), " ")
+}
+
+#' "; "-joined theme names per article (NA when none match).
+news_themes <- function(title, desc) {
+  if (!length(title)) return(character(0))
+  text <- .news_text(title, desc)
+  hits <- vapply(NEWS_THEMES, function(kws)
+    Reduce(`|`, lapply(kws, function(k) grepl(k, text, fixed = TRUE))), logical(length(text)))
+  if (length(text) == 1) hits <- matrix(hits, nrow = 1, dimnames = list(NULL, names(NEWS_THEMES)))
+  out <- apply(hits, 1, function(r) if (any(r)) paste(names(NEWS_THEMES)[r], collapse = "; ") else NA_character_)
+  unname(out)
+}
+
+#' "tech" when an article touches a tech/AI theme, else "macro".
+news_topic <- function(title, desc) {
+  th <- news_themes(title, desc)
+  ifelse(!is.na(th) & grepl(paste(NEWS_TECH_THEMES, collapse = "|"), th), "tech", "macro")
+}
+
+#' Collapse near-duplicate headlines (same first 8 words) across sources and days.
+#' Keeps the most relevant copy; days_in_cache = distinct days the story ran.
+dedupe_news <- function(df) {
+  if (is.null(df) || !nrow(df)) return(df)
+  key <- vapply(strsplit(trimws(gsub("[^a-z0-9 ]", " ", tolower(df$title))), " +"),
+                function(w) paste(utils::head(w, 8), collapse = " "), "")
+  df$.key <- key
+  df %>%
+    dplyr::group_by(.key) %>%
+    dplyr::mutate(days_in_cache = dplyr::n_distinct(as.Date(published))) %>%
+    dplyr::arrange(dplyr::desc(relevance_score), dplyr::desc(published), .by_group = TRUE) %>%
+    dplyr::slice_head(n = 1) %>%
+    dplyr::ungroup() %>%
+    dplyr::select(-.key) %>%
+    dplyr::arrange(dplyr::desc(relevance_score), dplyr::desc(published))
+}
+
+#' Coverage per theme with momentum: articles in the newer half of the observed
+#' window vs the older half. The split is the midpoint of the articles' own ages,
+#' not of `window_hours`, because NewsAPI's free plan delays articles ~24h and a
+#' fixed split would make every theme look like it is fading.
+news_theme_summary <- function(news_df, window_hours = 96) {
+  if (is.null(news_df) || !nrow(news_df) || !"themes" %in% names(news_df)) return(NULL)
+  h <- news_df$hours_ago[!is.na(news_df$hours_ago)]
+  half <- if (length(h)) (min(h) + max(h)) / 2 else window_hours / 2
+  rows <- lapply(names(NEWS_THEMES), function(th) {
+    hit <- !is.na(news_df$themes) & grepl(th, news_df$themes, fixed = TRUE)
+    if (!any(hit)) return(NULL)
+    d <- news_df[hit, ]
+    recent <- sum(d$hours_ago < half, na.rm = TRUE)
+    older <- sum(d$hours_ago >= half, na.rm = TRUE)
+    top <- d$title[order(-d$relevance_score)][seq_len(min(2, nrow(d)))]
+    data.frame(theme = th, n = nrow(d), recent = recent, older = older,
+               momentum = if (recent >= older * 1.5 && recent >= 3) "rising"
+                          else if (older >= recent * 1.5 && older >= 3) "fading" else "steady",
+               top = paste(stringr::str_trunc(top, 90), collapse = " | "), stringsAsFactors = FALSE)
+  })
+  out <- do.call(rbind, rows[!vapply(rows, is.null, TRUE)])
+  if (is.null(out)) return(NULL)
+  out[order(-out$n), ]
+}
+
+news_themes_text <- function(news_df, window_hours = 96) {
+  s <- news_theme_summary(news_df, window_hours)
+  if (is.null(s)) return("NEWS THEMES: unavailable.")
+  paste0(
+    sprintf("NEWS THEMES (articles over the last %dh; momentum = newer half of the coverage window vs older half)\n",
+            window_hours),
+    paste(sprintf("  %-30s %3d articles  %-7s (%d new / %d older)  e.g. %s",
+                  s$theme, s$n, s$momentum, s$recent, s$older, s$top), collapse = "\n"))
+}
+
 # ── Source 1: NewsAPI ─────────────────────────────────────────────────────────
 # Free dev plan = localhost only. Paid plan required for server deployments.
 # Short query avoids HTTP 400 (URL length limit).
@@ -188,6 +327,23 @@ NEWSAPI_SHORT_QUERY <- paste(
   '"trade war" OR tariff OR "housing market" OR "oil price" OR',
   '"interest rates" OR "supply chain" OR "jobs report" OR earnings',
   collapse = " "
+)
+
+# Second NewsAPI call: the tech/AI investment cycle and its labor-market side.
+NEWSAPI_TECH_QUERY <- paste(
+  '"artificial intelligence" OR "AI spending" OR "data center" OR hyperscaler OR',
+  'semiconductor OR nvidia OR "export controls" OR "power demand" OR',
+  '"AI layoffs" OR "job cuts" OR "white-collar" OR "capex"',
+  collapse = " "
+)
+
+# GDELT allows ~1 request per 5 s, so it gets one combined query (OR terms must
+# be parenthesised; bare space-separated words are ANDed).
+GDELT_QUERY <- paste0(
+  '("federal reserve" OR inflation OR recession OR unemployment OR tariff OR ',
+  '"interest rates" OR "jobs report" OR "housing market" OR "oil price" OR ',
+  '"artificial intelligence" OR "data center" OR semiconductor OR "AI spending" OR layoffs) ',
+  'sourcelang:english'
 )
 
 # Domains to exclude from news results — highly partisan sources that
@@ -247,7 +403,17 @@ NEWS_EXCLUDED_DOMAINS <- paste(
     })
 }
 
+#' Macro and tech/AI queries, merged. One failing query does not drop the other.
 fetch_newsapi <- function(days_back = 4, max_articles = 100) {
+  macro <- fetch_newsapi_query(NEWSAPI_SHORT_QUERY, days_back, max_articles)
+  if (identical(macro$error, "key_not_set")) return(macro)
+  tech <- fetch_newsapi_query(NEWSAPI_TECH_QUERY, days_back, max_articles)
+  df <- dplyr::bind_rows(macro$data, tech$data)
+  if (!nrow(df)) return(list(data = NULL, error = macro$error %||% tech$error %||% "no_articles"))
+  list(data = df, error = NULL)
+}
+
+fetch_newsapi_query <- function(query, days_back = 4, max_articles = 100) {
   key <- Sys.getenv("NEWS_API_KEY")
   if (nchar(key) == 0) {
     return(list(data = NULL, error = "key_not_set"))
@@ -257,7 +423,7 @@ fetch_newsapi <- function(days_back = 4, max_articles = 100) {
     {
       resp <- httr2::request("https://newsapi.org/v2/everything") %>%
         httr2::req_url_query(
-          q = NEWSAPI_SHORT_QUERY,
+          q = query,
           excludeDomains = NEWS_EXCLUDED_DOMAINS, # exclude partisan sources
           from = format(Sys.Date() - days_back, "%Y-%m-%d"),
           sortBy = "relevancy",
@@ -325,7 +491,10 @@ fetch_mediastack <- function(days_back = 4, max_articles = 100) {
       "tariff",
       "recession",
       "oil price",
-      "interest rates"
+      "interest rates",
+      "artificial intelligence",
+      "data center",
+      "layoffs"
     ),
     collapse = ","
   )
@@ -394,19 +563,17 @@ fetch_mediastack <- function(days_back = 4, max_articles = 100) {
 # ── Source 3: GDELT ───────────────────────────────────────────────────────────
 # No API key required. Uses simple keyword query — NOT boolean OR syntax.
 # Rate limit: ~1 req/sec sustained. On 429 or HTML response, skip gracefully.
-fetch_gdelt <- function(days_back = 4, max_articles = 50) {
+fetch_gdelt <- function(days_back = 4, max_articles = 150) {
   tryCatch(
     {
-      # Simple space-separated theme query — GDELT handles it well
-      gdelt_q <- "economy inflation unemployment housing interest rates tariff oil recession jobs"
       from_str <- format(Sys.Date() - days_back, "%Y%m%d%H%M%S")
       now_utc <- as.POSIXct(Sys.time(), tz = "UTC")
 
       resp <- httr2::request("https://api.gdeltproject.org/api/v2/doc/doc") %>%
         httr2::req_url_query(
-          query = gdelt_q,
+          query = GDELT_QUERY,
           mode = "artlist",
-          maxrecords = max_articles,
+          maxrecords = min(max_articles, 250),
           startdatetime = from_str,
           sort = "hybridrel",
           format = "json"
@@ -466,7 +633,9 @@ fetch_gdelt <- function(days_back = 4, max_articles = 50) {
       hours_ago = as.numeric(difftime(now_utc, published, units = "hours")),
       days_in_cache = 1L,
       relevance_score = score_relevance(title, description),
-      supply_chain = mapply(detect_chains, title, description, SIMPLIFY = TRUE)
+      supply_chain = mapply(detect_chains, title, description, SIMPLIFY = TRUE),
+      topic = news_topic(title, description),
+      themes = news_themes(title, description)
     ) %>%
     dplyr::filter(
       !is.na(published),
@@ -493,7 +662,7 @@ fetch_news <- function(days_back = 4, max_articles = 80) {
     list(
       name = "GDELT",
       fn = fetch_gdelt,
-      args = list(days_back = days_back, max_articles = max_articles)
+      args = list(days_back = days_back, max_articles = max(max_articles, 150))
     )
   )
 
@@ -503,8 +672,9 @@ fetch_news <- function(days_back = 4, max_articles = 80) {
       error = function(e) list(data = NULL, error = e$message)
     )
     if (!is.null(result$data) && nrow(result$data) > 0) {
-      message(sprintf("[News] %s: %d articles", src$name, nrow(result$data)))
-      return(result$data)
+      df <- dedupe_news(result$data)
+      message(sprintf("[News] %s: %d articles (%d tech/AI)", src$name, nrow(df), sum(df$topic == "tech")))
+      return(df)
     }
     if (!is.null(result$error) && result$error != "key_not_set") {
       message(sprintf("[News] %s failed: %s", src$name, result$error))
@@ -519,7 +689,7 @@ fetch_news <- function(days_back = 4, max_articles = 80) {
 news_full_history <- function(news_df) news_df
 
 # ── Context for LLM — always uses full 10-day history ─────────────────────────
-headlines_for_llm <- function(news_df, n = 25) {
+headlines_for_llm <- function(news_df, n = 25, themes = TRUE) {
   if (is.null(news_df)) {
     return("No recent headlines available.")
   }
@@ -527,6 +697,14 @@ headlines_for_llm <- function(news_df, n = 25) {
   df <- news_full_history(news_df)
   if (nrow(df) == 0) {
     return("No recent headlines available.")
+  }
+
+  # Reserve ~1/3 of the slots for tech/AI so macro keywords don't crowd it out;
+  # unused slots go to the next most relevant articles. Relevance order is kept.
+  if ("topic" %in% names(df)) {
+    tech <- utils::head(which(df$topic == "tech"), max(1, floor(n / 3)))
+    rest <- setdiff(seq_len(nrow(df)), tech)
+    df <- df[sort(c(tech, utils::head(rest, n - length(tech)))), ]
   }
 
   rows <- df %>%
@@ -555,7 +733,7 @@ headlines_for_llm <- function(news_df, n = 25) {
       }
       chain_note <- if (!is.na(r$supply_chain) && nchar(r$supply_chain) > 0) {
         sprintf(
-          "\n   SUPPLY CHAIN IMPACT: %s",
+          "\n   TRANSMISSION: %s",
           paste(
             sapply(strsplit(r$supply_chain, "; ")[[1]], function(k) {
               SUPPLY_CHAIN_CHAINS[[k]] %||% k
@@ -566,6 +744,7 @@ headlines_for_llm <- function(news_df, n = 25) {
       } else {
         ""
       }
+      theme_note <- if (!is.null(r$themes) && !is.na(r$themes)) paste0(" {", r$themes, "}") else ""
       paste0(
         i,
         ". [",
@@ -576,11 +755,13 @@ headlines_for_llm <- function(news_df, n = 25) {
         "] ",
         r$title,
         desc,
+        theme_note,
         chain_note
       )
     },
     character(1)
   )
+  if (isTRUE(themes)) lines <- c(news_themes_text(news_df), "", "TOP HEADLINES", lines)
 
   paste(lines, collapse = "\n")
 }

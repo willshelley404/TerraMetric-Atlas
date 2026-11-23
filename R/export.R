@@ -25,7 +25,7 @@ export_news <- function(news_df) {
   if (is.null(news_df) || nrow(news_df) == 0) return(NULL)
   cols <- intersect(
     c("title", "source_name", "published", "url", "description",
-      "relevance_score", "supply_chain", "days_in_cache"),
+      "relevance_score", "topic", "themes", "supply_chain", "days_in_cache"),
     names(news_df)
   )
   .export_flat(news_df[, cols, drop = FALSE])
@@ -135,7 +135,7 @@ export_kpis <- function(kpis) {
 # no AI text yet.
 export_ai_html <- function(insights = NULL, metro_text = NULL, metro_label = NULL,
                            chat = list(), provider = NULL, model = NULL,
-                           snapshot = NULL, generated = Sys.time()) {
+                           snapshot = NULL, generated = Sys.time(), charts = character()) {
   has <- function(x) is.character(x) && length(x) == 1 && nzchar(x)
   if (!has(insights) && !has(metro_text) && length(chat) == 0) return(NULL)
   esc <- function(x) htmltools::htmlEscape(as.character(x))
@@ -179,7 +179,25 @@ export_ai_html <- function(insights = NULL, metro_text = NULL, metro_label = NUL
 
   sections <- character()
   if (has(insights)) {
-    sections <- c(sections, sprintf("<section><h2 class=\"sec\">Economic insights</h2>%s</section>", md(insights)))
+    # `charts`: list(themes = <svg figures>, calls = <svg figures>), each placed
+    # right after its section; a plain character vector is appended at the end.
+    block <- function(figs, note) {
+      figs <- figs[nzchar(figs)]
+      if (!length(figs)) return("")
+      paste0("<p class=\"meta\"><b>Evidence.</b> ", esc(note), "</p><div class=\"charts\">",
+             paste(figs, collapse = ""), "</div>")
+    }
+    notes <- c(themes = paste("Bars count recent headlines per theme (teal = newer half of the news window);",
+                              "charts are the data the AI chose as evidence, drawn from FRED and market prices."),
+               calls = paste("Drawn from FRED and market data loaded in the app.",
+                             "Dashed orange = the call's threshold; dotted line = its deadline."))
+    body <- if (is.list(charts) && length(charts) && exists("split_md_sections", mode = "function")) {
+      paste(vapply(split_md_sections(insights), function(s) {
+        slot <- evidence_slot(s$heading)
+        paste0(md(s$md), if (!is.na(slot)) block(unlist(charts[[slot]]), notes[[slot]]) else "")
+      }, ""), collapse = "")
+    } else paste0(md(insights), block(unlist(charts), notes[["calls"]]))
+    sections <- c(sections, sprintf("<section><h2 class=\"sec\">Economic insights</h2>%s</section>", body))
   }
   if (has(metro_text)) {
     sections <- c(sections, sprintf(
@@ -237,7 +255,12 @@ code{background:rgba(127,127,127,.15);padding:1px 5px;border-radius:4px;font-siz
 .q{margin:14px 0 6px;padding:6px 12px;border-left:3px solid var(--acc);font-weight:600}
 .a{margin:0 0 6px}
 footer{color:var(--mut);font-size:12px;text-align:center;margin-top:8px}
-@media print{body{background:#fff}section,.card{break-inside:avoid}}
+.charts{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,380px),1fr));gap:14px;margin:12px 0}
+figure.chart{margin:0;border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:var(--card)}
+figure.chart .ct{font-size:13px;font-weight:600;margin-bottom:4px}
+figure.chart svg{width:100%;height:auto;display:block;font-family:inherit}
+figure.chart figcaption{font-size:12px;line-height:1.45;color:var(--mut);margin-top:6px}
+@media print{body{background:#fff}section,.card,figure.chart{break-inside:avoid}}
 "
 
 # ── Tables (workbook sheets) ─────────────────────────────────────────────────

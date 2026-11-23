@@ -35,15 +35,27 @@ call_llm <- function(messages, provider=NULL, model=NULL,
     c(list(list(role="system", content=system)), messages)
   } else messages
 
-  res <- llm_request(pname, model, full_msgs, max_tokens, temperature)
-  if (res$ok || !res$transient) return(res$text)
+  # A model that just failed with 429/5xx is skipped for a few minutes, so the
+  # next call (e.g. chat right after insights) goes straight to the fallback.
+  if (llm_is_down(pname, model)) {
+    message(sprintf("[LLM] %s/%s failed recently — skipping to fallback", pname, model))
+    res <- list(ok = FALSE, transient = TRUE,
+                text = paste0("**", cfg$display_name, " is temporarily unavailable.**"))
+  } else {
+    res <- llm_request(pname, model, full_msgs, max_tokens, temperature)
+    if (res$ok || !res$transient) return(res$text)
+    llm_mark_down(pname, model)
+  }
 
   # Transient failure (429 / 5xx) persisted through retries — fall back to the
   # provider's other models, then to any other provider with a key configured.
+  failed <- sprintf("%s/%s", pname, model)
   for (cand in llm_fallbacks(pname, model)) {
-    message(sprintf("[LLM] %s/%s unavailable — falling back to %s/%s",
-                    pname, model, cand$provider, cand$model))
+    if (llm_is_down(cand$provider, cand$model)) next
+    message(sprintf("[LLM] %s unavailable — trying %s/%s", failed, cand$provider, cand$model))
     alt <- llm_request(cand$provider, cand$model, full_msgs, max_tokens, temperature, tries = 2L)
+    if (!alt$ok && alt$transient) llm_mark_down(cand$provider, cand$model)
+    failed <- sprintf("%s/%s", cand$provider, cand$model)
     if (alt$ok) {
       return(paste0(alt$text, "
 
@@ -53,6 +65,17 @@ call_llm <- function(messages, provider=NULL, model=NULL,
     }
   }
   res$text
+}
+
+.LLM_DOWN <- new.env(parent = emptyenv())
+LLM_DOWN_MINUTES <- 5
+
+llm_mark_down <- function(pname, model, now = Sys.time())
+  assign(paste0(pname, "/", model), now, envir = .LLM_DOWN)
+
+llm_is_down <- function(pname, model, now = Sys.time()) {
+  t <- .LLM_DOWN[[paste0(pname, "/", model)]]
+  !is.null(t) && as.numeric(difftime(now, t, units = "mins")) < LLM_DOWN_MINUTES
 }
 
 #' Alternative (provider, model) pairs to try when the requested one is down
@@ -100,6 +123,10 @@ llm_request <- function(pname, model, full_msgs, max_tokens, temperature, tries 
         if (is.null(content) || nchar(trimws(content)) == 0)
           content <- body$choices[[1]]$message$reasoning_content %||%
                      "Model returned an empty response."
+        # Reasoning models spend part of max_tokens thinking; say so when the answer was cut
+        if (identical(body$choices[[1]]$finish_reason, "length"))
+          content <- paste0(content, "\n\n*(Answer hit the length limit and was cut off. ",
+                            "Ask to continue, or try a shorter question.)*")
         list(ok = TRUE, text = content, transient = FALSE)
       } else if (!is.null(body$error)) {
         fail(paste0("**API error (", cfg$display_name, "):** ", body$error$message))
@@ -145,6 +172,9 @@ llm_request <- function(pname, model, full_msgs, max_tokens, temperature, tries 
   fail(paste0("**LLM call failed (", cfg$display_name, "):** retries exhausted."), TRUE)
 }
 
+# Reference month for a YoY KPI, e.g. " (Sep 2026)"; empty when unknown.
+.kpi_month <- function(d) if (is.null(d) || length(d) != 1 || is.na(d)) "" else format(as.Date(d), " (%b %Y)")
+
 # ── Context builders ────────────────────────────────────────────────────────────
 kpis_to_text <- function(kpis) {
   glue(
@@ -153,12 +183,12 @@ kpis_to_text <- function(kpis) {
     "  Unemployment Rate:          {fmt_pct(kpis$unemp_rate)}\n",
     "  Nonfarm Payrolls (MoM chg): {fmt_num(kpis$payrolls_chg, 0, 'K jobs')}\n",
     "  Job Openings:               {fmt_num(kpis$job_openings, 0, 'K')}\n",
-    "  Avg Hourly Earnings (YoY):  {fmt_pct(kpis$wage_yoy)}\n\n",
+    "  Avg Hourly Earnings (YoY):  {fmt_pct(kpis$wage_yoy)}{.kpi_month(kpis$wage_yoy_asof)}\n\n",
     "INFLATION\n",
-    "  CPI YoY:                    {fmt_pct(kpis$cpi_yoy)}\n",
-    "  Core CPI YoY:               {fmt_pct(kpis$core_cpi_yoy)}\n",
-    "  Core PCE:                   {fmt_pct(kpis$core_pce)}\n",
-    "  PPI YoY:                    {fmt_pct(kpis$ppi_yoy)}\n\n",
+    "  CPI YoY:                    {fmt_pct(kpis$cpi_yoy)}{.kpi_month(kpis$cpi_yoy_asof)}\n",
+    "  Core CPI YoY:               {fmt_pct(kpis$core_cpi_yoy)}{.kpi_month(kpis$core_cpi_yoy_asof)}\n",
+    "  Core PCE YoY:               {fmt_pct(kpis$core_pce)}{.kpi_month(kpis$core_pce_asof)}\n",
+    "  PPI YoY:                    {fmt_pct(kpis$ppi_yoy)}{.kpi_month(kpis$ppi_yoy_asof)}\n\n",
     "MONETARY POLICY\n",
     "  Fed Funds Rate:             {fmt_pct(kpis$fed_funds)}\n",
     "  10-Year Treasury:           {fmt_pct(kpis$t10yr)}\n",
@@ -167,9 +197,9 @@ kpis_to_text <- function(kpis) {
     "  30-Yr Mortgage Rate:        {fmt_pct(kpis$mortgage30)}\n\n",
     "HOUSING & CONSUMER\n",
     "  Housing Starts:             {fmt_num(kpis$housing_starts, 0, 'K ann.')}\n",
-    "  Retail Sales YoY:           {fmt_pct(kpis$retail_yoy)}\n",
+    "  Retail Sales YoY:           {fmt_pct(kpis$retail_yoy)}{.kpi_month(kpis$retail_yoy_asof)}\n",
     "  Consumer Sentiment:         {fmt_num(kpis$cons_sent)}\n",
-    "  Industrial Production YoY:  {fmt_pct(kpis$indpro_yoy)}\n\n",
+    "  Industrial Production YoY:  {fmt_pct(kpis$indpro_yoy)}{.kpi_month(kpis$indpro_yoy_asof)}\n\n",
     "MARKETS & COMMODITIES\n",
     "  WTI Crude Oil:              {fmt_dollar(kpis$oil_price)}/bbl\n",
     "  Gold:                       {fmt_dollar(kpis$gold_price)}/oz\n",
@@ -179,7 +209,23 @@ kpis_to_text <- function(kpis) {
   )
 }
 
-market_returns_text <- function(mkt_returns, tickers=c("SPY","QQQ","GLD","USO","TLT","HYG")) {
+#' 1-year price return (%) from the close history: latest close vs the last
+#' close on or before the same date a year earlier (within a week), else NA.
+ret_1y <- function(mkt_returns, symbol) {
+  if (is.null(mkt_returns) || !all(c("symbol", "date", "close") %in% names(mkt_returns))) return(NA_real_)
+  d <- mkt_returns[mkt_returns$symbol == symbol & !is.na(mkt_returns$close), c("date", "close")]
+  if (nrow(d) < 2) return(NA_real_)
+  d <- d[order(d$date), ]
+  last <- d[nrow(d), ]
+  target <- as.Date(last$date) - 365
+  prior <- d[as.Date(d$date) <= target, ]
+  if (!nrow(prior) || target - as.Date(prior$date[nrow(prior)]) > 7) return(NA_real_)
+  100 * (last$close / prior$close[nrow(prior)] - 1)
+}
+
+# SMH/XLK/XLU track the AI cycle (chips, tech, power); IWM vs SPY is a breadth/rates read.
+market_returns_text <- function(mkt_returns,
+                                tickers=c("SPY","QQQ","IWM","SMH","XLK","XLU","XLF","GLD","USO","TLT","HYG")) {
   if (is.null(mkt_returns)) return("")
   df <- mkt_returns %>% filter(symbol %in% tickers) %>%
     group_by(symbol) %>% slice_tail(n=1) %>% ungroup()
@@ -187,7 +233,9 @@ market_returns_text <- function(mkt_returns, tickers=c("SPY","QQQ","GLD","USO","
   lines <- map_chr(seq_len(nrow(df)), function(i) {
     r <- df[i,]
     nm <- if (!is.na(TICKER_LABELS[r$symbol])) TICKER_LABELS[r$symbol] else r$symbol
-    glue("  {r$symbol} ({nm}): 1D={fmt_pct(r$ret_1d,1,TRUE)}  1M={fmt_pct(r$ret_1m,1,TRUE)}")
+    r3 <- if ("ret_3m" %in% names(r)) paste0("  3M=", fmt_pct(r$ret_3m,1,TRUE)) else ""
+    r1y <- paste0("  1Y=", fmt_pct(ret_1y(mkt_returns, r$symbol), 1, TRUE))
+    glue("  {r$symbol} ({nm}): 1D={fmt_pct(r$ret_1d,1,TRUE)}  1M={fmt_pct(r$ret_1m,1,TRUE)}{r3}{r1y}")
   })
   paste0("MARKET RETURNS\n", paste(lines, collapse="\n"))
 }
@@ -269,43 +317,97 @@ MODEL_GROUNDING_RULES <- paste0(
 )
 
 # ── Insight generators ─────────────────────────────────────────────────────────
+FORECASTING_RULES <- paste0(
+  "Your job is to anticipate, not to recap. Spend most words on what happens next and why. ",
+  "Lean on the FORWARD-LOOKING SIGNALS (market-implied expectations and leading indicators) and ",
+  "the UPCOMING CATALYSTS calendar; treat backward-looking KPIs as the starting point only. ",
+  "Every forward claim needs a mechanism (A → B → C, with rough lags) and a signpost that would ",
+  "confirm or refute it. Where markets already price something (breakevens, the 2Y-vs-Fed-Funds ",
+  "gap), say whether you agree and why. Treat the AI investment cycle as a macro driver: its ",
+  "support to business investment and GDP, power demand, chip supply, equity concentration, and ",
+  "white-collar labor displacement, and what would end it. Rising NEWS THEMES matter more than ",
+  "any single headline. Calendar GDP entries name the quarter they report; do not treat a revision ",
+  "of an earlier quarter as the current quarter. Use only figures present in the data; never invent ",
+  "a number or a date."
+)
+
+#' The AI Insights prompt. `forward_ctx` = load_forward_context() result;
+#' `prev_calls` = previous_llm_calls() result (graded when present).
+build_insights_prompt <- function(kpis, mkt_returns = NULL, news_df = NULL, outlook = NULL,
+                                  forecasts = NULL, forward_ctx = NULL, prev_calls = NULL,
+                                  today = Sys.Date()) {
+  prev_block <- if (!is.null(prev_calls)) paste0(
+    "\n=== YOUR PREVIOUS CALLS (made ", format(prev_calls$made_at, "%Y-%m-%d"), ") ===\n",
+    prev_calls$calls, "\n") else ""
+  review_section <- if (!is.null(prev_calls)) paste0(
+    "## Previous Calls Review\n",
+    "Grade each previous call against the current data: on track / off track / too early, ",
+    "one line each with the evidence. Say what the misses teach about the current view.\n\n") else ""
+
+  paste0(
+    kpis_to_text(kpis), "\n", market_returns_text(mkt_returns), "\n\n",
+    forward_context_text(forward_ctx, today), "\n",
+    model_outputs_to_text(outlook, forecasts), "\n",
+    "RECENT NEWS (macro + tech/AI):\n", headlines_for_llm(news_df, n = 24), "\n",
+    prev_block,
+    "\n---\nWrite a forward-looking outlook in EXACTLY these sections:\n\n",
+    "## Bottom Line\n",
+    "3 sentences: where the economy is heading over the next 6-12 months, the single biggest ",
+    "swing factor, and the one data point that would change your view.\n\n",
+    "## What Markets Price vs. Our View\n",
+    "Inflation expectations, the implied policy path, credit and financial conditions. ",
+    "Agree or disagree with each, with reasons.\n\n",
+    "## Leading Signals\n",
+    "What claims, the Sahm rule, permits, financial conditions and bank lending standards say about ",
+    "the next 1-2 quarters. Flag any that are turning.\n\n",
+    "## Themes Gaining Momentum\n",
+    "The 3-4 storylines from NEWS THEMES that matter most (always assess the AI/tech investment cycle), ",
+    "as bullets (not a table), each in the form:\n",
+    '- **<Theme>** (<n> articles, <rising/steady/fading>): <transmission to growth, inflation, jobs or markets>; ',
+    '<second-order effects>; <timing>. [chart: {"series": "<id>"}]\n',
+    "The chart tag names the ONE series from CHART SERIES that best shows whether the transmission is ",
+    'actually happening (e.g. elec_cpi_yoy for power demand, smh for the chip cycle, oil for energy). ',
+    "Say in the bullet what that series currently shows.\n\n",
+    "## Catalyst Calendar\n",
+    "The 4-6 most important upcoming events from UPCOMING CATALYSTS, with dates. For each: the ",
+    "result that would confirm the base case vs. challenge it, as numeric thresholds.\n\n",
+    "## Scenarios (6-12 months)\n",
+    "**Bear (X%) / Base (Y%) / Bull (Z%)**: for each, the trigger, the path, and the leading ",
+    "indicator that would move first. Choose X/Y/Z yourself (summing to 100%) so the Bear weight ",
+    "is consistent with the model's recession probability and the Base case with its GDP forecast.\n\n",
+    review_section,
+    "## Calls to Track\n",
+    "3-5 falsifiable calls as bullets, each in the form:\n",
+    '- **By <YYYY-MM-DD>:** <metric> <above/below/between> <value> (now <current value>) — confidence ',
+    '<medium/high>. [chart: {"series": "<id>", "threshold": <value>, "by": "<YYYY-MM-DD>"}]\n',
+    "Rules: a call is what you EXPECT to happen ",
+    "under your base case, not a bear/bull trigger. Confidence is the chance you are right (high > 70%, ",
+    "medium 50-70%); drop anything you think is less likely than not. Size thresholds to what the metric can ",
+    "plausibly move by that date (e.g. YoY CPI rarely moves more than 0.3pp in a month). Use metrics present ",
+    "in the data so they can be checked later, and prefer dates just after a release in UPCOMING CATALYSTS.\n",
+    "Every call bullet MUST end with its chart tag; the app draws it from real data as evidence. ",
+    "Thresholds are in the series' units (e.g. K for claims). When a relationship is the better evidence, ",
+    'use a scatter instead: [chart: {"type": "scatter", "x": "init_claims", "y": "unemp_rate"}]\n',
+    "Use only ids from CHART SERIES, plain ASCII hyphens in dates, and no other numbers in tags.\n\n",
+    chart_catalog_text(), "\n"
+  )
+}
+
 generate_insights <- function(kpis, fred_data, mkt_returns=NULL,
                                news_df=NULL, outlook=NULL, forecasts=NULL,
+                               forward_ctx=NULL, prev_calls=NULL,
                                provider=NULL, model=NULL) {
-  eco_ctx   <- kpis_to_text(kpis)
-  mkt_ctx   <- market_returns_text(mkt_returns)
-  news_ctx  <- headlines_for_llm(news_df, n=20)
-  model_ctx <- model_outputs_to_text(outlook, forecasts)
-
-  user_msg <- glue(
-    "{eco_ctx}\n{mkt_ctx}\n\n{model_ctx}\n\n",
-    "RECENT ECONOMIC NEWS:\n{news_ctx}\n\n---\n",
-    "Provide a structured economic analysis:\n\n",
-    "## Current Economic Conditions\n",
-    "Overall health assessment with specific data references.\n\n",
-    "## Key Relationships & Dynamics\n",
-    "Most important causal chains (Fed policy, inflation, labor, housing, markets).\n\n",
-    "## News Impact Assessment\n",
-    "Top 5 headlines: economic impact, mechanisms, duration.\n\n",
-    "## Risk Matrix\n",
-    "3 downside risks (probability + severity) and 2 upside scenarios.\n\n",
-    "## 6-12 Month Scenarios\n",
-    "**Bear (X%):** ... **Base (Y%):** ... **Bull (Z%):** ... ",
-    "Choose X/Y/Z yourself (summing to 100%) so the Bear weight is consistent with the ",
-    "model's recession probability and the Base case with its GDP forecast.\n\n",
-    "## Executive Summary\n",
-    "3 crisp sentences for a portfolio manager.\n\nUse data throughout."
-  )
-
+  user_msg <- build_insights_prompt(kpis, mkt_returns, news_df, outlook, forecasts,
+                                    forward_ctx, prev_calls)
   call_llm(
     messages   = list(list(role="user", content=user_msg)),
     provider   = provider, model=model,
-    max_tokens = 3500, temperature=0.6,
+    max_tokens = 4000, temperature=0.45,
     system     = paste0(
-      "You are a senior macroeconomic strategist at a global investment bank. ",
-      "Deep expertise in monetary policy, labor economics, financial markets, and geopolitical risk. ",
-      "Be direct, quantitative, and take clear analytical positions. Use markdown formatting. ",
-      MODEL_GROUNDING_RULES
+      "You are the chief economist and forward strategist at a global investment bank. ",
+      "Deep expertise in monetary policy, labor economics, financial markets, technology investment ",
+      "cycles, and geopolitical risk. Be direct, quantitative, and take clear positions. ",
+      "Use markdown formatting. ", FORECASTING_RULES, " ", MODEL_GROUNDING_RULES
     )
   )
 }
@@ -328,17 +430,20 @@ generate_sector_insight <- function(sector, kpi_text, news_headlines=NULL,
 #' reference it. Data context goes in the system prompt so it isn't repeated
 #' every turn.
 economic_chat <- function(question, kpis, news_df=NULL, history=list(),
-                          insights=NULL, outlook=NULL, forecasts=NULL,
+                          insights=NULL, outlook=NULL, forecasts=NULL, forward_ctx=NULL,
                           provider=NULL, model=NULL, max_turns=10) {
-  ctx      <- paste0(kpis_to_text(kpis), "\n\n", model_outputs_to_text(outlook, forecasts))
-  news_ctx <- if (!is.null(news_df)) headlines_for_llm(news_df, 10) else "N/A"
+  ctx      <- paste0(kpis_to_text(kpis), "\n\n", forward_context_text(forward_ctx), "\n",
+                     model_outputs_to_text(outlook, forecasts))
+  news_ctx <- if (!is.null(news_df)) headlines_for_llm(news_df, 12) else "N/A"
   ins_ctx  <- if (!is.null(insights) && nzchar(insights))
     paste0("\n\n=== PRIOR AI ECONOMIC ANALYSIS SHOWN TO USER ===\n", insights) else ""
 
   system <- paste0(
     "You are a precise macroeconomic analyst. Give direct, data-grounded answers. ",
     "Answer concisely using the data below. The user may ask follow-up questions; ",
-    "use the conversation so far for context. ", MODEL_GROUNDING_RULES, "\n\n",
+    "use the conversation so far for context. When the question is about the future, answer with ",
+    "a clear call, the mechanism, the signpost to watch (with its date from UPCOMING CATALYSTS when ",
+    "one fits), and what would change your mind. ", MODEL_GROUNDING_RULES, "\n\n",
     ctx, "\n\nNews:\n", news_ctx, ins_ctx
   )
 
@@ -348,7 +453,7 @@ economic_chat <- function(question, kpis, news_df=NULL, history=list(),
 
   msgs <- c(history, list(list(role="user", content=question)))
   call_llm(messages=msgs, provider=provider, model=model,
-            max_tokens=800, temperature=0.7, system=system)
+            max_tokens=1800, temperature=0.6, system=system)
 }
 
 available_models <- function(provider=NULL) {
