@@ -50,7 +50,8 @@ ui <- dashboardPage(
       menuItem("Markets",        tabName = "markets",     icon = icon("chart-line")),
       menuItem("Regional Risk",  tabName = "metro",       icon = icon("map-marked-alt")),
       menuItem("Forecasting",    tabName = "forecasting", icon = icon("magic")),
-      menuItem("AI Insights",    tabName = "ai",          icon = icon("robot"))
+      menuItem("AI Insights",    tabName = "ai",          icon = icon("robot")),
+      menuItem("Export",         tabName = "export",      icon = icon("download"))
     ),
     div(style = "padding:14px 16px; border-top:1px solid #2a3042; margin-top:10px;",
       div(style = "font-size:10px;color:#6b7585;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;",
@@ -421,6 +422,28 @@ ui <- dashboardPage(
               withSpinner(DTOutput("tbl_fcst_diag_detail"),
                           type=4, color="#7c5cbf", color.background="#161b27", size=0.7)
             )
+          )
+        )
+      ),
+
+      # ══════════════════════════════════════════════════════
+      # EXPORT TAB
+      # ══════════════════════════════════════════════════════
+      tabItem("export",
+        fluidRow(
+          box(title = "Download results", status = "primary", solidHeader = TRUE, width = 12,
+            div(style = "color:#9aa3b2;font-size:12px;margin-bottom:14px;",
+                "Everything the app calculated this session. The workbook holds the forecasts, probabilities, ",
+                "news links and risk tables; the report holds the AI text. Anything marked not ready below is left out."),
+            div(style = "margin-bottom:14px;",
+              downloadButton("dl_workbook", "Excel workbook (.xlsx)", icon = icon("file-excel"),
+                             class = "btn-primary", style = "margin:0 8px 6px 0;"),
+              downloadButton("dl_ai_report", "AI report (.html)", icon = icon("file-lines"),
+                             style = "margin:0 8px 6px 0;"),
+              actionButton("btn_export_forecasts", "Run forecasts first", icon = icon("magic"),
+                           style = "margin:0 8px 6px 0;")
+            ),
+            DTOutput("export_status")
           )
         )
       ),
