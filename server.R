@@ -141,18 +141,19 @@ server <- function(input, output, session) {
   }
 
   # ── Lazy-load forecasts when tab is opened ─────────────────────────────────
-  observeEvent(input$tabs, {
-    if (
-      input$tabs == "forecasting" &&
-        is.null(rv$forecasts) &&
-        !is.null(rv$fred_model)
-    ) {
+  load_forecasts <- function() {
+    if (is.null(rv$forecasts) && !is.null(rv$fred_model)) {
       withProgress(message = "Running ensemble forecasts (Prophet · ARIMA · ETS)…", value = 0, {
         rv$forecasts <- run_all_forecasts(rv$fred_model, horizon_months = 18)
         incProgress(1)
       })
     }
+  }
+  observeEvent(input$tabs, {
+    if (input$tabs == "forecasting") load_forecasts()
   })
+  # Export tab: run them on demand without visiting the Forecasting tab.
+  observeEvent(input$btn_export_forecasts, load_forecasts())
 
   # ── Helper: safe plotly empty state ───────────────────────────────────────────
   empty_plot <- function(msg = "Data not available") {
@@ -2281,4 +2282,91 @@ server <- function(input, output, session) {
   output$news_full <- renderUI({
     render_news_html(rv$news_data, n = 20)
   })
+
+  # ═══════════════════════════════════════════════════════════════════════════
+  # EXPORT — downloads of what the app has calculated this session (R/export.R)
+  # ═══════════════════════════════════════════════════════════════════════════
+
+  export_outlook <- reactive(tryCatch(growth_outlook(), error = function(e) NULL))
+
+  export_ai_report <- reactive({
+    ok <- function(x) is.character(x) && length(x) == 1 && !grepl("^(LLM )?[Ee]rror:", x)
+    # Metro text is a placeholder message until an analysis succeeds (geoid is then set).
+    metro <- if (!is.null(rv_metro_ai$geoid) && ok(rv_metro_ai$text)) rv_metro_ai$text else NULL
+    export_ai_html(
+      insights = if (ok(rv$llm_text)) rv$llm_text else NULL,
+      metro_text = metro, metro_label = rv_metro_ai$label,
+      chat = rv$chat_history,
+      provider = input$llm_provider, model = input$llm_model,
+      snapshot = export_outlook_summary(export_outlook())
+    )
+  })
+
+  export_data <- reactive({
+    export_sheets(
+      forecasts = rv$forecasts,
+      outlook = export_outlook(),
+      news = rv$news_data,
+      kpis = rv$kpis,
+      risk_table = tryCatch(risk_table_data()$df, error = function(e) NULL),
+      metro = rv$metro_data
+    )
+  })
+
+  # What the workbook / report will contain right now, and what is still missing.
+  output$export_status <- renderDT({
+    sheets <- export_data()
+    hints <- c(
+      `Outlook summary`      = "loads with the dashboard data",
+      `Outlook components`   = "loads with the dashboard data",
+      `Recession drivers`    = "recession model unavailable (needs FRED history; retry later)",
+      `Forecast summary`     = "click Run forecasts",
+      `Forecast series`      = "click Run forecasts",
+      `Forecast diagnostics` = "click Run forecasts",
+      News                   = "needs a news API key",
+      KPIs                   = "loads with the dashboard data",
+      `Regional risk`        = "open the Regional Risk tab",
+      `Metro ACS`            = "open the Regional Risk tab"
+    )
+    df <- data.frame(
+      Item = c(names(hints), "AI report (HTML)"),
+      Status = c(
+        vapply(names(hints), function(n) {
+          if (n %in% names(sheets)) sprintf("%s rows", format(nrow(sheets[[n]]), big.mark = ","))
+          else paste("not ready —", hints[[n]])
+        }, ""),
+        if (is.null(export_ai_report())) "not ready — click Generate on AI Insights or Regional Risk" else "ready"
+      ),
+      Goes.in = c(rep("Excel workbook", length(hints)), "HTML report"),
+      stringsAsFactors = FALSE, row.names = NULL
+    )
+    names(df)[3] <- "Goes in"
+    datatable(df, rownames = FALSE, class = "table-dark compact stripe",
+              options = list(dom = "t", pageLength = 20, ordering = FALSE)) %>%
+      formatStyle(names(df), backgroundColor = "#1e2640", color = "#d0d0d0")
+  })
+
+  export_stamp <- function() format(Sys.time(), "%Y%m%d-%H%M")
+
+  output$dl_workbook <- downloadHandler(
+    filename = function() sprintf("terrametric-atlas-%s.xlsx", export_stamp()),
+    content = function(file) {
+      sheets <- export_data()
+      if (length(sheets) == 0) {
+        sheets <- list(KPIs = data.frame(kpi = "Nothing has been calculated yet.", value = ""))
+      }
+      export_workbook(sheets, file)
+    }
+  )
+
+  output$dl_ai_report <- downloadHandler(
+    filename = function() sprintf("terrametric-atlas-ai-report-%s.html", export_stamp()),
+    content = function(file) {
+      html <- export_ai_report() %||% paste0(
+        "<!doctype html><meta charset=\"utf-8\"><title>AI report</title>",
+        "<p style=\"font-family:sans-serif;padding:2em\">No AI output has been generated yet. ",
+        "Click Generate on the AI Insights or Regional Risk tab, then download again.</p>")
+      writeLines(html, file, useBytes = TRUE)
+    }
+  )
 }

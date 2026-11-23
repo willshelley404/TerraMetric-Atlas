@@ -43,7 +43,10 @@ cran_packages <- c(
   # Utilities
   "memoise",
   "cachem",
-  "markdown"
+  "markdown",
+  # Export tab (.xlsx download)
+  "openxlsx",
+  "commonmark"
 )
 
 # Install missing packages
